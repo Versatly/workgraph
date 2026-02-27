@@ -592,17 +592,63 @@ addWorkspaceOption(
     .command('list')
     .description('List skills')
     .option('--status <status>', 'Filter by status')
+    .option('--updated-since <iso>', 'Filter by updated timestamp (ISO-8601)')
     .option('--json', 'Emit structured JSON output')
 ).action((opts) =>
   runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
-      const skills = workgraph.skill.listSkills(workspacePath, { status: opts.status });
+      const skills = workgraph.skill.listSkills(workspacePath, {
+        status: opts.status,
+        updatedSince: opts.updatedSince,
+      });
       return { skills, count: skills.length };
     },
     (result) => result.skills.map((skill) =>
       `${String(skill.fields.title)} [${String(skill.fields.status)}] -> ${skill.path}`)
+  )
+);
+
+addWorkspaceOption(
+  skillCmd
+    .command('history <skillRef>')
+    .description('Show ledger history entries for one skill')
+    .option('--limit <n>', 'Limit number of returned entries')
+    .option('--json', 'Emit structured JSON output')
+).action((skillRef, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        entries: workgraph.skill.skillHistory(workspacePath, skillRef, {
+          limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+        }),
+      };
+    },
+    (result) => result.entries.map((entry) => `${entry.ts} ${entry.op} ${entry.actor}`),
+  )
+);
+
+addWorkspaceOption(
+  skillCmd
+    .command('diff <skillRef>')
+    .description('Show latest field-change summary for one skill')
+    .option('--json', 'Emit structured JSON output')
+).action((skillRef, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.skill.skillDiff(workspacePath, skillRef);
+    },
+    (result) => [
+      `Skill: ${result.path}`,
+      `Latest: ${result.latestEntryTs ?? 'none'}`,
+      `Previous: ${result.previousEntryTs ?? 'none'}`,
+      `Changed fields: ${result.changedFields.join(', ') || 'none'}`,
+    ],
   )
 );
 

@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { loadRegistry, saveRegistry } from './registry.js';
 import { listSkills, loadSkill, promoteSkill, proposeSkill, writeSkill } from './skill.js';
+import { skillDiff, skillHistory } from './skill.js';
 import { read as readPrimitive } from './store.js';
 
 let workspacePath: string;
@@ -87,6 +88,24 @@ describe('skill primitive lifecycle', () => {
     expect(all).toHaveLength(2);
     expect(active).toHaveLength(1);
     expect(active[0].fields.title).toBe('skill-b');
+  });
+
+  it('supports updated-since filtering and skill history/diff summaries', () => {
+    const first = writeSkill(workspacePath, 'history-skill', '# v1', 'agent-author', { status: 'draft' });
+    const since = new Date().toISOString();
+    const second = writeSkill(workspacePath, 'history-skill', '# v2', 'agent-author', { status: 'proposed' });
+    expect(second.path).toBe(first.path);
+
+    const recent = listSkills(workspacePath, { updatedSince: since });
+    expect(recent.map((item) => item.path)).toContain(second.path);
+
+    const history = skillHistory(workspacePath, 'history-skill');
+    expect(history.length).toBeGreaterThanOrEqual(2);
+
+    const diff = skillDiff(workspacePath, 'history-skill');
+    expect(diff.path).toBe(second.path);
+    expect(diff.latestEntryTs).toBeTruthy();
+    expect(diff.previousEntryTs).toBeTruthy();
   });
 
   it('loads legacy flat skill paths for backwards compatibility', () => {

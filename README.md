@@ -164,6 +164,9 @@ workgraph skill write "workgraph-manual" \
 workgraph skill propose workgraph-manual --actor agent-reviewer --space spaces/platform --json
 workgraph skill promote workgraph-manual --actor agent-lead --json
 workgraph skill load workgraph-manual --json
+workgraph skill list --updated-since 2026-02-27T00:00:00.000Z --json
+workgraph skill history workgraph-manual --limit 10 --json
+workgraph skill diff workgraph-manual --json
 ```
 
 ## Legacy memory stacks vs Workgraph primitives

@@ -6,7 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
 import * as thread from './thread.js';
-import type { PrimitiveInstance } from './types.js';
+import * as ledger from './ledger.js';
+import type { LedgerEntry, PrimitiveInstance } from './types.js';
 
 export interface WriteSkillOptions {
   owner?: string;
@@ -86,11 +87,20 @@ export function loadSkill(workspacePath: string, skillRef: string): PrimitiveIns
 
 export function listSkills(
   workspacePath: string,
-  options: { status?: string } = {},
+  options: { status?: string; updatedSince?: string } = {},
 ): PrimitiveInstance[] {
   let skills = store.list(workspacePath, 'skill');
   if (options.status) {
     skills = skills.filter((skill) => skill.fields.status === options.status);
+  }
+  if (options.updatedSince) {
+    const threshold = Date.parse(options.updatedSince);
+    if (Number.isFinite(threshold)) {
+      skills = skills.filter((skill) => {
+        const updatedAt = Date.parse(String(skill.fields.updated ?? ''));
+        return Number.isFinite(updatedAt) && updatedAt >= threshold;
+      });
+    }
   }
   return skills;
 }
@@ -128,6 +138,45 @@ export function proposeSkill(
   }, undefined, actor);
   writeSkillManifest(workspacePath, slug, updated, actor);
   return updated;
+}
+
+export function skillHistory(
+  workspacePath: string,
+  skillRef: string,
+  options: { limit?: number } = {},
+): LedgerEntry[] {
+  const skill = loadSkill(workspacePath, skillRef);
+  const entries = ledger.historyOf(workspacePath, skill.path);
+  if (options.limit && options.limit > 0) {
+    return entries.slice(-options.limit);
+  }
+  return entries;
+}
+
+export function skillDiff(
+  workspacePath: string,
+  skillRef: string,
+): {
+  path: string;
+  latestEntryTs: string | null;
+  previousEntryTs: string | null;
+  changedFields: string[];
+} {
+  const skill = loadSkill(workspacePath, skillRef);
+  const entries = ledger.historyOf(workspacePath, skill.path).filter((entry) => entry.op === 'create' || entry.op === 'update');
+  const latest = entries.length > 0 ? entries[entries.length - 1] : null;
+  const previous = entries.length > 1 ? entries[entries.length - 2] : null;
+  const changedFields = Array.isArray(latest?.data?.changed)
+    ? latest!.data!.changed.map((value) => String(value))
+    : latest?.op === 'create'
+      ? Object.keys(skill.fields)
+      : [];
+  return {
+    path: skill.path,
+    latestEntryTs: latest?.ts ?? null,
+    previousEntryTs: previous?.ts ?? null,
+    changedFields,
+  };
 }
 
 export function promoteSkill(
