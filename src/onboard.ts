@@ -20,6 +20,7 @@ export interface OnboardResult {
   boardPath: string;
   commandCenterPath: string;
   checkpointPath: string;
+  onboardingPath: string;
 }
 
 export function onboardWorkspace(workspacePath: string, options: OnboardOptions): OnboardResult {
@@ -88,6 +89,38 @@ export function onboardWorkspace(workspacePath: string, options: OnboardOptions)
       tags: ['onboarding'],
     },
   );
+  const onboarding = store.create(
+    workspacePath,
+    'onboarding',
+    {
+      title: `Onboarding for ${options.actor}`,
+      actor: options.actor,
+      status: 'active',
+      spaces: spacesCreated,
+      thread_refs: threadsCreated,
+      board: boardResult.outputPath,
+      command_center: commandCenterResult.outputPath,
+      tags: ['onboarding'],
+    },
+    [
+      '# Onboarding',
+      '',
+      `Actor: ${options.actor}`,
+      '',
+      '## Spaces',
+      '',
+      ...spacesCreated.map((space) => `- [[${space}]]`),
+      '',
+      '## Starter Threads',
+      '',
+      ...threadsCreated.map((threadRef) => `- [[${threadRef}]]`),
+      '',
+      `Board: [[${boardResult.outputPath}]]`,
+      `Command Center: [[${commandCenterResult.outputPath}]]`,
+      '',
+    ].join('\n'),
+    options.actor,
+  );
 
   return {
     actor: options.actor,
@@ -96,6 +129,7 @@ export function onboardWorkspace(workspacePath: string, options: OnboardOptions)
     boardPath: boardResult.outputPath,
     commandCenterPath: commandCenterResult.outputPath,
     checkpointPath: checkpointResult.path,
+    onboardingPath: onboarding.path,
   };
 }
 

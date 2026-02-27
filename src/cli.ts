@@ -1370,6 +1370,7 @@ addWorkspaceOption(
       `Threads created: ${result.threadsCreated.length}`,
       `Board: ${result.boardPath}`,
       `Command center: ${result.commandCenterPath}`,
+      `Onboarding primitive: ${result.onboardingPath}`,
     ],
   )
 );
