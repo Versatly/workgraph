@@ -65,13 +65,14 @@ export function followup(workspacePath: string, runId: string, actor: string, in
   const state = loadRuns(workspacePath);
   const run = state.runs.find((entry) => entry.id === runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
+  if (!['queued', 'running'].includes(run.status)) {
+    throw new Error(`Cannot send follow-up to run ${runId} in terminal status "${run.status}".`);
+  }
   const now = new Date().toISOString();
   run.followups.push({ ts: now, actor, input });
   run.updatedAt = now;
   run.logs.push({ ts: now, level: 'info', message: `Follow-up from ${actor}: ${input}` });
-  if (run.status === 'queued') {
-    run.status = 'running';
-  }
+  if (run.status === 'queued') run.status = 'running';
   saveRuns(workspacePath, state);
   ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
     followup: true,
@@ -131,6 +132,7 @@ function setStatus(
   const state = loadRuns(workspacePath);
   const run = state.runs.find((entry) => entry.id === runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
+  assertRunStatusTransition(run.status, statusValue, runId);
   const now = new Date().toISOString();
   run.status = statusValue;
   run.updatedAt = now;
@@ -239,4 +241,20 @@ function renderRunBody(run: DispatchRun): string {
     lines.push('');
   }
   return lines.join('\n');
+}
+
+const RUN_STATUS_TRANSITIONS: Record<RunStatus, RunStatus[]> = {
+  queued: ['running', 'cancelled'],
+  running: ['succeeded', 'failed', 'cancelled'],
+  succeeded: [],
+  failed: [],
+  cancelled: [],
+};
+
+function assertRunStatusTransition(from: RunStatus, to: RunStatus, runId: string): void {
+  if (from === to) return;
+  const allowed = RUN_STATUS_TRANSITIONS[from] ?? [];
+  if (!allowed.includes(to)) {
+    throw new Error(`Invalid run transition for ${runId}: ${from} -> ${to}. Allowed: ${allowed.join(', ') || 'none'}.`);
+  }
 }

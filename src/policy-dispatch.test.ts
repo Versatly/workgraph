@@ -116,11 +116,28 @@ describe('policy gates and dispatch contract', () => {
       actor: 'agent-runner',
       objective: 'Failure flow',
     });
+    dispatch.markRun(workspacePath, second.id, 'agent-runner', 'running');
     const failed = dispatch.markRun(workspacePath, second.id, 'agent-runner', 'failed', {
       error: 'runtime timeout',
     });
     expect(failed.status).toBe('failed');
     expect(failed.error).toBe('runtime timeout');
+  });
+
+  it('rejects invalid run status transitions and followups after terminal state', () => {
+    const created = dispatch.createRun(workspacePath, {
+      actor: 'agent-runner',
+      objective: 'Transition guard validation',
+    });
+
+    expect(() => dispatch.markRun(workspacePath, created.id, 'agent-runner', 'succeeded'))
+      .toThrow(`Invalid run transition for ${created.id}: queued -> succeeded.`);
+
+    dispatch.markRun(workspacePath, created.id, 'agent-runner', 'running');
+    dispatch.markRun(workspacePath, created.id, 'agent-runner', 'cancelled');
+
+    expect(() => dispatch.followup(workspacePath, created.id, 'agent-runner', 'post-cancel followup'))
+      .toThrow(`Cannot send follow-up to run ${created.id} in terminal status "cancelled".`);
   });
 
   it('fires approved trigger and dispatches run with idempotency', () => {
