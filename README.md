@@ -177,6 +177,23 @@ workgraph skill history workgraph-manual --limit 10 --json
 workgraph skill diff workgraph-manual --json
 ```
 
+### Optional Clawdapus integration
+
+Import the official Clawdapus skill document into your workspace only when you
+want it:
+
+```bash
+workgraph integration clawdapus \
+  --actor agent-architect \
+  --json
+```
+
+Refresh from upstream later:
+
+```bash
+workgraph integration clawdapus --force --actor agent-architect --json
+```
+
 ## Legacy memory stacks vs Workgraph primitives
 
 `@versatly/workgraph` is **execution coordination only**.

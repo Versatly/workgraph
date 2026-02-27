@@ -21,5 +21,6 @@ export * as onboard from './onboard.js';
 export * as searchQmdAdapter from './search-qmd-adapter.js';
 export * as trigger from './trigger.js';
 export * as mcpServer from './mcp-server.js';
+export * as clawdapus from './clawdapus.js';
 export * from './runtime-adapter-contracts.js';
 export * from './adapter-cursor-cloud.js';

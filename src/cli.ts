@@ -713,6 +713,49 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// integration
+// ============================================================================
+
+const integrationCmd = program
+  .command('integration')
+  .description('Manage optional third-party integrations');
+
+addWorkspaceOption(
+  integrationCmd
+    .command('clawdapus')
+    .description('Import Clawdapus SKILL.md into this workspace')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--owner <name>', 'Skill owner override')
+    .option('--title <title>', 'Skill title to store in workgraph', 'clawdapus')
+    .option(
+      '--source-url <url>',
+      'Source URL for Clawdapus SKILL.md',
+      workgraph.clawdapus.DEFAULT_CLAWDAPUS_SKILL_URL,
+    )
+    .option('--force', 'Overwrite an existing imported Clawdapus skill')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    async () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.clawdapus.installClawdapusSkill(workspacePath, {
+        actor: opts.actor,
+        owner: opts.owner,
+        title: opts.title,
+        sourceUrl: opts.sourceUrl,
+        force: !!opts.force,
+      });
+    },
+    (result) => [
+      `${result.replacedExisting ? 'Updated' : 'Installed'} Clawdapus integration skill: ${result.skill.path}`,
+      `Source: ${result.sourceUrl}`,
+      `Status: ${String(result.skill.fields.status)}`,
+    ],
+  )
+);
+
+// ============================================================================
 // ledger
 // ============================================================================
 
