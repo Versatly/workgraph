@@ -233,7 +233,6 @@ function waitForProcessExit(pid: number, timeoutMs: number): Promise<void> {
         resolve();
       }
     }, 100);
-    timer.unref();
   });
 }
 
@@ -275,9 +274,24 @@ function readDaemonMeta(metaPath: string): Record<string, unknown> | undefined {
 }
 
 function isProcessAlive(pid: number): boolean {
+  if (isZombieProcess(pid)) return false;
   try {
     process.kill(pid, 0);
     return true;
+  } catch {
+    return false;
+  }
+}
+
+function isZombieProcess(pid: number): boolean {
+  const statPath = `/proc/${pid}/stat`;
+  if (!fs.existsSync(statPath)) return false;
+  try {
+    const stat = fs.readFileSync(statPath, 'utf-8');
+    const closingIdx = stat.indexOf(')');
+    if (closingIdx === -1 || closingIdx + 2 >= stat.length) return false;
+    const state = stat.slice(closingIdx + 2, closingIdx + 3);
+    return state === 'Z';
   } catch {
     return false;
   }

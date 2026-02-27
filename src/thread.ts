@@ -27,14 +27,7 @@ export function createThread(
 ): PrimitiveInstance {
   const normalizedSpace = opts.space ? normalizeWorkspaceRef(opts.space) : undefined;
   const contextRefs = opts.context_refs ?? [];
-  const shouldAutoLinkSpace = normalizedSpace
-    ? (() => {
-        const linked = store.read(workspacePath, normalizedSpace);
-        return linked?.type === 'space';
-      })()
-    : false;
   const mergedContextRefs = normalizedSpace && !contextRefs.includes(normalizedSpace)
-    && shouldAutoLinkSpace
     ? [...contextRefs, normalizedSpace]
     : contextRefs;
 
