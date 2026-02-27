@@ -143,6 +143,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
       proposal_thread: { type: 'ref', description: 'Thread coordinating review/promotion' },
       proposed_at:  { type: 'date' },
       promoted_at:  { type: 'date' },
+      depends_on:   { type: 'list', default: [], description: 'Skill dependencies by slug or path' },
       distribution: { type: 'string', default: 'tailscale-shared-vault', description: 'Distribution channel for skill usage' },
       tailscale_path: { type: 'string', description: 'Shared vault path over Tailscale' },
       tags:         { type: 'list', default: [] },

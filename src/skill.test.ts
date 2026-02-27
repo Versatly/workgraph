@@ -29,6 +29,7 @@ describe('skill primitive lifecycle', () => {
       {
         owner: 'agent-author',
         version: '1.0.0',
+        dependsOn: ['core-setup'],
         tags: ['coordination'],
       },
     );
@@ -36,6 +37,7 @@ describe('skill primitive lifecycle', () => {
     expect(created.type).toBe('skill');
     expect(created.path).toBe('skills/workgraph-manual/SKILL.md');
     expect(created.fields.status).toBe('draft');
+    expect(created.fields.depends_on).toEqual(['core-setup']);
     expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/skill-manifest.json'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/scripts'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/examples'))).toBe(true);
@@ -106,6 +108,30 @@ describe('skill primitive lifecycle', () => {
     expect(diff.path).toBe(second.path);
     expect(diff.latestEntryTs).toBeTruthy();
     expect(diff.previousEntryTs).toBeTruthy();
+  });
+
+  it('detects concurrent updates via expectedUpdatedAt guard', () => {
+    const initial = writeSkill(workspacePath, 'concurrency-skill', '# v1', 'agent-author', { status: 'draft' });
+    const initialUpdatedAt = String(initial.fields.updated);
+    const next = writeSkill(workspacePath, 'concurrency-skill', '# v2', 'agent-author', {
+      status: 'proposed',
+      expectedUpdatedAt: initialUpdatedAt,
+    });
+    expect(next.fields.status).toBe('proposed');
+
+    expect(() => writeSkill(workspacePath, 'concurrency-skill', '# v3', 'agent-author', {
+      status: 'active',
+      expectedUpdatedAt: initialUpdatedAt,
+    })).toThrow('Concurrent skill update detected');
+  });
+
+  it('writes dependency metadata into skill manifest', () => {
+    writeSkill(workspacePath, 'dep-skill', '# dep', 'agent-author', {
+      dependsOn: ['base-skill', 'skills/other/SKILL.md'],
+    });
+    const manifestRaw = fs.readFileSync(path.join(workspacePath, 'skills/dep-skill/skill-manifest.json'), 'utf-8');
+    const manifest = JSON.parse(manifestRaw) as { dependsOn?: string[] };
+    expect(manifest.dependsOn).toEqual(['base-skill', 'skills/other/SKILL.md']);
   });
 
   it('loads legacy flat skill paths for backwards compatibility', () => {

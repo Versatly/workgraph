@@ -527,6 +527,8 @@ addWorkspaceOption(
     .option('--distribution <mode>', 'Distribution mode', 'tailscale-shared-vault')
     .option('--tailscale-path <path>', 'Shared Tailscale workspace path')
     .option('--reviewers <list>', 'Comma-separated reviewer names')
+    .option('--depends-on <list>', 'Comma-separated skill dependencies (slug/path)')
+    .option('--expected-updated-at <iso>', 'Optimistic concurrency guard for updates')
     .option('--tags <list>', 'Comma-separated tags')
     .option('--body <text>', 'Skill markdown content')
     .option('--body-file <path>', 'Read markdown content from file')
@@ -553,6 +555,8 @@ addWorkspaceOption(
           distribution: opts.distribution,
           tailscalePath: opts.tailscalePath,
           reviewers: csv(opts.reviewers),
+          dependsOn: csv(opts.dependsOn),
+          expectedUpdatedAt: opts.expectedUpdatedAt,
           tags: csv(opts.tags),
         }
       );

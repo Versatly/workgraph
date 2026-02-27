@@ -17,6 +17,8 @@ export interface WriteSkillOptions {
   tailscalePath?: string;
   reviewers?: string[];
   tags?: string[];
+  dependsOn?: string[];
+  expectedUpdatedAt?: string;
 }
 
 export interface ProposeSkillOptions {
@@ -43,6 +45,13 @@ export function writeSkill(
   const existing = store.read(workspacePath, bundleSkillPath) ?? store.read(workspacePath, legacyPath);
   const status = options.status ?? (existing?.fields.status as string | undefined) ?? 'draft';
 
+  if (existing && options.expectedUpdatedAt) {
+    const currentUpdatedAt = String(existing.fields.updated ?? '');
+    if (currentUpdatedAt !== options.expectedUpdatedAt) {
+      throw new Error(`Concurrent skill update detected for ${existing.path}. Expected updated="${options.expectedUpdatedAt}" but found "${currentUpdatedAt}".`);
+    }
+  }
+
   if (!existing) {
     ensureSkillBundleScaffold(workspacePath, slug);
     const created = store.create(workspacePath, 'skill', {
@@ -53,6 +62,7 @@ export function writeSkill(
       distribution: options.distribution ?? 'tailscale-shared-vault',
       tailscale_path: options.tailscalePath,
       reviewers: options.reviewers ?? [],
+      depends_on: options.dependsOn ?? [],
       tags: options.tags ?? [],
     }, body, actor, {
       pathOverride: bundleSkillPath,
@@ -69,6 +79,7 @@ export function writeSkill(
     distribution: options.distribution ?? existing.fields.distribution ?? 'tailscale-shared-vault',
     tailscale_path: options.tailscalePath ?? existing.fields.tailscale_path,
     reviewers: options.reviewers ?? existing.fields.reviewers ?? [],
+    depends_on: options.dependsOn ?? existing.fields.depends_on ?? [],
     tags: options.tags ?? existing.fields.tags ?? [],
   }, body, actor);
   writeSkillManifest(workspacePath, slug, updated, actor);
@@ -266,6 +277,9 @@ function writeSkillManifest(
     owner: String(skill.fields.owner ?? actor),
     skillVersion: String(skill.fields.version ?? '0.1.0'),
     status: String(skill.fields.status ?? 'draft'),
+    dependsOn: Array.isArray(skill.fields.depends_on)
+      ? skill.fields.depends_on.map((value) => String(value))
+      : [],
     components: {
       skillDoc: 'SKILL.md',
       scriptsDir: 'scripts/',
