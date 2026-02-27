@@ -1187,6 +1187,29 @@ addWorkspaceOption(
   )
 );
 
+addWorkspaceOption(
+  graphCmd
+    .command('neighbors <nodePath>')
+    .description('Query incoming/outgoing wiki-link neighbors for one node')
+    .option('--refresh', 'Refresh graph index before querying')
+    .option('--json', 'Emit structured JSON output')
+).action((nodePath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.graph.graphNeighborhood(workspacePath, nodePath, {
+        refresh: !!opts.refresh,
+      });
+    },
+    (result) => [
+      `Node: ${result.node} (${result.exists ? 'exists' : 'missing'})`,
+      `Outgoing: ${result.outgoing.length}`,
+      `Incoming: ${result.incoming.length}`,
+    ],
+  )
+);
+
 // ============================================================================
 // policy
 // ============================================================================

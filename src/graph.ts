@@ -20,6 +20,13 @@ export interface WikiGraphIndex {
   hubs: Array<{ node: string; degree: number }>;
 }
 
+export interface WikiGraphNeighborhood {
+  node: string;
+  exists: boolean;
+  outgoing: string[];
+  incoming: string[];
+}
+
 const GRAPH_INDEX_FILE = '.workgraph/graph-index.json';
 
 export function graphIndexPath(workspacePath: string): string {
@@ -115,6 +122,28 @@ export function graphHygieneReport(workspacePath: string): {
     hubs: graph.hubs,
     orphans: graph.orphans,
     brokenLinks: graph.brokenLinks,
+  };
+}
+
+export function graphNeighborhood(
+  workspacePath: string,
+  nodeRef: string,
+  options: { refresh?: boolean } = {},
+): WikiGraphNeighborhood {
+  const graph = options.refresh
+    ? refreshWikiLinkGraphIndex(workspacePath)
+    : (readWikiLinkGraphIndex(workspacePath) ?? buildWikiLinkGraph(workspacePath));
+  const node = normalizeWikiRef(nodeRef);
+  const outgoing = graph.edges
+    .filter((edge) => edge.from === node)
+    .map((edge) => edge.to)
+    .sort();
+  const incoming = (graph.backlinks[node] ?? []).slice().sort();
+  return {
+    node,
+    exists: graph.nodes.includes(node),
+    outgoing,
+    incoming,
   };
 }
 

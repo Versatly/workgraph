@@ -66,6 +66,7 @@ workgraph search "auth" --mode auto --json
 workgraph checkpoint "Completed API layer" --next "implement tests" --actor agent-worker --json
 workgraph board generate --output "ops/Workgraph Board.md" --json
 workgraph graph hygiene --json
+workgraph graph neighbors context-nodes/context-node-1 --json
 workgraph dispatch create "Review blockers" --actor agent-lead --json
 workgraph dispatch mark run_123 --status succeeded --output "Review complete" --actor agent-lead --json
 workgraph trigger fire triggers/escalate-blocked.md --event-key "thread-blocked-001" --actor agent-lead --json

@@ -68,5 +68,11 @@ describe('graph index and board generation', () => {
     const hygiene = graph.graphHygieneReport(workspacePath);
     expect(hygiene.orphans).toContain('orphan.md');
     expect(hygiene.brokenLinkCount).toBeGreaterThan(0);
+
+    const neighborhood = graph.graphNeighborhood(workspacePath, 'alpha.md');
+    expect(neighborhood.exists).toBe(true);
+    expect(neighborhood.outgoing).toContain('beta.md');
+    expect(neighborhood.outgoing).toContain('missing-note.md');
+    expect(neighborhood.incoming).toContain('beta.md');
   });
 });
