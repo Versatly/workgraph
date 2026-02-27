@@ -1,5 +1,5 @@
 /**
- * Runtime dispatch contract (MVP local adapter).
+ * Runtime dispatch contract with adapter-backed execution.
  */
 
 import fs from 'node:fs';
@@ -7,6 +7,8 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
+import { resolveDispatchAdapter } from './runtime-adapter-registry.js';
+import type { DispatchAdapterLogEntry } from './runtime-adapter-contracts.js';
 import type { DispatchRun, RunStatus } from './types.js';
 
 const RUNS_FILE = '.workgraph/dispatch-runs.json';
@@ -17,6 +19,15 @@ export interface DispatchCreateInput {
   objective: string;
   context?: Record<string, unknown>;
   idempotencyKey?: string;
+}
+
+export interface DispatchExecuteInput {
+  actor: string;
+  agents?: string[];
+  maxSteps?: number;
+  stepDelayMs?: number;
+  space?: string;
+  createCheckpoint?: boolean;
 }
 
 export function createRun(workspacePath: string, input: DispatchCreateInput): DispatchRun {
@@ -91,16 +102,23 @@ export function markRun(
   runId: string,
   actor: string,
   nextStatus: Exclude<RunStatus, 'queued'>,
-  options: { output?: string; error?: string } = {},
+  options: { output?: string; error?: string; contextPatch?: Record<string, unknown> } = {},
 ): DispatchRun {
   const run = setStatus(workspacePath, runId, actor, nextStatus, `Run moved to ${nextStatus}.`);
   if (options.output) run.output = options.output;
   if (options.error) run.error = options.error;
+  if (options.contextPatch && Object.keys(options.contextPatch).length > 0) {
+    run.context = {
+      ...(run.context ?? {}),
+      ...options.contextPatch,
+    };
+  }
   const state = loadRuns(workspacePath);
   const target = state.runs.find((entry) => entry.id === runId);
   if (target) {
     target.output = run.output;
     target.error = run.error;
+    target.context = run.context;
     target.updatedAt = new Date().toISOString();
     saveRuns(workspacePath, state);
     syncRunPrimitive(workspacePath, target, actor);
@@ -120,6 +138,86 @@ export function listRuns(workspacePath: string, options: { status?: RunStatus; l
     return runs.slice(0, options.limit);
   }
   return runs;
+}
+
+export async function executeRun(
+  workspacePath: string,
+  runId: string,
+  input: DispatchExecuteInput,
+): Promise<DispatchRun> {
+  const existing = status(workspacePath, runId);
+  if (!['queued', 'running'].includes(existing.status)) {
+    throw new Error(`Run ${runId} is in terminal status "${existing.status}" and cannot be executed.`);
+  }
+
+  const adapter = resolveDispatchAdapter(existing.adapter);
+  if (!adapter.execute) {
+    throw new Error(`Dispatch adapter "${existing.adapter}" does not implement execute().`);
+  }
+
+  if (existing.status === 'queued') {
+    setStatus(workspacePath, runId, input.actor, 'running', `Run started on adapter "${existing.adapter}".`);
+  }
+
+  const execution = await adapter.execute({
+    workspacePath,
+    runId,
+    actor: input.actor,
+    objective: existing.objective,
+    context: existing.context,
+    agents: input.agents,
+    maxSteps: input.maxSteps,
+    stepDelayMs: input.stepDelayMs,
+    space: input.space,
+    createCheckpoint: input.createCheckpoint,
+    isCancelled: () => status(workspacePath, runId).status === 'cancelled',
+  });
+
+  appendRunLogs(workspacePath, runId, input.actor, execution.logs);
+
+  const finalStatus = execution.status;
+  if (finalStatus === 'queued' || finalStatus === 'running') {
+    throw new Error(`Adapter returned invalid terminal status "${finalStatus}" for execute().`);
+  }
+
+  return markRun(workspacePath, runId, input.actor, finalStatus, {
+    output: execution.output,
+    error: execution.error,
+    contextPatch: execution.metrics
+      ? { adapter_metrics: execution.metrics }
+      : undefined,
+  });
+}
+
+export async function createAndExecuteRun(
+  workspacePath: string,
+  createInput: DispatchCreateInput,
+  executeInput: Omit<DispatchExecuteInput, 'actor'> = {},
+): Promise<DispatchRun> {
+  const run = createRun(workspacePath, createInput);
+  return executeRun(workspacePath, run.id, {
+    actor: createInput.actor,
+    ...executeInput,
+  });
+}
+
+function appendRunLogs(
+  workspacePath: string,
+  runId: string,
+  actor: string,
+  logEntries: DispatchAdapterLogEntry[],
+): void {
+  if (logEntries.length === 0) return;
+  const state = loadRuns(workspacePath);
+  const run = state.runs.find((entry) => entry.id === runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+  run.logs.push(...logEntries);
+  run.updatedAt = new Date().toISOString();
+  saveRuns(workspacePath, state);
+  ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+    log_append_count: logEntries.length,
+  });
+  syncRunPrimitive(workspacePath, run, actor);
 }
 
 function setStatus(
@@ -238,6 +336,14 @@ function renderRunBody(run: DispatchRun): string {
     lines.push('## Error');
     lines.push('');
     lines.push(run.error);
+    lines.push('');
+  }
+  if (run.context && Object.keys(run.context).length > 0) {
+    lines.push('## Context');
+    lines.push('');
+    lines.push('```json');
+    lines.push(JSON.stringify(run.context, null, 2));
+    lines.push('```');
     lines.push('');
   }
   return lines.join('\n');

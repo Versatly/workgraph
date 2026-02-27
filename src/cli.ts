@@ -1318,6 +1318,51 @@ addWorkspaceOption(
 
 addWorkspaceOption(
   dispatchCmd
+    .command('create-execute <objective>')
+    .description('Create and execute a run with autonomous multi-agent coordination')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--adapter <name>', 'Adapter name', 'cursor-cloud')
+    .option('--idempotency-key <key>', 'Idempotency key')
+    .option('--agents <actors>', 'Comma-separated agent identities for autonomous execution')
+    .option('--max-steps <n>', 'Maximum scheduler steps', '200')
+    .option('--step-delay-ms <ms>', 'Delay between scheduling steps', '25')
+    .option('--space <spaceRef>', 'Restrict execution to one space')
+    .option('--no-checkpoint', 'Skip automatic checkpoint generation after execution')
+    .option('--json', 'Emit structured JSON output')
+).action((objective, opts) =>
+  runCommand(
+    opts,
+    async () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        run: await workgraph.dispatch.createAndExecuteRun(
+          workspacePath,
+          {
+            actor: opts.actor,
+            adapter: opts.adapter,
+            objective,
+            idempotencyKey: opts.idempotencyKey,
+          },
+          {
+            agents: csv(opts.agents),
+            maxSteps: Number.parseInt(String(opts.maxSteps), 10),
+            stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
+            space: opts.space,
+            createCheckpoint: opts.checkpoint,
+          },
+        ),
+      };
+    },
+    (result) => [
+      `Run executed: ${result.run.id} [${result.run.status}]`,
+      ...(result.run.output ? [`Output: ${result.run.output}`] : []),
+      ...(result.run.error ? [`Error: ${result.run.error}`] : []),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
     .command('list')
     .description('List runs')
     .option('--status <status>', 'queued|running|succeeded|failed|cancelled')
@@ -1354,6 +1399,41 @@ addWorkspaceOption(
       };
     },
     (result) => [`${result.run.id} [${result.run.status}]`],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('execute <runId>')
+    .description('Execute a queued/running run via adapter autonomous scheduling')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--agents <actors>', 'Comma-separated agent identities')
+    .option('--max-steps <n>', 'Maximum scheduler steps', '200')
+    .option('--step-delay-ms <ms>', 'Delay between scheduling steps', '25')
+    .option('--space <spaceRef>', 'Restrict execution to one space')
+    .option('--no-checkpoint', 'Skip automatic checkpoint generation after execution')
+    .option('--json', 'Emit structured JSON output')
+).action((runId, opts) =>
+  runCommand(
+    opts,
+    async () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        run: await workgraph.dispatch.executeRun(workspacePath, runId, {
+          actor: opts.actor,
+          agents: csv(opts.agents),
+          maxSteps: Number.parseInt(String(opts.maxSteps), 10),
+          stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
+          space: opts.space,
+          createCheckpoint: opts.checkpoint,
+        }),
+      };
+    },
+    (result) => [
+      `Run executed: ${result.run.id} [${result.run.status}]`,
+      ...(result.run.output ? [`Output: ${result.run.output}`] : []),
+      ...(result.run.error ? [`Error: ${result.run.error}`] : []),
+    ],
   )
 );
 
@@ -1560,7 +1640,31 @@ addWorkspaceOption(
   )
 );
 
-program.parse();
+// ============================================================================
+// mcp
+// ============================================================================
+
+const mcpCmd = program
+  .command('mcp')
+  .description('Run Workgraph MCP server');
+
+addWorkspaceOption(
+  mcpCmd
+    .command('serve')
+    .description('Serve stdio MCP tools/resources for this workspace')
+    .option('-a, --actor <name>', 'Default actor for MCP write tools', DEFAULT_ACTOR)
+    .option('--read-only', 'Disable all MCP write tools')
+).action(async (opts) => {
+  const workspacePath = resolveWorkspacePath(opts);
+  console.error(`Starting MCP server for workspace: ${workspacePath}`);
+  await workgraph.mcpServer.startWorkgraphMcpServer({
+    workspacePath,
+    defaultActor: opts.actor,
+    readOnly: !!opts.readOnly,
+  });
+});
+
+await program.parseAsync();
 
 function addWorkspaceOption<T extends Command>(command: T): T {
   return command
@@ -1638,13 +1742,13 @@ function wantsJson(opts: JsonCapableOptions): boolean {
   return false;
 }
 
-function runCommand<T>(
+async function runCommand<T>(
   opts: JsonCapableOptions,
-  action: () => T,
+  action: () => T | Promise<T>,
   renderText: (result: T) => string[]
-): void {
+): Promise<void> {
   try {
-    const result = action();
+    const result = await action();
     if (wantsJson(opts)) {
       console.log(JSON.stringify({ ok: true, data: result }, null, 2));
       return;
