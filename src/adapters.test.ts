@@ -79,4 +79,22 @@ describe('dispatch production adapters', () => {
       });
     }
   });
+
+  it('executes claude-code adapter through configured command template', async () => {
+    const run = dispatch.createRun(workspacePath, {
+      actor: 'adapter-tester',
+      adapter: 'claude-code',
+      objective: 'Run claude adapter command template',
+      context: {
+        claude_command_template: 'printf claude_adapter_ok',
+      },
+    });
+
+    const result = await dispatch.executeRun(workspacePath, run.id, {
+      actor: 'adapter-tester',
+    });
+
+    expect(result.status).toBe('succeeded');
+    expect(result.output).toContain('claude_adapter_ok');
+  });
 });

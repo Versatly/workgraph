@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { Command } from 'commander';
 import * as workgraph from './index.js';
@@ -8,6 +9,10 @@ type JsonCapableOptions = {
   workspace?: string;
   vault?: string;
   sharedVault?: string;
+  dryRun?: boolean;
+  __dryRunWorkspace?: string;
+  __dryRunWorkspaceRoot?: string;
+  __dryRunOriginal?: string;
 };
 
 const DEFAULT_ACTOR =
@@ -46,7 +51,7 @@ addWorkspaceOption(
   runCommand(
     opts,
     () => {
-      const workspacePath = path.resolve(targetPath || resolveWorkspacePath(opts));
+      const workspacePath = resolveInitTargetPath(targetPath, opts);
       const result = workgraph.workspace.initWorkspace(workspacePath, {
         name: opts.name,
         createTypeDirs: opts.typeDirs,
@@ -76,7 +81,8 @@ addWorkspaceOption(
   threadCmd
     .command('create <title>')
     .description('Create a new thread')
-    .requiredOption('-g, --goal <goal>', 'What success looks like')
+    .option('-g, --goal <goal>', 'What success looks like')
+    .option('--description <text>', 'Alias for --goal')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
     .option('-p, --priority <level>', 'urgent | high | medium | low', 'medium')
     .option('--deps <paths>', 'Comma-separated dependency thread paths')
@@ -90,8 +96,12 @@ addWorkspaceOption(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
+      const goal = opts.goal ?? opts.description;
+      if (!goal) {
+        throw new Error('Missing thread goal. Provide --goal (or --description).');
+      }
       return {
-        thread: workgraph.thread.createThread(workspacePath, title, opts.goal, opts.actor, {
+        thread: workgraph.thread.createThread(workspacePath, title, goal, opts.actor, {
           priority: opts.priority,
           deps: csv(opts.deps),
           parent: opts.parent,
@@ -343,7 +353,8 @@ addWorkspaceOption(
   primitiveCmd
     .command('define <name>')
     .description('Define a new primitive type')
-    .requiredOption('-d, --description <desc>', 'Type description')
+    .option('-d, --description <desc>', 'Type description')
+    .option('--describe <desc>', 'Alias for --description')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
     .option('--fields <specs...>', 'Field definitions as "name:type"')
     .option('--dir <directory>', 'Storage directory override')
@@ -353,6 +364,10 @@ addWorkspaceOption(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
+      const description = opts.description ?? opts.describe;
+      if (!description) {
+        throw new Error('Missing primitive type description. Provide --description (or --describe).');
+      }
       const fields: Record<string, workgraph.FieldDefinition> = {};
       for (const spec of opts.fields ?? []) {
         const [fieldName, fieldType = 'string'] = String(spec).split(':');
@@ -361,7 +376,7 @@ addWorkspaceOption(
       const type = workgraph.registry.defineType(
         workspacePath,
         name,
-        opts.description,
+        description,
         fields,
         opts.actor,
         opts.dir
@@ -382,6 +397,9 @@ addWorkspaceOption(
     ]
   )
 );
+
+registerPrimitiveSchemaCommand('schema', 'Show supported fields for a primitive type');
+registerPrimitiveSchemaCommand('fields', 'Alias for schema');
 
 // ============================================================================
 // bases
@@ -458,6 +476,59 @@ addWorkspaceOption(
     (result) => result.types.map(t => `${t.name} (${t.directory}/) ${t.builtIn ? '[built-in]' : ''}`)
   )
 );
+
+function registerPrimitiveSchemaCommand(commandName: string, description: string): void {
+  addWorkspaceOption(
+    primitiveCmd
+      .command(`${commandName} <typeName>`)
+      .description(description)
+      .option('--json', 'Emit structured JSON output')
+  ).action((typeName, opts) =>
+    runCommand(
+      opts,
+      () => {
+        const workspacePath = resolveWorkspacePath(opts);
+        const typeDef = workgraph.registry.getType(workspacePath, typeName);
+        if (!typeDef) {
+          throw new Error(`Unknown primitive type "${typeName}". Use \`workgraph primitive list\` to inspect available types.`);
+        }
+        const fields = Object.entries(typeDef.fields).map(([name, definition]) => ({
+          name,
+          type: definition.type,
+          required: definition.required === true,
+          default: definition.default,
+          enum: definition.enum ?? [],
+          description: definition.description ?? '',
+          template: definition.template ?? undefined,
+          pattern: definition.pattern ?? undefined,
+          refTypes: definition.refTypes ?? [],
+        }));
+        return {
+          type: typeDef.name,
+          description: typeDef.description,
+          directory: typeDef.directory,
+          builtIn: typeDef.builtIn,
+          fields,
+        };
+      },
+      (result) => [
+        `Type: ${result.type} (${result.directory}/)`,
+        `Description: ${result.description}`,
+        ...result.fields.map((field) => {
+          const traits = [
+            field.required ? 'required' : 'optional',
+            field.default !== undefined ? `default=${JSON.stringify(field.default)}` : undefined,
+            field.enum.length > 0 ? `enum=[${field.enum.join(', ')}]` : undefined,
+            field.refTypes.length > 0 ? `refTypes=[${field.refTypes.join(', ')}]` : undefined,
+            field.template ? `template=${field.template}` : undefined,
+            field.pattern ? `pattern=${field.pattern}` : undefined,
+          ].filter(Boolean);
+          return `- ${field.name}: ${field.type}${traits.length > 0 ? ` (${traits.join(', ')})` : ''}${field.description ? ` — ${field.description}` : ''}`;
+        }),
+      ],
+    )
+  );
+}
 
 addWorkspaceOption(
   primitiveCmd
@@ -1726,6 +1797,7 @@ addWorkspaceOption(
     .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
     .option('--space <spaceRef>', 'Restrict autonomy to one space')
     .option('--stale-claim-minutes <m>', 'Drift warning threshold', '30')
+    .option('--heartbeat-file <path>', 'Write daemon heartbeat JSON to this path')
     .option('--no-execute-triggers', 'Disable trigger engine actions')
     .option('--no-execute-ready-threads', 'Disable ready-thread dispatch execution')
     .option('--json', 'Emit structured JSON output')
@@ -1746,6 +1818,7 @@ addWorkspaceOption(
         stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
         space: opts.space,
         staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
+        heartbeatFile: opts.heartbeatFile,
         executeTriggers: opts.executeTriggers,
         executeReadyThreads: opts.executeReadyThreads,
       });
@@ -1757,6 +1830,109 @@ addWorkspaceOption(
       ...result.cycles.map((cycle) =>
         `Cycle ${cycle.cycle}: ready=${cycle.readyThreads} trigger_actions=${cycle.triggerActions} run=${cycle.runStatus ?? 'none'} drift_issues=${cycle.driftIssues}`,
       ),
+    ],
+  )
+);
+
+const autonomyDaemonCmd = autonomyCmd
+  .command('daemon')
+  .description('Manage autonomy process lifecycle (pid + heartbeat + logs)');
+
+addWorkspaceOption(
+  autonomyDaemonCmd
+    .command('start')
+    .description('Start autonomy in detached daemon mode')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--adapter <name>', 'Dispatch adapter name', 'cursor-cloud')
+    .option('--agents <actors>', 'Comma-separated autonomous worker identities')
+    .option('--poll-ms <ms>', 'Cycle poll interval', '2000')
+    .option('--max-cycles <n>', 'Maximum cycles before daemon exits')
+    .option('--max-steps <n>', 'Maximum adapter scheduler steps', '200')
+    .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
+    .option('--space <spaceRef>', 'Restrict autonomy to one space')
+    .option('--stale-claim-minutes <m>', 'Drift warning threshold', '30')
+    .option('--log-path <path>', 'Daemon log file path (workspace-relative)')
+    .option('--heartbeat-path <path>', 'Heartbeat file path (workspace-relative)')
+    .option('--no-execute-triggers', 'Disable trigger engine actions')
+    .option('--no-execute-ready-threads', 'Disable ready-thread dispatch execution')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.autonomyDaemon.startAutonomyDaemon(workspacePath, {
+        cliEntrypointPath: process.argv[1] ?? path.resolve('bin/workgraph.js'),
+        actor: opts.actor,
+        adapter: opts.adapter,
+        agents: csv(opts.agents),
+        pollMs: Number.parseInt(String(opts.pollMs), 10),
+        maxCycles: opts.maxCycles ? Number.parseInt(String(opts.maxCycles), 10) : undefined,
+        maxSteps: Number.parseInt(String(opts.maxSteps), 10),
+        stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
+        space: opts.space,
+        staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
+        logPath: opts.logPath,
+        heartbeatPath: opts.heartbeatPath,
+        executeTriggers: opts.executeTriggers,
+        executeReadyThreads: opts.executeReadyThreads,
+      });
+    },
+    (result) => [
+      `Daemon running: ${result.running}`,
+      ...(result.pid ? [`PID: ${result.pid}`] : []),
+      `PID file: ${result.pidPath}`,
+      `Heartbeat: ${result.heartbeatPath}`,
+      `Log: ${result.logPath}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  autonomyDaemonCmd
+    .command('status')
+    .description('Show autonomy daemon status')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.autonomyDaemon.readAutonomyDaemonStatus(workspacePath);
+    },
+    (result) => [
+      `Daemon running: ${result.running}`,
+      ...(result.pid ? [`PID: ${result.pid}`] : []),
+      ...(result.heartbeat ? [`Last heartbeat: ${result.heartbeat.ts}`] : ['Last heartbeat: none']),
+      `PID file: ${result.pidPath}`,
+      `Heartbeat: ${result.heartbeatPath}`,
+      `Log: ${result.logPath}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  autonomyDaemonCmd
+    .command('stop')
+    .description('Stop autonomy daemon by PID')
+    .option('--signal <signal>', 'Signal for graceful stop', 'SIGTERM')
+    .option('--timeout-ms <ms>', 'Graceful wait timeout', '5000')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    async () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.autonomyDaemon.stopAutonomyDaemon(workspacePath, {
+        signal: String(opts.signal) as NodeJS.Signals,
+        timeoutMs: Number.parseInt(String(opts.timeoutMs), 10),
+      });
+    },
+    (result) => [
+      `Stopped: ${result.stopped}`,
+      `Previously running: ${result.previouslyRunning}`,
+      ...(result.pid ? [`PID: ${result.pid}`] : []),
+      `Daemon running now: ${result.status.running}`,
     ],
   )
 );
@@ -1843,15 +2019,58 @@ function addWorkspaceOption<T extends Command>(command: T): T {
   return command
     .option('-w, --workspace <path>', 'Workgraph workspace path')
     .option('--vault <path>', 'Alias for --workspace')
-    .option('--shared-vault <path>', 'Shared vault path (e.g. mounted via Tailscale)');
+    .option('--shared-vault <path>', 'Shared vault path (e.g. mounted via Tailscale)')
+    .option('--dry-run', 'Execute against a temporary workspace copy and discard changes');
 }
 
 function resolveWorkspacePath(opts: JsonCapableOptions): string {
+  const originalWorkspacePath = resolveWorkspacePathBase(opts);
+  if (!opts.dryRun) return originalWorkspacePath;
+  if (opts.__dryRunWorkspace) return opts.__dryRunWorkspace;
+
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workgraph-dry-run-'));
+  const sandboxWorkspace = path.join(sandboxRoot, 'workspace');
+  if (fs.existsSync(originalWorkspacePath)) {
+    fs.cpSync(originalWorkspacePath, sandboxWorkspace, {
+      recursive: true,
+      force: true,
+    });
+  } else {
+    fs.mkdirSync(sandboxWorkspace, { recursive: true });
+  }
+
+  opts.__dryRunWorkspaceRoot = sandboxRoot;
+  opts.__dryRunWorkspace = sandboxWorkspace;
+  opts.__dryRunOriginal = originalWorkspacePath;
+  return sandboxWorkspace;
+}
+
+function resolveWorkspacePathBase(opts: JsonCapableOptions): string {
   const explicit = opts.workspace || opts.vault || opts.sharedVault;
   if (explicit) return path.resolve(explicit);
   if (process.env.WORKGRAPH_SHARED_VAULT) return path.resolve(process.env.WORKGRAPH_SHARED_VAULT);
   if (process.env.WORKGRAPH_PATH) return path.resolve(process.env.WORKGRAPH_PATH);
   return process.cwd();
+}
+
+function resolveInitTargetPath(targetPath: string | undefined, opts: JsonCapableOptions): string {
+  const requestedPath = path.resolve(targetPath || resolveWorkspacePathBase(opts));
+  if (!opts.dryRun) return requestedPath;
+  if (opts.__dryRunWorkspace) return opts.__dryRunWorkspace;
+
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workgraph-init-dry-run-'));
+  const sandboxWorkspace = path.join(sandboxRoot, path.basename(requestedPath));
+  if (fs.existsSync(requestedPath)) {
+    fs.cpSync(requestedPath, sandboxWorkspace, {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  opts.__dryRunWorkspaceRoot = sandboxRoot;
+  opts.__dryRunWorkspace = sandboxWorkspace;
+  opts.__dryRunOriginal = requestedPath;
+  return sandboxWorkspace;
 }
 
 function parseSetPairs(pairs: string[]): Record<string, unknown> {
@@ -1922,20 +2141,39 @@ async function runCommand<T>(
 ): Promise<void> {
   try {
     const result = await action();
+    const dryRunMetadata = opts.dryRun
+      ? {
+          dryRun: true,
+          targetWorkspace: opts.__dryRunOriginal ?? resolveWorkspacePathBase(opts),
+          sandboxWorkspace: opts.__dryRunWorkspace,
+        }
+      : {};
     if (wantsJson(opts)) {
-      console.log(JSON.stringify({ ok: true, data: result }, null, 2));
+      console.log(JSON.stringify({ ok: true, ...dryRunMetadata, data: result }, null, 2));
       return;
+    }
+    if (opts.dryRun) {
+      console.log(
+        [
+          '[dry-run] Executed against sandbox workspace and discarded changes.',
+          `Target: ${opts.__dryRunOriginal ?? resolveWorkspacePathBase(opts)}`,
+          `Sandbox: ${opts.__dryRunWorkspace ?? 'n/a'}`,
+        ].join(' '),
+      );
     }
     const lines = renderText(result);
     for (const line of lines) console.log(line);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (wantsJson(opts)) {
-      console.error(JSON.stringify({ ok: false, error: message }, null, 2));
+      console.error(JSON.stringify({ ok: false, dryRun: !!opts.dryRun, error: message }, null, 2));
     } else {
       console.error(`Error: ${message}`);
     }
+    cleanupDryRunSandbox(opts);
     process.exit(1);
+  } finally {
+    cleanupDryRunSandbox(opts);
   }
 }
 
@@ -1957,4 +2195,14 @@ async function waitForShutdownSignal(maxRuntimeMs?: number): Promise<void> {
       ? setTimeout(done, maxRuntimeMs)
       : null;
   });
+}
+
+function cleanupDryRunSandbox(opts: JsonCapableOptions): void {
+  if (!opts.dryRun || !opts.__dryRunWorkspaceRoot) return;
+  if (fs.existsSync(opts.__dryRunWorkspaceRoot)) {
+    fs.rmSync(opts.__dryRunWorkspaceRoot, { recursive: true, force: true });
+  }
+  delete opts.__dryRunWorkspaceRoot;
+  delete opts.__dryRunWorkspace;
+  delete opts.__dryRunOriginal;
 }

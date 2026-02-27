@@ -1,6 +1,8 @@
 import * as dispatch from './dispatch.js';
 import * as thread from './thread.js';
 import * as triggerEngine from './trigger-engine.js';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export interface AutonomyLoopOptions {
   actor: string;
@@ -16,6 +18,7 @@ export interface AutonomyLoopOptions {
   staleClaimMinutes?: number;
   executeTriggers?: boolean;
   executeReadyThreads?: boolean;
+  heartbeatFile?: string;
 }
 
 export interface AutonomyCycleReport {
@@ -104,6 +107,10 @@ export async function runAutonomyLoop(
       driftIssues: drift.issues.length,
     };
     cycles.push(report);
+    writeHeartbeat(options.heartbeatFile, {
+      ts: new Date().toISOString(),
+      ...report,
+    });
 
     const isIdle = report.readyThreads === 0 && report.triggerActions === 0;
     if (isIdle) {
@@ -128,6 +135,11 @@ export async function runAutonomyLoop(
     staleClaimMinutes: options.staleClaimMinutes,
     strictLedger: true,
   });
+  writeHeartbeat(options.heartbeatFile, {
+    ts: new Date().toISOString(),
+    finalReadyThreads,
+    finalDriftOk: finalDrift.ok,
+  });
   return {
     cycles,
     finalReadyThreads,
@@ -144,4 +156,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+function writeHeartbeat(filePath: string | undefined, payload: Record<string, unknown>): void {
+  if (!filePath) return;
+  const absolutePath = path.resolve(filePath);
+  const dir = path.dirname(absolutePath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(absolutePath, JSON.stringify(payload, null, 2) + '\n', 'utf-8');
 }

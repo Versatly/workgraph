@@ -186,5 +186,7 @@ function normalizeWikiRef(rawRef: string): string {
   const primary = rawRef.split('|')[0].trim();
   if (!primary) return primary;
   if (/^https?:\/\//i.test(primary)) return primary;
-  return primary.endsWith('.md') ? primary : `${primary}.md`;
+  const withoutAnchor = primary.split('#')[0].trim();
+  if (!withoutAnchor) return withoutAnchor;
+  return withoutAnchor.endsWith('.md') ? withoutAnchor : `${withoutAnchor}.md`;
 }

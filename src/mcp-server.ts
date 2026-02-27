@@ -8,6 +8,7 @@ import * as autonomy from './autonomy.js';
 import * as orientation from './orientation.js';
 import * as policy from './policy.js';
 import * as query from './query.js';
+import * as registry from './registry.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
 import * as triggerEngine from './trigger-engine.js';
@@ -179,6 +180,52 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
           offset: args.offset,
         });
         return okResult({ results, count: results.length }, `Query returned ${results.length} primitive(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_primitive_schema',
+    {
+      title: 'Primitive Schema',
+      description: 'Return field schema and metadata for a primitive type.',
+      inputSchema: {
+        typeName: z.string().min(1),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const typeDef = registry.getType(options.workspacePath, args.typeName);
+        if (!typeDef) {
+          return errorResult(`Unknown primitive type "${args.typeName}".`);
+        }
+        const fields = Object.entries(typeDef.fields).map(([name, definition]) => ({
+          name,
+          type: definition.type,
+          required: definition.required === true,
+          default: definition.default,
+          enum: definition.enum ?? [],
+          description: definition.description ?? '',
+          template: definition.template ?? undefined,
+          pattern: definition.pattern ?? undefined,
+          refTypes: definition.refTypes ?? [],
+        }));
+        return okResult(
+          {
+            type: typeDef.name,
+            description: typeDef.description,
+            directory: typeDef.directory,
+            builtIn: typeDef.builtIn,
+            fields,
+          },
+          `Primitive schema for ${typeDef.name}.`,
+        );
       } catch (error) {
         return errorResult(error);
       }

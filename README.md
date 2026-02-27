@@ -57,6 +57,10 @@ workgraph thread create "Ship command center" \
   --priority high \
   --actor agent-lead \
   --json
+workgraph thread create "Ship command center" \
+  --description "Alias for --goal also supported" \
+  --actor agent-lead \
+  --json
 
 workgraph thread next --claim --actor agent-worker --json
 workgraph status --json
@@ -68,9 +72,12 @@ workgraph board generate --output "ops/Workgraph Board.md" --json
 workgraph graph hygiene --json
 workgraph graph neighbors context-nodes/context-node-1 --json
 workgraph dispatch create "Review blockers" --actor agent-lead --json
+workgraph primitive schema thread --json
 workgraph dispatch mark run_123 --status succeeded --output "Review complete" --actor agent-lead --json
 workgraph dispatch create-execute "Close all ready threads in platform space" \
   --actor agent-lead \
+  --adapter claude-code \
+  --idempotency-key "coord-001" \
   --agents agent-a,agent-b,agent-c \
   --space spaces/platform \
   --json
@@ -78,12 +85,16 @@ workgraph dispatch adapters --json
 workgraph trigger fire triggers/escalate-blocked.md --event-key "thread-blocked-001" --actor agent-lead --json
 workgraph trigger engine run --actor agent-lead --watch --poll-ms 2000 --max-cycles 50 --json
 workgraph autonomy run --actor agent-lead --agents agent-a,agent-b --watch --poll-ms 2000 --max-cycles 100 --json
+workgraph autonomy daemon start --actor agent-lead --agents agent-a,agent-b --poll-ms 2000 --json
+workgraph autonomy daemon status --json
+workgraph autonomy daemon stop --json
 workgraph onboarding update onboarding/onboarding-for-agent-architect.md --status paused --actor agent-lead --json
 workgraph mcp serve -w /path/to/workspace --actor agent-ops --read-only
 workgraph mcp serve-http -w /path/to/workspace --host 0.0.0.0 --port 8787 --bearer-token-env WORKGRAPH_MCP_TOKEN
 workgraph ledger show --count 20 --json
 workgraph command-center --output "ops/Command Center.md" --json
 workgraph bases generate --refresh-registry --json
+workgraph thread create "safe-op" -w /path/to/workspace --goal "preview mutation" --dry-run --json
 ```
 
 ### JSON contract
@@ -135,6 +146,20 @@ Replay end-to-end autonomy + trigger + MCP HTTP + adapter validation:
 npm run build
 node scripts/product-demo.mjs --log /tmp/workgraph-product-demo.log
 ```
+
+### Claude Code adapter template
+
+Set a command template for the `claude-code` adapter:
+
+```bash
+export WORKGRAPH_CLAUDE_COMMAND_TEMPLATE='claude -p {prompt_shell}'
+workgraph dispatch create-execute "Plan next migration" \
+  --adapter claude-code \
+  --actor agent-lead \
+  --json
+```
+
+Template tokens: `{workspace}`, `{run_id}`, `{actor}`, `{objective}`, `{prompt}`, `{prompt_shell}`.
 
 ### MCP over Tailnet / third-party clients
 
