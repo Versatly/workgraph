@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://versatly.dev/workgraph/schemas/primitive.schema.json",
+  "title": "Workgraph Primitive",
+  "type": "object",
+  "required": ["path", "type", "fields", "body"],
+  "properties": {
+    "path": { "type": "string", "minLength": 1 },
+    "type": { "type": "string", "minLength": 1 },
+    "fields": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "body": { "type": "string" }
+  },
+  "additionalProperties": false
+}

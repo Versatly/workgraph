@@ -4,6 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { loadRegistry, saveRegistry } from './registry.js';
 import { listSkills, loadSkill, promoteSkill, proposeSkill, writeSkill } from './skill.js';
+import { skillDiff, skillHistory } from './skill.js';
 import { read as readPrimitive } from './store.js';
 
 let workspacePath: string;
@@ -28,13 +29,20 @@ describe('skill primitive lifecycle', () => {
       {
         owner: 'agent-author',
         version: '1.0.0',
+        dependsOn: ['core-setup'],
         tags: ['coordination'],
       },
     );
 
     expect(created.type).toBe('skill');
-    expect(created.path).toBe('skills/workgraph-manual.md');
+    expect(created.path).toBe('skills/workgraph-manual/SKILL.md');
     expect(created.fields.status).toBe('draft');
+    expect(created.fields.depends_on).toEqual(['core-setup']);
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/skill-manifest.json'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/scripts'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/examples'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/tests'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/assets'))).toBe(true);
 
     const loaded = loadSkill(workspacePath, 'workgraph-manual');
     expect(loaded.path).toBe(created.path);
@@ -82,5 +90,70 @@ describe('skill primitive lifecycle', () => {
     expect(all).toHaveLength(2);
     expect(active).toHaveLength(1);
     expect(active[0].fields.title).toBe('skill-b');
+  });
+
+  it('supports updated-since filtering and skill history/diff summaries', () => {
+    const first = writeSkill(workspacePath, 'history-skill', '# v1', 'agent-author', { status: 'draft' });
+    const since = new Date().toISOString();
+    const second = writeSkill(workspacePath, 'history-skill', '# v2', 'agent-author', { status: 'proposed' });
+    expect(second.path).toBe(first.path);
+
+    const recent = listSkills(workspacePath, { updatedSince: since });
+    expect(recent.map((item) => item.path)).toContain(second.path);
+
+    const history = skillHistory(workspacePath, 'history-skill');
+    expect(history.length).toBeGreaterThanOrEqual(2);
+
+    const diff = skillDiff(workspacePath, 'history-skill');
+    expect(diff.path).toBe(second.path);
+    expect(diff.latestEntryTs).toBeTruthy();
+    expect(diff.previousEntryTs).toBeTruthy();
+  });
+
+  it('detects concurrent updates via expectedUpdatedAt guard', () => {
+    const initial = writeSkill(workspacePath, 'concurrency-skill', '# v1', 'agent-author', { status: 'draft' });
+    const initialUpdatedAt = String(initial.fields.updated);
+    const next = writeSkill(workspacePath, 'concurrency-skill', '# v2', 'agent-author', {
+      status: 'proposed',
+      expectedUpdatedAt: initialUpdatedAt,
+    });
+    expect(next.fields.status).toBe('proposed');
+
+    expect(() => writeSkill(workspacePath, 'concurrency-skill', '# v3', 'agent-author', {
+      status: 'active',
+      expectedUpdatedAt: initialUpdatedAt,
+    })).toThrow('Concurrent skill update detected');
+  });
+
+  it('writes dependency metadata into skill manifest', () => {
+    writeSkill(workspacePath, 'dep-skill', '# dep', 'agent-author', {
+      dependsOn: ['base-skill', 'skills/other/SKILL.md'],
+    });
+    const manifestRaw = fs.readFileSync(path.join(workspacePath, 'skills/dep-skill/skill-manifest.json'), 'utf-8');
+    const manifest = JSON.parse(manifestRaw) as { dependsOn?: string[] };
+    expect(manifest.dependsOn).toEqual(['base-skill', 'skills/other/SKILL.md']);
+  });
+
+  it('loads legacy flat skill paths for backwards compatibility', () => {
+    const legacyPath = path.join(workspacePath, 'skills');
+    fs.mkdirSync(legacyPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(legacyPath, 'legacy-skill.md'),
+      [
+        '---',
+        'title: legacy-skill',
+        'status: draft',
+        'version: 0.1.0',
+        'created: 2026-02-27T00:00:00.000Z',
+        'updated: 2026-02-27T00:00:00.000Z',
+        '---',
+        '',
+        '# Legacy Skill',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const loaded = loadSkill(workspacePath, 'legacy-skill');
+    expect(loaded.path).toBe('skills/legacy-skill.md');
   });
 });

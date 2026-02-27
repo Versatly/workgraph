@@ -14,6 +14,14 @@ Agent-first workgraph workspace for multi-agent collaboration.
 - Generated markdown command center (`workgraph command-center`)
 - Native skill primitive lifecycle (`workgraph skill write/load/propose/promote`)
 - Primitive-registry manifest + auto-generated `.base` files
+- Orientation loop commands (`workgraph status/brief/checkpoint/intake`)
+- Multi-filter primitive query (`workgraph query ...`)
+- Core + QMD-compatible keyword search (`workgraph search ...`)
+- Obsidian Kanban board generation/sync (`workgraph board generate|sync`)
+- Wiki-link graph indexing and hygiene reports (`workgraph graph index|hygiene`)
+- Policy party registry and sensitive transition gates
+- Programmatic dispatch contract (`workgraph dispatch ...`) with explicit status transitions
+- Trigger dispatch bridge (`workgraph trigger fire ...`) with idempotency keying
 - JSON-friendly CLI for agent orchestration
 
 No memory-category scaffolding, no qmd dependency, no observational-memory pipeline.
@@ -51,6 +59,18 @@ workgraph thread create "Ship command center" \
   --json
 
 workgraph thread next --claim --actor agent-worker --json
+workgraph status --json
+workgraph brief --actor agent-worker --json
+workgraph query --type thread --status open --limit 10 --json
+workgraph search "auth" --mode auto --json
+workgraph checkpoint "Completed API layer" --next "implement tests" --actor agent-worker --json
+workgraph board generate --output "ops/Workgraph Board.md" --json
+workgraph graph hygiene --json
+workgraph graph neighbors context-nodes/context-node-1 --json
+workgraph dispatch create "Review blockers" --actor agent-lead --json
+workgraph dispatch mark run_123 --status succeeded --output "Review complete" --actor agent-lead --json
+workgraph trigger fire triggers/escalate-blocked.md --event-key "thread-blocked-001" --actor agent-lead --json
+workgraph onboarding update onboarding/onboarding-for-agent-architect.md --status paused --actor agent-lead --json
 workgraph ledger show --count 20 --json
 workgraph command-center --output "ops/Command Center.md" --json
 workgraph bases generate --refresh-registry --json
@@ -64,6 +84,38 @@ All commands support `--json` and emit:
 - Failure: `{ "ok": false, "error": "..." }` (non-zero exit)
 
 This is intended for robust parsing by autonomous agents.
+
+### Monorepo layout (MVP)
+
+The repository is now organized as a workspaces monorepo while preserving the
+published `@versatly/workgraph` package compatibility surface.
+
+Key workspace packages:
+
+- `packages/kernel`
+- `packages/cli`
+- `packages/sdk`
+- `packages/control-api`
+- `packages/runtime-adapter-core`
+- `packages/adapter-cursor-cloud`
+- `packages/policy`
+- `packages/testkit`
+- `packages/search-qmd-adapter`
+- `packages/obsidian-integration`
+- `packages/skills`
+
+Migration notes: see `docs/MIGRATION.md`.
+
+### Demo vault generator
+
+Generate the large Obsidian demo workspace used for stress-testing:
+
+```bash
+npm run demo:workspace
+npm run demo:obsidian-setup
+```
+
+Runbook: `docs/OBSIDIAN_DEMO.md`.
 
 ### Space-scoped scheduling
 
@@ -114,6 +166,9 @@ workgraph skill write "workgraph-manual" \
 workgraph skill propose workgraph-manual --actor agent-reviewer --space spaces/platform --json
 workgraph skill promote workgraph-manual --actor agent-lead --json
 workgraph skill load workgraph-manual --json
+workgraph skill list --updated-since 2026-02-27T00:00:00.000Z --json
+workgraph skill history workgraph-manual --limit 10 --json
+workgraph skill diff workgraph-manual --json
 ```
 
 ## Legacy memory stacks vs Workgraph primitives

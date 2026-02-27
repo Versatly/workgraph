@@ -1,0 +1,9 @@
+{
+  "path": "threads/example-thread.md",
+  "type": "thread",
+  "fields": {
+    "title": "Example Thread",
+    "status": "open"
+  },
+  "body": "## Goal\n\nShip feature."
+}

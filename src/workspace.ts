@@ -6,6 +6,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { loadRegistry, saveRegistry, listTypes } from './registry.js';
 import { syncPrimitiveRegistryManifest, generateBasesFromPrimitiveRegistry } from './bases.js';
+import { refreshWikiLinkGraphIndex } from './graph.js';
+import { loadPolicyRegistry } from './policy.js';
 import type { WorkgraphWorkspaceConfig } from './types.js';
 
 const WORKGRAPH_CONFIG_FILE = '.workgraph.json';
@@ -74,6 +76,8 @@ export function initWorkspace(targetPath: string, options: InitWorkspaceOptions 
   const bases = options.createBases === false
     ? { generated: [] }
     : generateBasesFromPrimitiveRegistry(resolvedPath);
+  loadPolicyRegistry(resolvedPath);
+  refreshWikiLinkGraphIndex(resolvedPath);
 
   return {
     workspacePath: resolvedPath,

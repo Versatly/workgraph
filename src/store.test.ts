@@ -187,4 +187,56 @@ describe('store', () => {
       'threads/backend-2.md',
     ]);
   });
+
+  it('enforces enum and template constraints for registered fields', () => {
+    defineType(workspacePath, 'release', 'Release primitive', {
+      version: { type: 'string', required: true, template: 'semver' },
+      channel: { type: 'string', enum: ['alpha', 'beta', 'stable'], default: 'alpha' },
+    }, 'agent-release');
+
+    expect(() => create(
+      workspacePath,
+      'release',
+      { title: 'Release bad semver', version: 'v1', channel: 'alpha' },
+      '',
+      'agent-release',
+    )).toThrow('template "semver"');
+
+    expect(() => create(
+      workspacePath,
+      'release',
+      { title: 'Release bad channel', version: '1.2.3', channel: 'preview' },
+      '',
+      'agent-release',
+    )).toThrow('must be one of');
+
+    const ok = create(
+      workspacePath,
+      'release',
+      { title: 'Release ok', version: '1.2.3', channel: 'stable' },
+      '',
+      'agent-release',
+    );
+    expect(ok.path).toBe('releases/release-ok.md');
+  });
+
+  it('enforces ref type constraints on ref fields', () => {
+    const parent = create(workspacePath, 'thread', { title: 'Parent', goal: 'g' }, '', 'agent');
+    create(workspacePath, 'space', { title: 'Platform' }, '', 'agent');
+    expect(parent.path).toBe('threads/parent.md');
+
+    const child = create(workspacePath, 'thread', {
+      title: 'Child',
+      goal: 'g',
+      parent: 'threads/parent.md',
+      space: 'spaces/platform.md',
+    }, '', 'agent');
+    expect(child.path).toBe('threads/child.md');
+
+    expect(() => create(workspacePath, 'thread', {
+      title: 'Invalid parent',
+      goal: 'g',
+      parent: 'spaces/platform.md',
+    }, '', 'agent')).toThrow('allowed types');
+  });
 });

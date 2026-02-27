@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://versatly.dev/workgraph/schemas/query.schema.json",
+  "title": "Workgraph Query Filters",
+  "type": "object",
+  "properties": {
+    "type": { "type": "string" },
+    "status": { "type": "string" },
+    "owner": { "type": "string" },
+    "tag": { "type": "string" },
+    "text": { "type": "string" },
+    "pathIncludes": { "type": "string" },
+    "updatedAfter": { "type": "string", "format": "date-time" },
+    "updatedBefore": { "type": "string", "format": "date-time" },
+    "createdAfter": { "type": "string", "format": "date-time" },
+    "createdBefore": { "type": "string", "format": "date-time" },
+    "limit": { "type": "integer", "minimum": 0 },
+    "offset": { "type": "integer", "minimum": 0 }
+  },
+  "additionalProperties": false
+}

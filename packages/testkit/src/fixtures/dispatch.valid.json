@@ -1,0 +1,23 @@
+{
+  "create": {
+    "objective": "Run checks",
+    "actor": "agent-a",
+    "adapter": "cursor-cloud",
+    "idempotencyKey": "abc"
+  },
+  "status": {
+    "runId": "run_123"
+  },
+  "followup": {
+    "runId": "run_123",
+    "actor": "agent-a",
+    "input": "continue"
+  },
+  "stop": {
+    "runId": "run_123",
+    "actor": "agent-a"
+  },
+  "logs": {
+    "runId": "run_123"
+  }
+}
