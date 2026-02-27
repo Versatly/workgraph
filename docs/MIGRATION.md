@@ -32,5 +32,6 @@ npm run ci
 You can generate the large Obsidian demo vault with:
 
 ```bash
-node scripts/generate-demo-workspace.mjs /tmp/workgraph-obsidian-demo
+npm run demo:workspace
+npm run demo:obsidian-setup
 ```

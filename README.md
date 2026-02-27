@@ -105,8 +105,11 @@ Migration notes: see `docs/MIGRATION.md`.
 Generate the large Obsidian demo workspace used for stress-testing:
 
 ```bash
-node scripts/generate-demo-workspace.mjs /tmp/workgraph-obsidian-demo
+npm run demo:workspace
+npm run demo:obsidian-setup
 ```
+
+Runbook: `docs/OBSIDIAN_DEMO.md`.
 
 ### Space-scoped scheduling
 
