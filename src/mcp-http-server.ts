@@ -1,0 +1,209 @@
+import { randomUUID } from 'node:crypto';
+import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
+import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { createWorkgraphMcpServer, type WorkgraphMcpServerOptions } from './mcp-server.js';
+
+export interface WorkgraphMcpHttpServerOptions extends WorkgraphMcpServerOptions {
+  host?: string;
+  port?: number;
+  endpointPath?: string;
+  allowedHosts?: string[];
+  bearerToken?: string;
+}
+
+export interface WorkgraphMcpHttpServerHandle {
+  host: string;
+  port: number;
+  endpointPath: string;
+  url: string;
+  close: () => Promise<void>;
+}
+
+interface SessionBinding {
+  transport: StreamableHTTPServerTransport;
+  server: McpServer;
+}
+
+export async function startWorkgraphMcpHttpServer(
+  options: WorkgraphMcpHttpServerOptions,
+): Promise<WorkgraphMcpHttpServerHandle> {
+  const host = options.host ?? '127.0.0.1';
+  const port = clampInt(options.port, 8787, 1, 65535);
+  const endpointPath = normalizeEndpointPath(options.endpointPath ?? '/mcp');
+  const app = createMcpExpressApp({
+    host,
+    allowedHosts: options.allowedHosts,
+  });
+  const sessions: Record<string, SessionBinding> = {};
+  const authToken = readString(options.bearerToken);
+
+  app.get('/health', (_req, res) => {
+    res.json({
+      ok: true,
+      mode: 'streamable-http',
+      endpointPath,
+      workspacePath: options.workspacePath,
+    });
+  });
+
+  app.use(endpointPath, (req, res, next) => {
+    if (!authToken) return next();
+    const authorization = readString(req.headers.authorization);
+    if (!authorization || !authorization.startsWith('Bearer ')) {
+      res.status(401).json({
+        ok: false,
+        error: 'Missing bearer token.',
+      });
+      return;
+    }
+    const providedToken = authorization.slice('Bearer '.length);
+    if (providedToken !== authToken) {
+      res.status(403).json({
+        ok: false,
+        error: 'Invalid bearer token.',
+      });
+      return;
+    }
+    next();
+  });
+
+  app.post(endpointPath, async (req, res) => {
+    const sessionId = readSessionId(req.headers['mcp-session-id']);
+    try {
+      let binding: SessionBinding | undefined;
+      if (sessionId && sessions[sessionId]) {
+        binding = sessions[sessionId];
+      } else if (!sessionId && isInitializeRequest(req.body)) {
+        let transport: StreamableHTTPServerTransport;
+        transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: () => randomUUID(),
+          onsessioninitialized: (generatedSessionId) => {
+            sessions[generatedSessionId] = {
+              transport,
+              server: binding!.server,
+            };
+          },
+        });
+        const server = createWorkgraphMcpServer({
+          workspacePath: options.workspacePath,
+          defaultActor: options.defaultActor,
+          readOnly: options.readOnly,
+          name: options.name,
+          version: options.version,
+        });
+        binding = { transport, server };
+        transport.onclose = () => {
+          const sid = transport.sessionId;
+          if (sid && sessions[sid]) {
+            delete sessions[sid];
+          }
+        };
+        await server.connect(transport);
+      } else {
+        res.status(400).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Bad Request: Missing valid MCP session.',
+          },
+          id: null,
+        });
+        return;
+      }
+
+      await binding.transport.handleRequest(req, res, req.body);
+    } catch (error) {
+      if (!res.headersSent) {
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: error instanceof Error ? error.message : String(error),
+          },
+          id: null,
+        });
+      }
+    }
+  });
+
+  app.get(endpointPath, async (req, res) => {
+    const sessionId = readSessionId(req.headers['mcp-session-id']);
+    if (!sessionId || !sessions[sessionId]) {
+      res.status(400).send('Invalid or missing MCP session ID.');
+      return;
+    }
+    await sessions[sessionId].transport.handleRequest(req, res);
+  });
+
+  app.delete(endpointPath, async (req, res) => {
+    const sessionId = readSessionId(req.headers['mcp-session-id']);
+    if (!sessionId || !sessions[sessionId]) {
+      res.status(400).send('Invalid or missing MCP session ID.');
+      return;
+    }
+    await sessions[sessionId].transport.handleRequest(req, res);
+    const binding = sessions[sessionId];
+    delete sessions[sessionId];
+    await binding.server.close();
+  });
+
+  const server = await new Promise<{
+    close: (callback: (error?: Error) => void) => void;
+    address: () => string | { address: string; family: string; port: number } | null;
+  }>((resolve, reject) => {
+    const httpServer = app.listen(port, host, () => {
+      resolve(httpServer);
+    });
+    httpServer.on('error', reject);
+  });
+
+  const address = server.address();
+  const actualPort = typeof address === 'object' && address ? address.port : port;
+  const baseUrl = `http://${host}:${actualPort}`;
+  return {
+    host,
+    port: actualPort,
+    endpointPath,
+    url: `${baseUrl}${endpointPath}`,
+    close: async () => {
+      await Promise.all(
+        Object.values(sessions).map(async (binding) => {
+          await binding.server.close();
+        }),
+      );
+      await new Promise<void>((resolve, reject) => {
+        server.close((error?: Error) => {
+          if (error) {
+            reject(error);
+            return;
+          }
+          resolve();
+        });
+      });
+    },
+  };
+}
+
+function readSessionId(value: unknown): string | undefined {
+  if (Array.isArray(value)) return readString(value[0]);
+  return readString(value);
+}
+
+function normalizeEndpointPath(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) return '/mcp';
+  return trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+}
+
+function readString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
+  const raw = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
+  return Math.min(max, Math.max(min, raw));
+}

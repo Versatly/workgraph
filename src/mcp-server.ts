@@ -4,11 +4,13 @@ import { z } from 'zod';
 import * as dispatch from './dispatch.js';
 import * as graph from './graph.js';
 import * as ledger from './ledger.js';
+import * as autonomy from './autonomy.js';
 import * as orientation from './orientation.js';
 import * as policy from './policy.js';
 import * as query from './query.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
+import * as triggerEngine from './trigger-engine.js';
 
 export interface WorkgraphMcpServerOptions {
   workspacePath: string;
@@ -514,6 +516,101 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
         if (!gate.allowed) return errorResult(gate.reason);
         const run = dispatch.stop(options.workspacePath, args.runId, actor);
         return okResult({ run }, `Stopped run ${run.id}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_trigger_engine_cycle',
+    {
+      title: 'Trigger Engine Cycle',
+      description: 'Process trigger events from ledger with idempotent cursor tracking.',
+      inputSchema: {
+        actor: z.string().optional(),
+        executeRuns: z.boolean().optional(),
+        agents: z.array(z.string()).optional(),
+        maxSteps: z.number().int().min(1).max(5000).optional(),
+        stepDelayMs: z.number().int().min(0).max(5000).optional(),
+        staleClaimMinutes: z.number().int().min(1).max(24 * 60).optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        if (!gate.allowed) return errorResult(gate.reason);
+        const result = await triggerEngine.runTriggerEngineCycle(options.workspacePath, {
+          actor,
+          executeRuns: args.executeRuns,
+          agents: args.agents,
+          maxSteps: args.maxSteps,
+          stepDelayMs: args.stepDelayMs,
+          staleClaimMinutes: args.staleClaimMinutes,
+          strictLedger: true,
+        });
+        return okResult(
+          result,
+          `Trigger cycle processed ${result.processedEntries} entries, fired ${result.actions.length} action(s).`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_autonomy_run',
+    {
+      title: 'Autonomy Run',
+      description: 'Run autonomous collaboration cycles with drift checks.',
+      inputSchema: {
+        actor: z.string().optional(),
+        adapter: z.string().optional(),
+        agents: z.array(z.string()).optional(),
+        maxCycles: z.number().int().min(1).max(10_000).optional(),
+        maxIdleCycles: z.number().int().min(1).max(1_000).optional(),
+        pollMs: z.number().int().min(1).max(60_000).optional(),
+        watch: z.boolean().optional(),
+        maxSteps: z.number().int().min(1).max(5000).optional(),
+        stepDelayMs: z.number().int().min(0).max(5000).optional(),
+        staleClaimMinutes: z.number().int().min(1).max(24 * 60).optional(),
+        executeTriggers: z.boolean().optional(),
+        executeReadyThreads: z.boolean().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        if (!gate.allowed) return errorResult(gate.reason);
+        const result = await autonomy.runAutonomyLoop(options.workspacePath, {
+          actor,
+          adapter: args.adapter,
+          agents: args.agents,
+          maxCycles: args.maxCycles,
+          maxIdleCycles: args.maxIdleCycles,
+          pollMs: args.pollMs,
+          watch: args.watch,
+          maxSteps: args.maxSteps,
+          stepDelayMs: args.stepDelayMs,
+          staleClaimMinutes: args.staleClaimMinutes,
+          executeTriggers: args.executeTriggers,
+          executeReadyThreads: args.executeReadyThreads,
+        });
+        return okResult(
+          result,
+          `Autonomy completed ${result.cycles.length} cycle(s); final ready threads=${result.finalReadyThreads}.`,
+        );
       } catch (error) {
         return errorResult(error);
       }

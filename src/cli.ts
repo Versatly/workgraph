@@ -1384,6 +1384,20 @@ addWorkspaceOption(
   )
 );
 
+dispatchCmd
+  .command('adapters')
+  .description('List registered dispatch adapters')
+  .option('--json', 'Emit structured JSON output')
+  .action((opts) =>
+    runCommand(
+      opts,
+      () => ({
+        adapters: workgraph.runtimeAdapterRegistry.listDispatchAdapters(),
+      }),
+      (result) => result.adapters,
+    )
+  );
+
 addWorkspaceOption(
   dispatchCmd
     .command('status <runId>')
@@ -1554,6 +1568,55 @@ addWorkspaceOption(
   )
 );
 
+const triggerEngineCmd = triggerCmd
+  .command('engine')
+  .description('Run trigger engine over ledger events');
+
+addWorkspaceOption(
+  triggerEngineCmd
+    .command('run')
+    .description('Process trigger events once or continuously')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--watch', 'Continuously process new events')
+    .option('--poll-ms <ms>', 'Poll interval in watch mode', '2000')
+    .option('--max-cycles <n>', 'Maximum cycles before exiting')
+    .option('--entry-limit <n>', 'Maximum ledger entries per cycle')
+    .option('--agents <actors>', 'Comma-separated agents used when executing runs')
+    .option('--max-steps <n>', 'Maximum adapter scheduler steps', '200')
+    .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
+    .option('--space <spaceRef>', 'Restrict run execution to one space')
+    .option('--stale-claim-minutes <m>', 'Drift warning threshold for stale claims', '30')
+    .option('--no-execute-runs', 'Do not execute dispatched runs')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    async () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.triggerEngine.runTriggerEngineLoop(workspacePath, {
+        actor: opts.actor,
+        watch: !!opts.watch,
+        pollMs: Number.parseInt(String(opts.pollMs), 10),
+        maxCycles: opts.maxCycles ? Number.parseInt(String(opts.maxCycles), 10) : undefined,
+        executeRuns: opts.executeRuns,
+        agents: csv(opts.agents),
+        maxSteps: Number.parseInt(String(opts.maxSteps), 10),
+        stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
+        space: opts.space,
+        staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
+        entryLimit: opts.entryLimit ? Number.parseInt(String(opts.entryLimit), 10) : undefined,
+      });
+    },
+    (result) => [
+      `Cycles: ${result.cycles.length}`,
+      `Last processed index: ${result.finalState.lastProcessedIndex}`,
+      ...result.cycles.map((cycle, idx) =>
+        `Cycle ${idx + 1}: entries=${cycle.processedEntries} actions=${cycle.actions.length} drift_ok=${cycle.drift.ok}`,
+      ),
+    ],
+  )
+);
+
 // ============================================================================
 // onboarding
 // ============================================================================
@@ -1641,6 +1704,64 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// autonomy
+// ============================================================================
+
+const autonomyCmd = program
+  .command('autonomy')
+  .description('Run long-lived autonomous collaboration loops');
+
+addWorkspaceOption(
+  autonomyCmd
+    .command('run')
+    .description('Run autonomy cycles (trigger engine + ready-thread execution)')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--adapter <name>', 'Dispatch adapter name', 'cursor-cloud')
+    .option('--agents <actors>', 'Comma-separated autonomous worker identities')
+    .option('--watch', 'Run continuously instead of stopping when idle')
+    .option('--poll-ms <ms>', 'Cycle poll interval', '2000')
+    .option('--max-cycles <n>', 'Maximum cycles before exit')
+    .option('--max-idle-cycles <n>', 'Idle cycles before exit in non-watch mode', '2')
+    .option('--max-steps <n>', 'Maximum adapter scheduler steps', '200')
+    .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
+    .option('--space <spaceRef>', 'Restrict autonomy to one space')
+    .option('--stale-claim-minutes <m>', 'Drift warning threshold', '30')
+    .option('--no-execute-triggers', 'Disable trigger engine actions')
+    .option('--no-execute-ready-threads', 'Disable ready-thread dispatch execution')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    async () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.autonomy.runAutonomyLoop(workspacePath, {
+        actor: opts.actor,
+        adapter: opts.adapter,
+        agents: csv(opts.agents),
+        watch: !!opts.watch,
+        pollMs: Number.parseInt(String(opts.pollMs), 10),
+        maxCycles: opts.maxCycles ? Number.parseInt(String(opts.maxCycles), 10) : undefined,
+        maxIdleCycles: Number.parseInt(String(opts.maxIdleCycles), 10),
+        maxSteps: Number.parseInt(String(opts.maxSteps), 10),
+        stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
+        space: opts.space,
+        staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
+        executeTriggers: opts.executeTriggers,
+        executeReadyThreads: opts.executeReadyThreads,
+      });
+    },
+    (result) => [
+      `Cycles: ${result.cycles.length}`,
+      `Final ready threads: ${result.finalReadyThreads}`,
+      `Final drift status: ${result.finalDriftOk ? 'ok' : 'issues'}`,
+      ...result.cycles.map((cycle) =>
+        `Cycle ${cycle.cycle}: ready=${cycle.readyThreads} trigger_actions=${cycle.triggerActions} run=${cycle.runStatus ?? 'none'} drift_issues=${cycle.driftIssues}`,
+      ),
+    ],
+  )
+);
+
+// ============================================================================
 // mcp
 // ============================================================================
 
@@ -1662,6 +1783,58 @@ addWorkspaceOption(
     defaultActor: opts.actor,
     readOnly: !!opts.readOnly,
   });
+});
+
+addWorkspaceOption(
+  mcpCmd
+    .command('serve-http')
+    .description('Serve MCP over Streamable HTTP (tailnet and remote clients)')
+    .option('-a, --actor <name>', 'Default actor for MCP write tools', DEFAULT_ACTOR)
+    .option('--read-only', 'Disable all MCP write tools')
+    .option('--host <host>', 'Host/interface to bind', '127.0.0.1')
+    .option('--port <n>', 'Port to bind', '8787')
+    .option('--path <route>', 'MCP HTTP endpoint path', '/mcp')
+    .option('--allowed-hosts <hosts>', 'Comma-separated host header allow-list')
+    .option('--bearer-token <token>', 'Bearer token required by HTTP endpoint')
+    .option('--bearer-token-env <name>', 'Environment variable containing bearer token')
+    .option('--max-runtime-ms <ms>', 'Optional max runtime before shutdown')
+    .option('--json', 'Emit structured JSON startup payload')
+).action(async (opts) => {
+  const workspacePath = resolveWorkspacePath(opts);
+  const envToken = opts.bearerTokenEnv ? process.env[String(opts.bearerTokenEnv)] : undefined;
+  const token = opts.bearerToken ?? envToken;
+  const server = await workgraph.mcpHttpServer.startWorkgraphMcpHttpServer({
+    workspacePath,
+    defaultActor: opts.actor,
+    readOnly: !!opts.readOnly,
+    host: opts.host,
+    port: Number.parseInt(String(opts.port), 10),
+    endpointPath: opts.path,
+    allowedHosts: csv(opts.allowedHosts),
+    bearerToken: token,
+  });
+
+  const startup = {
+    workspacePath,
+    host: server.host,
+    port: server.port,
+    endpoint: server.url,
+    readOnly: !!opts.readOnly,
+    auth: token ? 'bearer-token' : 'none',
+  };
+
+  if (wantsJson(opts)) {
+    console.log(JSON.stringify({ ok: true, data: startup }, null, 2));
+  } else {
+    console.error(`MCP HTTP server listening at ${server.url}`);
+    if (token) {
+      console.error('Bearer token auth is enabled.');
+    }
+  }
+
+  const maxRuntimeMs = opts.maxRuntimeMs ? Number.parseInt(String(opts.maxRuntimeMs), 10) : undefined;
+  await waitForShutdownSignal(maxRuntimeMs);
+  await server.close();
 });
 
 await program.parseAsync();
@@ -1764,4 +1937,24 @@ async function runCommand<T>(
     }
     process.exit(1);
   }
+}
+
+async function waitForShutdownSignal(maxRuntimeMs?: number): Promise<void> {
+  await new Promise<void>((resolve) => {
+    let resolved = false;
+    const done = () => {
+      if (resolved) return;
+      resolved = true;
+      process.off('SIGINT', onSignal);
+      process.off('SIGTERM', onSignal);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
+      resolve();
+    };
+    const onSignal = () => done();
+    process.on('SIGINT', onSignal);
+    process.on('SIGTERM', onSignal);
+    const timeoutHandle = (typeof maxRuntimeMs === 'number' && maxRuntimeMs > 0)
+      ? setTimeout(done, maxRuntimeMs)
+      : null;
+  });
 }

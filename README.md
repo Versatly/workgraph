@@ -74,9 +74,13 @@ workgraph dispatch create-execute "Close all ready threads in platform space" \
   --agents agent-a,agent-b,agent-c \
   --space spaces/platform \
   --json
+workgraph dispatch adapters --json
 workgraph trigger fire triggers/escalate-blocked.md --event-key "thread-blocked-001" --actor agent-lead --json
+workgraph trigger engine run --actor agent-lead --watch --poll-ms 2000 --max-cycles 50 --json
+workgraph autonomy run --actor agent-lead --agents agent-a,agent-b --watch --poll-ms 2000 --max-cycles 100 --json
 workgraph onboarding update onboarding/onboarding-for-agent-architect.md --status paused --actor agent-lead --json
 workgraph mcp serve -w /path/to/workspace --actor agent-ops --read-only
+workgraph mcp serve-http -w /path/to/workspace --host 0.0.0.0 --port 8787 --bearer-token-env WORKGRAPH_MCP_TOKEN
 workgraph ledger show --count 20 --json
 workgraph command-center --output "ops/Command Center.md" --json
 workgraph bases generate --refresh-registry --json
@@ -122,6 +126,27 @@ npm run demo:obsidian-setup
 ```
 
 Runbook: `docs/OBSIDIAN_DEMO.md`.
+
+### MCP over Tailnet / third-party clients
+
+Use Streamable HTTP mode for remote MCP clients over Tailscale/tailnet:
+
+```bash
+export WORKGRAPH_MCP_TOKEN="replace-with-strong-token"
+workgraph mcp serve-http \
+  -w /srv/workgraph \
+  --host 0.0.0.0 \
+  --port 8787 \
+  --allowed-hosts workgraph.tailnet.internal,127.0.0.1 \
+  --bearer-token-env WORKGRAPH_MCP_TOKEN
+```
+
+Then connect third-party MCP clients to:
+
+- Endpoint: `http://<tailnet-host>:8787/mcp`
+- Auth: `Authorization: Bearer <WORKGRAPH_MCP_TOKEN>`
+
+This keeps write tools policy-scoped while exposing read/write MCP operations to remote systems.
 
 ### Space-scoped scheduling
 
