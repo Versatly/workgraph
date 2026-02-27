@@ -8,6 +8,7 @@ import * as policy from './policy.js';
 import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';
 import * as trigger from './trigger.js';
+import * as thread from './thread.js';
 
 let workspacePath: string;
 
@@ -168,5 +169,41 @@ describe('policy gates and dispatch contract', () => {
       eventKey: 'evt-124',
     });
     expect(fired3.run.id).not.toBe(fired1.run.id);
+  });
+
+  it('executes an autonomous multi-agent run and closes ready dependency chains', async () => {
+    const a = thread.createThread(workspacePath, 'Build parser', 'Parser baseline', 'agent-lead', { priority: 'high' });
+    const b = thread.createThread(workspacePath, 'Build validator', 'Validator baseline', 'agent-lead', { priority: 'high' });
+    const c = thread.createThread(workspacePath, 'Wire parser+validator', 'Integrate parser and validator', 'agent-lead', {
+      deps: [a.path, b.path],
+      priority: 'medium',
+    });
+    const d = thread.createThread(workspacePath, 'Finalize release note', 'Prepare release note', 'agent-lead', {
+      deps: [c.path],
+      priority: 'low',
+    });
+
+    const queued = dispatch.createRun(workspacePath, {
+      actor: 'agent-lead',
+      objective: 'Autonomous execution test',
+      adapter: 'cursor-cloud',
+    });
+
+    const finished = await dispatch.executeRun(workspacePath, queued.id, {
+      actor: 'agent-lead',
+      agents: ['agent-a', 'agent-b', 'agent-c'],
+      maxSteps: 50,
+      stepDelayMs: 0,
+      createCheckpoint: true,
+    });
+
+    expect(finished.status).toBe('succeeded');
+    expect(finished.output).toContain('Completed threads');
+    expect(finished.logs.some((entry) => entry.message.includes('claimed'))).toBe(true);
+    expect(dispatch.status(workspacePath, queued.id).status).toBe('succeeded');
+    expect(store.read(workspacePath, a.path)?.fields.status).toBe('done');
+    expect(store.read(workspacePath, b.path)?.fields.status).toBe('done');
+    expect(store.read(workspacePath, c.path)?.fields.status).toBe('done');
+    expect(store.read(workspacePath, d.path)?.fields.status).toBe('done');
   });
 });
