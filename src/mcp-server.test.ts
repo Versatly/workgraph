@@ -136,13 +136,15 @@ describe('workgraph mcp server', () => {
   });
 });
 
-function getStructured<T>(result: {
-  structuredContent?: unknown;
-}): T {
-  if (!result.structuredContent) {
+function getStructured<T>(result: unknown): T {
+  if (!result || typeof result !== 'object' || !('structuredContent' in result)) {
     throw new Error('Expected structuredContent in MCP tool response.');
   }
-  return result.structuredContent as T;
+  const typed = result as { structuredContent?: unknown };
+  if (!typed.structuredContent) {
+    throw new Error('Expected structuredContent in MCP tool response.');
+  }
+  return typed.structuredContent as T;
 }
 
 function isToolError(result: unknown): boolean {

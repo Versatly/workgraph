@@ -276,6 +276,9 @@ function getRun(workspacePath: string, runId: string): DispatchRun | null {
 
 function ensureRunPrimitive(workspacePath: string, run: DispatchRun, actor: string): void {
   const safeTitle = `${run.objective} (${run.id.slice(0, 8)})`;
+  const runPrimitivePath = `runs/${run.id}.md`;
+  const existing = store.read(workspacePath, runPrimitivePath);
+  if (existing) return;
   store.create(
     workspacePath,
     'run',
@@ -290,6 +293,7 @@ function ensureRunPrimitive(workspacePath: string, run: DispatchRun, actor: stri
     },
     `## Objective\n\n${run.objective}\n`,
     actor,
+    { pathOverride: runPrimitivePath },
   );
 }
 
