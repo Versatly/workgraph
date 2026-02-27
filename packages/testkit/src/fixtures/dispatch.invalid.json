@@ -1,0 +1,18 @@
+{
+  "create": {
+    "objective": ""
+  },
+  "status": {
+    "runId": "run_123"
+  },
+  "followup": {
+    "runId": "run_123",
+    "input": "continue"
+  },
+  "stop": {
+    "runId": "run_123"
+  },
+  "logs": {
+    "runId": "run_123"
+  }
+}

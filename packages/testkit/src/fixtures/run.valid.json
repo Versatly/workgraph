@@ -1,0 +1,17 @@
+{
+  "id": "run_123",
+  "createdAt": "2026-02-27T00:00:00.000Z",
+  "updatedAt": "2026-02-27T00:00:00.000Z",
+  "actor": "agent-runner",
+  "adapter": "cursor-cloud",
+  "objective": "Execute task",
+  "status": "queued",
+  "followups": [],
+  "logs": [
+    {
+      "ts": "2026-02-27T00:00:00.000Z",
+      "level": "info",
+      "message": "created"
+    }
+  ]
+}

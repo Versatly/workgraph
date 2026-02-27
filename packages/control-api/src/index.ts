@@ -1,1 +1,1 @@
-export * as dispatch from '../../../src/dispatch.js';
+export * from './dispatch.js';

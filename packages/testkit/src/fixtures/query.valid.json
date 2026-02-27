@@ -1,0 +1,9 @@
+{
+  "type": "thread",
+  "status": "open",
+  "owner": "agent-a",
+  "tag": "backend",
+  "text": "auth",
+  "limit": 10,
+  "offset": 0
+}

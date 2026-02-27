@@ -98,6 +98,16 @@ Key workspace packages:
 - `packages/obsidian-integration`
 - `packages/skills`
 
+Migration notes: see `docs/MIGRATION.md`.
+
+### Demo vault generator
+
+Generate the large Obsidian demo workspace used for stress-testing:
+
+```bash
+node scripts/generate-demo-workspace.mjs /tmp/workgraph-obsidian-demo
+```
+
 ### Space-scoped scheduling
 
 ```bash

@@ -1,0 +1,12 @@
+{
+  "version": 1,
+  "parties": {
+    "agent-a": {
+      "id": "agent-a",
+      "roles": ["reviewer"],
+      "capabilities": ["promote:sensitive"],
+      "createdAt": "2026-02-27T00:00:00.000Z",
+      "updatedAt": "2026-02-27T00:00:00.000Z"
+    }
+  }
+}
