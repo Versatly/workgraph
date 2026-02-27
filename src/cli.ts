@@ -522,7 +522,7 @@ addWorkspaceOption(
     .description('Create or update a skill primitive')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
     .option('--owner <name>', 'Skill owner')
-    .option('--version <semver>', 'Skill version')
+    .option('--skill-version <semver>', 'Skill version')
     .option('--status <status>', 'draft | proposed | active | deprecated | archived')
     .option('--distribution <mode>', 'Distribution mode', 'tailscale-shared-vault')
     .option('--tailscale-path <path>', 'Shared Tailscale workspace path')
@@ -548,7 +548,7 @@ addWorkspaceOption(
         opts.actor,
         {
           owner: opts.owner,
-          version: opts.version,
+          version: opts.skillVersion,
           status: opts.status,
           distribution: opts.distribution,
           tailscalePath: opts.tailscalePath,
@@ -642,7 +642,7 @@ addWorkspaceOption(
     .command('promote <skillRef>')
     .description('Promote a proposed/draft skill to active')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--version <semver>', 'Explicit promoted version')
+    .option('--skill-version <semver>', 'Explicit promoted version')
     .option('--json', 'Emit structured JSON output')
 ).action((skillRef, opts) =>
   runCommand(
@@ -651,7 +651,7 @@ addWorkspaceOption(
       const workspacePath = resolveWorkspacePath(opts);
       return {
         skill: workgraph.skill.promoteSkill(workspacePath, skillRef, opts.actor, {
-          version: opts.version,
+          version: opts.skillVersion,
         }),
       };
     },
