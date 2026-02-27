@@ -38,8 +38,8 @@ export interface GenerateBasesResult {
   generated: string[];
 }
 
-const REGISTRY_MANIFEST_FILE = '.clawvault/primitive-registry.yaml';
-const DEFAULT_BASES_DIR = '.clawvault/bases';
+const REGISTRY_MANIFEST_FILE = '.workgraph/primitive-registry.yaml';
+const DEFAULT_BASES_DIR = '.workgraph/bases';
 
 export function primitiveRegistryManifestPath(workspacePath: string): string {
   return path.join(workspacePath, REGISTRY_MANIFEST_FILE);

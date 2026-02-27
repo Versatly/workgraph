@@ -7,7 +7,7 @@ import path from 'node:path';
 import type { FieldDefinition, PrimitiveTypeDefinition, Registry } from './types.js';
 import * as ledger from './ledger.js';
 
-const REGISTRY_FILE = '.clawvault/registry.json';
+const REGISTRY_FILE = '.workgraph/registry.json';
 const CURRENT_VERSION = 1;
 
 // ---------------------------------------------------------------------------
@@ -200,7 +200,7 @@ export function defineType(
 
   registry.types[safeName] = typeDef;
   saveRegistry(workspacePath, registry);
-  ledger.append(workspacePath, actor, 'define', '.clawvault/registry.json', safeName, {
+  ledger.append(workspacePath, actor, 'define', '.workgraph/registry.json', safeName, {
     name: safeName,
     directory: typeDef.directory,
     fields: Object.keys(typeDef.fields),

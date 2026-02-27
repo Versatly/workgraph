@@ -1,7 +1,7 @@
 /**
  * Append-only event ledger.
  *
- * Format: one JSON object per line (.jsonl) in `.clawvault/ledger.jsonl`.
+ * Format: one JSON object per line (.jsonl) in `.workgraph/ledger.jsonl`.
  */
 
 import fs from 'node:fs';
@@ -14,9 +14,9 @@ import type {
   LedgerOp,
 } from './types.js';
 
-const LEDGER_FILE = '.clawvault/ledger.jsonl';
-const LEDGER_INDEX_FILE = '.clawvault/ledger-index.json';
-const LEDGER_CHAIN_FILE = '.clawvault/ledger-chain.json';
+const LEDGER_FILE = '.workgraph/ledger.jsonl';
+const LEDGER_INDEX_FILE = '.workgraph/ledger-index.json';
+const LEDGER_CHAIN_FILE = '.workgraph/ledger-chain.json';
 const LEDGER_INDEX_VERSION = 1;
 const LEDGER_CHAIN_VERSION = 1;
 const LEDGER_GENESIS_HASH = 'GENESIS';

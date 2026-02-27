@@ -44,7 +44,7 @@ export function initWorkspace(targetPath: string, options: InitWorkspaceOptions 
 
   const createdDirectories: string[] = [];
   ensureDir(resolvedPath, createdDirectories);
-  ensureDir(path.join(resolvedPath, '.clawvault'), createdDirectories);
+  ensureDir(path.join(resolvedPath, '.workgraph'), createdDirectories);
 
   const registry = loadRegistry(resolvedPath);
   saveRegistry(resolvedPath, registry);
@@ -82,7 +82,7 @@ export function initWorkspace(targetPath: string, options: InitWorkspaceOptions 
     createdDirectories,
     seededTypes: listTypes(resolvedPath).map(t => t.name),
     generatedBases: bases.generated,
-    primitiveRegistryManifestPath: '.clawvault/primitive-registry.yaml',
+    primitiveRegistryManifestPath: '.workgraph/primitive-registry.yaml',
   };
 }
 

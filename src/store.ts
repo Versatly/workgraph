@@ -121,14 +121,14 @@ export function update(
 }
 
 // ---------------------------------------------------------------------------
-// Delete (soft — moves to .clawvault/archive/)
+// Delete (soft — moves to .workgraph/archive/)
 // ---------------------------------------------------------------------------
 
 export function remove(workspacePath: string, relPath: string, actor: string): void {
   const absPath = path.join(workspacePath, relPath);
   if (!fs.existsSync(absPath)) throw new Error(`Not found: ${relPath}`);
 
-  const archiveDir = path.join(workspacePath, '.clawvault', 'archive');
+  const archiveDir = path.join(workspacePath, '.workgraph', 'archive');
   if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
 
   const archivePath = path.join(archiveDir, path.basename(relPath));

@@ -194,7 +194,7 @@ describe('ledger', () => {
     const entries = readAll(workspacePath);
     entries[1].actor = 'intruder';
     fs.writeFileSync(
-      path.join(workspacePath, '.clawvault/ledger.jsonl'),
+      path.join(workspacePath, '.workgraph/ledger.jsonl'),
       entries.map(entry => JSON.stringify(entry)).join('\n') + '\n',
       'utf-8',
     );

@@ -1,4 +1,4 @@
-# ContextHub WorkGraph Monorepo PRD
+# WorkGraph Monorepo PRD
 
 Date: 2026-02-27
 Status: Draft v1 (execution plan)
@@ -6,7 +6,7 @@ Source vision: `new-contextgraph-monorepo.md`
 
 ## 1) Objective
 
-Build a new standalone `contexthub-workgraph` monorepo that:
+Build a new standalone `workgraph` monorepo that:
 
 - closes current critical gaps (query/orientation/policy gates/dispatch)
 - stays agent-runtime agnostic

@@ -1,4 +1,4 @@
-# ContextHub WorkGraph Vision
+# WorkGraph Vision
 
 Date: 2026-02-27
 Status: Vision v2 (strategy only)
@@ -7,7 +7,7 @@ Implementation companion: `new-contextgraph-monorepo-prd.md`
 
 ## 1) The Core Idea
 
-ContextHub WorkGraph is not an "agent memory app." It is the runtime-agnostic context graph substrate for AI-native companies.
+WorkGraph is not an "agent memory app." It is the runtime-agnostic context graph substrate for AI-native companies.
 
 The graph should answer, in real time:
 
@@ -27,7 +27,7 @@ WorkGraph today is strong at coordination. To become the company context graph, 
 
 Positioning statement:
 
-"ContextHub WorkGraph is the graph-native operating system for AI companies: a shared, verifiable context layer that any agent runtime can read from and execute against."
+"WorkGraph is the graph-native operating system for AI companies: a shared, verifiable context layer that any agent runtime can read from and execute against."
 
 ## 3) Deep Focus: P0 Situational Awareness Gap
 
@@ -101,7 +101,7 @@ Key market pattern:
 - everyone is converging on MCP + tools + sessions
 - almost nobody owns the shared company context graph as a first-class product
 
-This is ContextHub's opening.
+This is WorkGraph's opening.
 
 ## 5) Product Thesis: Primitive Kernel + Runtime Mesh
 
@@ -151,7 +151,7 @@ Example:
 
 ## 6) Monorepo Blueprint (New Standalone Repo)
 
-Repo: `contexthub-workgraph`
+Repo: `workgraph`
 
 ```text
 packages/
@@ -261,7 +261,7 @@ Design note:
 - Codex: ship MCP profile templates + run policies
 - OpenCode: ship opencode config snippets + per-agent tool profiles
 - OpenClaw/Hermes: ship gateway bridge adapters for session/routing/cron federation
-- Cursor: ship "ContextHub Actions" package:
+- Cursor: ship "WorkGraph Actions" package:
   - claim next thread
   - show brief summary
   - mark done with summary
@@ -327,7 +327,7 @@ Example transition:
 
 Target architecture:
 
-- one always-on ContextHub Gateway (NAS or server)
+- one always-on WorkGraph Gateway (NAS or server)
 - exposes:
   - MCP endpoint
   - REST/WS API
@@ -404,7 +404,7 @@ Most systems are either:
 - memory-centric (great at retrieval but weak at orchestration)
 - workflow-centric (great automations, weak shared semantic context)
 
-ContextHub WorkGraph combines:
+WorkGraph combines:
 
 - graph-native truth (primitives + immutable event chain)
 - runtime-agnostic execution mesh (adapter protocol)

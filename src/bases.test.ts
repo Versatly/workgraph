@@ -43,7 +43,7 @@ describe('bases generation', () => {
     expect(result.generated.some((filePath) => filePath.endsWith('/thread.base'))).toBe(true);
     expect(result.generated.some((filePath) => filePath.endsWith('/skill.base'))).toBe(true);
 
-    const threadBase = path.join(workspacePath, '.clawvault/bases/thread.base');
+    const threadBase = path.join(workspacePath, '.workgraph/bases/thread.base');
     expect(fs.existsSync(threadBase)).toBe(true);
     expect(fs.readFileSync(threadBase, 'utf-8')).toContain('source:');
   });

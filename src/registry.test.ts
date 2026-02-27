@@ -9,7 +9,7 @@ let workspacePath: string;
 
 beforeEach(() => {
   workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-registry-'));
-  fs.mkdirSync(path.join(workspacePath, '.clawvault'), { recursive: true });
+  fs.mkdirSync(path.join(workspacePath, '.workgraph'), { recursive: true });
 });
 
 afterEach(() => {
@@ -58,7 +58,7 @@ describe('registry', () => {
     const defineEntries = readAll(workspacePath).filter(e => e.op === 'define');
     expect(defineEntries).toHaveLength(1);
     expect(defineEntries[0].actor).toBe('agent-alpha');
-    expect(defineEntries[0].target).toBe('.clawvault/registry.json');
+    expect(defineEntries[0].target).toBe('.workgraph/registry.json');
     expect(defineEntries[0].type).toBe('workflow');
   });
 

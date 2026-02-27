@@ -12,7 +12,6 @@ type JsonCapableOptions = {
 
 const DEFAULT_ACTOR =
   process.env.WORKGRAPH_AGENT ||
-  process.env.CLAWVAULT_AGENT ||
   process.env.USER ||
   'anonymous';
 
@@ -395,7 +394,7 @@ const basesCmd = program
 addWorkspaceOption(
   basesCmd
     .command('sync-registry')
-    .description('Sync .clawvault/primitive-registry.yaml from active registry')
+    .description('Sync .workgraph/primitive-registry.yaml from active registry')
     .option('--json', 'Emit structured JSON output')
 ).action((opts) =>
   runCommand(
@@ -405,7 +404,7 @@ addWorkspaceOption(
       const manifest = workgraph.bases.syncPrimitiveRegistryManifest(workspacePath);
       return {
         primitiveCount: manifest.primitives.length,
-        manifestPath: '.clawvault/primitive-registry.yaml',
+        manifestPath: '.workgraph/primitive-registry.yaml',
       };
     },
     (result) => [
@@ -421,7 +420,7 @@ addWorkspaceOption(
     .description('Generate .base files by reading primitive-registry.yaml')
     .option('--all', 'Include non-canonical primitives')
     .option('--refresh-registry', 'Refresh primitive-registry.yaml before generation')
-    .option('--output-dir <path>', 'Output directory for .base files (default: .clawvault/bases)')
+    .option('--output-dir <path>', 'Output directory for .base files (default: .workgraph/bases)')
     .option('--json', 'Emit structured JSON output')
 ).action((opts) =>
   runCommand(
@@ -859,7 +858,6 @@ function resolveWorkspacePath(opts: JsonCapableOptions): string {
   if (explicit) return path.resolve(explicit);
   if (process.env.WORKGRAPH_SHARED_VAULT) return path.resolve(process.env.WORKGRAPH_SHARED_VAULT);
   if (process.env.WORKGRAPH_PATH) return path.resolve(process.env.WORKGRAPH_PATH);
-  if (process.env.CLAWVAULT_PATH) return path.resolve(process.env.CLAWVAULT_PATH);
   return process.cwd();
 }
 

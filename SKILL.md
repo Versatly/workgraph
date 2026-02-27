@@ -1,9 +1,9 @@
 ---
 name: workgraph
 version: "0.1.0"
-description: Agent-first multi-agent coordination skill for markdown-native workgraph workspaces. Use when coordinating threads, ownership, dependencies, and custom primitive schemas across multiple agents. Do not use for general long-term memory capture; this package intentionally excludes ClawVault memory scaffolding.
+description: Agent-first multi-agent coordination skill for markdown-native workgraph workspaces. Use when coordinating threads, ownership, dependencies, and custom primitive schemas across multiple agents. Do not use for general long-term memory capture; this package intentionally excludes legacy memory scaffolding.
 author: Versatly
-source: https://github.com/Versatly/clawvault/tree/main/packages/workgraph
+source: https://github.com/Versatly/workgraph
 user-invocable: true
 ---
 
@@ -23,12 +23,12 @@ Use workgraph to coordinate execution, not to hoard generic memory.
 A workgraph workspace contains:
 
 - `.workgraph.json` — workspace identity and mode.
-- `.clawvault/registry.json` — primitive type definitions.
-- `.clawvault/ledger.jsonl` — append-only event stream.
-- `.clawvault/ledger-index.json` — derived claim snapshot for fast ownership checks.
-- `.clawvault/ledger-chain.json` — tamper-evident hash-chain state.
-- `.clawvault/primitive-registry.yaml` — canonical primitive registry manifest.
-- `.clawvault/bases/*.base` — generated Obsidian Bases files.
+- `.workgraph/registry.json` — primitive type definitions.
+- `.workgraph/ledger.jsonl` — append-only event stream.
+- `.workgraph/ledger-index.json` — derived claim snapshot for fast ownership checks.
+- `.workgraph/ledger-chain.json` — tamper-evident hash-chain state.
+- `.workgraph/primitive-registry.yaml` — canonical primitive registry manifest.
+- `.workgraph/bases/*.base` — generated Obsidian Bases files.
 - Primitive directories (e.g. `threads/`, `spaces/`, `agents/`, custom directories).
 
 Initialize once:
@@ -298,7 +298,7 @@ If your agents currently use broad memory categories for execution coordination:
 
 ## Split Clarification
 
-- `clawvault` package: memory + retrieval + broader vault lifecycle.
-- `@clawvault/workgraph` package: coordination substrate only.
+- legacy memory packages: memory + retrieval + broader vault lifecycle.
+- `@versatly/workgraph`: coordination substrate only.
 
 Treat this package as the authoritative runtime for multi-agent primitives and claims, not as a memory taxonomy tool.

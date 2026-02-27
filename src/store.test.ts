@@ -77,7 +77,7 @@ describe('store', () => {
     remove(workspacePath, 'threads/delete-me.md', 'agent');
 
     expect(read(workspacePath, 'threads/delete-me.md')).toBeNull();
-    expect(fs.existsSync(path.join(workspacePath, '.clawvault/archive/delete-me.md'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, '.workgraph/archive/delete-me.md'))).toBe(true);
   });
 
   it('applies field defaults from type definition', () => {

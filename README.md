@@ -1,13 +1,13 @@
-# @clawvault/workgraph
+# @versatly/workgraph
 
 Agent-first workgraph workspace for multi-agent collaboration.
 
-`@clawvault/workgraph` is the coordination core extracted from ClawVault. It focuses only on:
+`@versatly/workgraph` is the standalone coordination core for multi-agent execution. It focuses only on:
 
 - Dynamic primitive registry (`thread`, `space`, `decision`, `lesson`, `fact`, `agent`, plus custom types)
-- Append-only event ledger (`.clawvault/ledger.jsonl`)
-- Ledger claim index (`.clawvault/ledger-index.json`) for fast ownership queries
-- Tamper-evident ledger hash-chain (`.clawvault/ledger-chain.json`)
+- Append-only event ledger (`.workgraph/ledger.jsonl`)
+- Ledger claim index (`.workgraph/ledger-index.json`) for fast ownership queries
+- Tamper-evident ledger hash-chain (`.workgraph/ledger-chain.json`)
 - Markdown-native primitive store
 - Thread lifecycle coordination (claim/release/block/unblock/done/decompose)
 - Space-scoped thread scheduling (`--space`)
@@ -21,13 +21,13 @@ No memory-category scaffolding, no qmd dependency, no observational-memory pipel
 ## Install
 
 ```bash
-npm install @clawvault/workgraph
+npm install @versatly/workgraph
 ```
 
 Or global CLI:
 
 ```bash
-npm install -g @clawvault/workgraph
+npm install -g @versatly/workgraph
 ```
 
 ## Agent-first CLI
@@ -81,7 +81,7 @@ workgraph thread next --space spaces/backend --claim --actor agent-api --json
 ### Auto-generate `.base` files from primitive registry
 
 ```bash
-# Sync .clawvault/primitive-registry.yaml
+# Sync .workgraph/primitive-registry.yaml
 workgraph bases sync-registry --json
 
 # Generate canonical primitive .base files
@@ -116,9 +116,9 @@ workgraph skill promote workgraph-manual --actor agent-lead --json
 workgraph skill load workgraph-manual --json
 ```
 
-## ClawVault memory vs Workgraph primitives (split clarification)
+## Legacy memory stacks vs Workgraph primitives
 
-`@clawvault/workgraph` is **execution coordination only**.
+`@versatly/workgraph` is **execution coordination only**.
 
 - Use it for: ownership, decomposition, dependency management, typed coordination primitives.
 - Do not use it for: long-term memory categories (`decisions/`, `people/`, `projects/` memory workflows), qmd semantic retrieval pipelines, observer/reflector memory compression.
@@ -141,7 +141,7 @@ This split keeps the workgraph package focused, portable, and shell-agent-native
 ## Programmatic API
 
 ```ts
-import { registry, thread, store, ledger, workspace } from '@clawvault/workgraph';
+import { registry, thread, store, ledger, workspace } from '@versatly/workgraph';
 
 workspace.initWorkspace('/tmp/wg');
 

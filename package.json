@@ -1,5 +1,5 @@
 {
-  "name": "@clawvault/workgraph",
+  "name": "@versatly/workgraph",
   "version": "0.1.0",
   "description": "Agent-first workgraph workspace for multi-agent coordination with dynamic primitives, append-only ledger, and markdown-native storage.",
   "type": "module",
@@ -45,12 +45,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Versatly/clawvault.git",
-    "directory": "packages/workgraph"
+    "url": "git+https://github.com/Versatly/workgraph.git"
   },
-  "homepage": "https://github.com/Versatly/clawvault/tree/main/packages/workgraph",
+  "homepage": "https://github.com/Versatly/workgraph",
   "bugs": {
-    "url": "https://github.com/Versatly/clawvault/issues"
+    "url": "https://github.com/Versatly/workgraph/issues"
   },
   "engines": {
     "node": ">=18"

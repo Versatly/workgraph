@@ -21,25 +21,25 @@ describe('workspace init', () => {
 
     expect(result.config.name).toBe('agent-space');
     expect(isWorkgraphWorkspace(workspacePath)).toBe(true);
-    expect(fs.existsSync(path.join(workspacePath, '.clawvault/registry.json'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, '.workgraph/registry.json'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'threads'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'spaces'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'agents'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'skills'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'README.md'))).toBe(true);
-    expect(fs.existsSync(path.join(workspacePath, '.clawvault/primitive-registry.yaml'))).toBe(true);
-    expect(fs.existsSync(path.join(workspacePath, '.clawvault/bases/thread.base'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, '.workgraph/primitive-registry.yaml'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, '.workgraph/bases/thread.base'))).toBe(true);
     expect(result.seededTypes).toContain('thread');
     expect(result.generatedBases.length).toBeGreaterThan(0);
   });
 
   it('supports no-type-dirs and no-readme mode', () => {
     initWorkspace(workspacePath, { createTypeDirs: false, createReadme: false, createBases: false });
-    expect(fs.existsSync(path.join(workspacePath, '.clawvault/registry.json'))).toBe(true);
-    expect(fs.existsSync(path.join(workspacePath, '.clawvault/primitive-registry.yaml'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, '.workgraph/registry.json'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, '.workgraph/primitive-registry.yaml'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'threads'))).toBe(false);
     expect(fs.existsSync(path.join(workspacePath, 'README.md'))).toBe(false);
-    expect(fs.existsSync(path.join(workspacePath, '.clawvault/bases/thread.base'))).toBe(false);
+    expect(fs.existsSync(path.join(workspacePath, '.workgraph/bases/thread.base'))).toBe(false);
   });
 
   it('fails on re-initialization', () => {
