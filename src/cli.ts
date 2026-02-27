@@ -1324,6 +1324,32 @@ addWorkspaceOption(
 
 addWorkspaceOption(
   dispatchCmd
+    .command('mark <runId>')
+    .description('Set run status transition explicitly')
+    .requiredOption('--status <status>', 'running|succeeded|failed|cancelled')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--output <text>', 'Optional output payload')
+    .option('--error <text>', 'Optional error payload')
+    .option('--json', 'Emit structured JSON output')
+).action((runId, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const status = normalizeRunStatus(opts.status);
+      return {
+        run: workgraph.dispatch.markRun(workspacePath, runId, opts.actor, status, {
+          output: opts.output,
+          error: opts.error,
+        }),
+      };
+    },
+    (result) => [`Marked run: ${result.run.id} [${result.run.status}]`],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
     .command('logs <runId>')
     .description('Read logs from a run')
     .option('--json', 'Emit structured JSON output')
@@ -1338,6 +1364,40 @@ addWorkspaceOption(
       };
     },
     (result) => result.logs.map((entry) => `${entry.ts} [${entry.level}] ${entry.message}`),
+  )
+);
+
+// ============================================================================
+// trigger
+// ============================================================================
+
+const triggerCmd = program
+  .command('trigger')
+  .description('Trigger primitives and run dispatch lifecycle');
+
+addWorkspaceOption(
+  triggerCmd
+    .command('fire <triggerPath>')
+    .description('Fire an approved/active trigger and dispatch a run')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--event-key <key>', 'Deterministic event key for idempotency')
+    .option('--objective <text>', 'Override run objective')
+    .option('--json', 'Emit structured JSON output')
+).action((triggerPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.trigger.fireTrigger(workspacePath, triggerPath, {
+        actor: opts.actor,
+        eventKey: opts.eventKey,
+        objective: opts.objective,
+      });
+    },
+    (result) => [
+      `Fired trigger: ${result.triggerPath}`,
+      `Run: ${result.run.id} [${result.run.status}]`,
+    ],
   )
 );
 
@@ -1429,6 +1489,14 @@ function parseScalar(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function normalizeRunStatus(status: string): 'running' | 'succeeded' | 'failed' | 'cancelled' {
+  const normalized = String(status).toLowerCase();
+  if (normalized === 'running' || normalized === 'succeeded' || normalized === 'failed' || normalized === 'cancelled') {
+    return normalized;
+  }
+  throw new Error(`Invalid run status "${status}". Expected running|succeeded|failed|cancelled.`);
 }
 
 function wantsJson(opts: JsonCapableOptions): boolean {

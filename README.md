@@ -20,7 +20,8 @@ Agent-first workgraph workspace for multi-agent collaboration.
 - Obsidian Kanban board generation/sync (`workgraph board generate|sync`)
 - Wiki-link graph indexing and hygiene reports (`workgraph graph index|hygiene`)
 - Policy party registry and sensitive transition gates
-- Programmatic dispatch contract (`workgraph dispatch ...`)
+- Programmatic dispatch contract (`workgraph dispatch ...`) with explicit status transitions
+- Trigger dispatch bridge (`workgraph trigger fire ...`) with idempotency keying
 - JSON-friendly CLI for agent orchestration
 
 No memory-category scaffolding, no qmd dependency, no observational-memory pipeline.
@@ -65,6 +66,9 @@ workgraph search "auth" --mode auto --json
 workgraph checkpoint "Completed API layer" --next "implement tests" --actor agent-worker --json
 workgraph board generate --output "ops/Workgraph Board.md" --json
 workgraph graph hygiene --json
+workgraph dispatch create "Review blockers" --actor agent-lead --json
+workgraph dispatch mark run_123 --status succeeded --output "Review complete" --actor agent-lead --json
+workgraph trigger fire triggers/escalate-blocked.md --event-key "thread-blocked-001" --actor agent-lead --json
 workgraph ledger show --count 20 --json
 workgraph command-center --output "ops/Command Center.md" --json
 workgraph bases generate --refresh-registry --json

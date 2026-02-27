@@ -7,6 +7,7 @@ import * as store from './store.js';
 import * as policy from './policy.js';
 import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';
+import * as trigger from './trigger.js';
 
 let workspacePath: string;
 
@@ -95,5 +96,60 @@ describe('policy gates and dispatch contract', () => {
     const stopped = dispatch.stop(workspacePath, created.id, 'agent-operator');
     expect(stopped.status).toBe('cancelled');
     expect(dispatch.logs(workspacePath, created.id).length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('supports marking runs as succeeded and failed', () => {
+    const created = dispatch.createRun(workspacePath, {
+      actor: 'agent-runner',
+      objective: 'Mark state transitions',
+    });
+    const running = dispatch.markRun(workspacePath, created.id, 'agent-runner', 'running');
+    expect(running.status).toBe('running');
+
+    const succeeded = dispatch.markRun(workspacePath, created.id, 'agent-runner', 'succeeded', {
+      output: 'All checks complete',
+    });
+    expect(succeeded.status).toBe('succeeded');
+    expect(succeeded.output).toBe('All checks complete');
+
+    const second = dispatch.createRun(workspacePath, {
+      actor: 'agent-runner',
+      objective: 'Failure flow',
+    });
+    const failed = dispatch.markRun(workspacePath, second.id, 'agent-runner', 'failed', {
+      error: 'runtime timeout',
+    });
+    expect(failed.status).toBe('failed');
+    expect(failed.error).toBe('runtime timeout');
+  });
+
+  it('fires approved trigger and dispatches run with idempotency', () => {
+    policy.upsertParty(workspacePath, 'agent-gate', {
+      roles: ['reviewer'],
+      capabilities: ['promote:sensitive'],
+    });
+    const trig = store.create(workspacePath, 'trigger', {
+      title: 'Escalate blocked high-priority thread',
+      event: 'thread.blocked',
+      action: 'dispatch.review',
+      status: 'draft',
+    }, '# Trigger\n', 'agent-gate');
+    store.update(workspacePath, trig.path, { status: 'approved' }, undefined, 'agent-gate');
+
+    const fired1 = trigger.fireTrigger(workspacePath, trig.path, {
+      actor: 'agent-gate',
+      eventKey: 'evt-123',
+    });
+    const fired2 = trigger.fireTrigger(workspacePath, trig.path, {
+      actor: 'agent-gate',
+      eventKey: 'evt-123',
+    });
+    expect(fired1.run.id).toBe(fired2.run.id);
+
+    const fired3 = trigger.fireTrigger(workspacePath, trig.path, {
+      actor: 'agent-gate',
+      eventKey: 'evt-124',
+    });
+    expect(fired3.run.id).not.toBe(fired1.run.id);
   });
 });

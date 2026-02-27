@@ -19,3 +19,4 @@ export * as policy from './policy.js';
 export * as dispatch from './dispatch.js';
 export * as onboard from './onboard.js';
 export * as searchQmdAdapter from './search-qmd-adapter.js';
+export * as trigger from './trigger.js';
