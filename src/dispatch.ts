@@ -1,0 +1,242 @@
+/**
+ * Runtime dispatch contract (MVP local adapter).
+ */
+
+import fs from 'node:fs';
+import path from 'node:path';
+import { randomUUID } from 'node:crypto';
+import * as ledger from './ledger.js';
+import * as store from './store.js';
+import type { DispatchRun, RunStatus } from './types.js';
+
+const RUNS_FILE = '.workgraph/dispatch-runs.json';
+
+export interface DispatchCreateInput {
+  actor: string;
+  adapter?: string;
+  objective: string;
+  context?: Record<string, unknown>;
+  idempotencyKey?: string;
+}
+
+export function createRun(workspacePath: string, input: DispatchCreateInput): DispatchRun {
+  const state = loadRuns(workspacePath);
+  if (input.idempotencyKey) {
+    const existing = state.runs.find((run) => run.idempotencyKey === input.idempotencyKey);
+    if (existing) return existing;
+  }
+
+  const now = new Date().toISOString();
+  const run: DispatchRun = {
+    id: `run_${randomUUID()}`,
+    createdAt: now,
+    updatedAt: now,
+    actor: input.actor,
+    adapter: input.adapter ?? 'cursor-cloud',
+    objective: input.objective,
+    status: 'queued',
+    idempotencyKey: input.idempotencyKey,
+    context: input.context,
+    followups: [],
+    logs: [
+      { ts: now, level: 'info', message: `Run created for objective: ${input.objective}` },
+    ],
+  };
+
+  state.runs.push(run);
+  saveRuns(workspacePath, state);
+  ledger.append(workspacePath, input.actor, 'create', `.workgraph/runs/${run.id}`, 'run', {
+    adapter: run.adapter,
+    objective: run.objective,
+    status: run.status,
+  });
+
+  ensureRunPrimitive(workspacePath, run, input.actor);
+  return run;
+}
+
+export function status(workspacePath: string, runId: string): DispatchRun {
+  const run = getRun(workspacePath, runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+  return run;
+}
+
+export function followup(workspacePath: string, runId: string, actor: string, input: string): DispatchRun {
+  const state = loadRuns(workspacePath);
+  const run = state.runs.find((entry) => entry.id === runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+  const now = new Date().toISOString();
+  run.followups.push({ ts: now, actor, input });
+  run.updatedAt = now;
+  run.logs.push({ ts: now, level: 'info', message: `Follow-up from ${actor}: ${input}` });
+  if (run.status === 'queued') {
+    run.status = 'running';
+  }
+  saveRuns(workspacePath, state);
+  ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+    followup: true,
+    status: run.status,
+  });
+  syncRunPrimitive(workspacePath, run, actor);
+  return run;
+}
+
+export function stop(workspacePath: string, runId: string, actor: string): DispatchRun {
+  return setStatus(workspacePath, runId, actor, 'cancelled', 'Run cancelled by operator.');
+}
+
+export function markRun(
+  workspacePath: string,
+  runId: string,
+  actor: string,
+  nextStatus: Exclude<RunStatus, 'queued'>,
+  options: { output?: string; error?: string } = {},
+): DispatchRun {
+  const run = setStatus(workspacePath, runId, actor, nextStatus, `Run moved to ${nextStatus}.`);
+  if (options.output) run.output = options.output;
+  if (options.error) run.error = options.error;
+  const state = loadRuns(workspacePath);
+  const target = state.runs.find((entry) => entry.id === runId);
+  if (target) {
+    target.output = run.output;
+    target.error = run.error;
+    target.updatedAt = new Date().toISOString();
+    saveRuns(workspacePath, state);
+    syncRunPrimitive(workspacePath, target, actor);
+  }
+  return target ?? run;
+}
+
+export function logs(workspacePath: string, runId: string): DispatchRun['logs'] {
+  return status(workspacePath, runId).logs;
+}
+
+export function listRuns(workspacePath: string, options: { status?: RunStatus; limit?: number } = {}): DispatchRun[] {
+  const runs = loadRuns(workspacePath).runs
+    .filter((run) => (options.status ? run.status === options.status : true))
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  if (options.limit && options.limit > 0) {
+    return runs.slice(0, options.limit);
+  }
+  return runs;
+}
+
+function setStatus(
+  workspacePath: string,
+  runId: string,
+  actor: string,
+  statusValue: RunStatus,
+  logMessage: string,
+): DispatchRun {
+  const state = loadRuns(workspacePath);
+  const run = state.runs.find((entry) => entry.id === runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+  const now = new Date().toISOString();
+  run.status = statusValue;
+  run.updatedAt = now;
+  run.logs.push({ ts: now, level: 'info', message: logMessage });
+  saveRuns(workspacePath, state);
+  ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+    status: run.status,
+  });
+  syncRunPrimitive(workspacePath, run, actor);
+  return run;
+}
+
+function runsPath(workspacePath: string): string {
+  return path.join(workspacePath, RUNS_FILE);
+}
+
+function loadRuns(workspacePath: string): { version: number; runs: DispatchRun[] } {
+  const rPath = runsPath(workspacePath);
+  if (!fs.existsSync(rPath)) {
+    const seeded = { version: 1, runs: [] as DispatchRun[] };
+    saveRuns(workspacePath, seeded);
+    return seeded;
+  }
+  const raw = fs.readFileSync(rPath, 'utf-8');
+  const parsed = JSON.parse(raw) as { version: number; runs: DispatchRun[] };
+  return {
+    version: parsed.version ?? 1,
+    runs: parsed.runs ?? [],
+  };
+}
+
+function saveRuns(workspacePath: string, value: { version: number; runs: DispatchRun[] }): void {
+  const rPath = runsPath(workspacePath);
+  const dir = path.dirname(rPath);
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(rPath, JSON.stringify(value, null, 2) + '\n', 'utf-8');
+}
+
+function getRun(workspacePath: string, runId: string): DispatchRun | null {
+  const state = loadRuns(workspacePath);
+  return state.runs.find((run) => run.id === runId) ?? null;
+}
+
+function ensureRunPrimitive(workspacePath: string, run: DispatchRun, actor: string): void {
+  const safeTitle = `${run.objective} (${run.id.slice(0, 8)})`;
+  store.create(
+    workspacePath,
+    'run',
+    {
+      title: safeTitle,
+      objective: run.objective,
+      runtime: run.adapter,
+      status: run.status,
+      run_id: run.id,
+      owner: run.actor,
+      tags: ['dispatch'],
+    },
+    `## Objective\n\n${run.objective}\n`,
+    actor,
+  );
+}
+
+function syncRunPrimitive(workspacePath: string, run: DispatchRun, actor: string): void {
+  const runs = store.list(workspacePath, 'run');
+  const existing = runs.find((entry) => String(entry.fields.run_id) === run.id);
+  if (!existing) return;
+  store.update(
+    workspacePath,
+    existing.path,
+    {
+      status: run.status,
+      runtime: run.adapter,
+      objective: run.objective,
+      owner: run.actor,
+    },
+    renderRunBody(run),
+    actor,
+  );
+}
+
+function renderRunBody(run: DispatchRun): string {
+  const lines = [
+    '## Objective',
+    '',
+    run.objective,
+    '',
+    '## Status',
+    '',
+    run.status,
+    '',
+    '## Logs',
+    '',
+    ...run.logs.slice(-20).map((entry) => `- ${entry.ts} [${entry.level}] ${entry.message}`),
+    '',
+  ];
+  if (run.output) {
+    lines.push('## Output');
+    lines.push('');
+    lines.push(run.output);
+    lines.push('');
+  }
+  if (run.error) {
+    lines.push('## Error');
+    lines.push('');
+    lines.push(run.error);
+    lines.push('');
+  }
+  return lines.join('\n');
+}

@@ -1,0 +1,6 @@
+{
+  "name": "@versatly/workgraph-web-control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module"
+}

@@ -472,22 +472,39 @@ addWorkspaceOption(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
-      const fields: Record<string, unknown> = { title };
-      for (const pair of opts.set ?? []) {
-        const eqIdx = String(pair).indexOf('=');
-        if (eqIdx === -1) continue;
-        const key = String(pair).slice(0, eqIdx).trim();
-        let value: unknown = String(pair).slice(eqIdx + 1).trim();
-        if (typeof value === 'string' && value.includes(',')) {
-          value = value.split(',').map(v => v.trim());
-        }
-        fields[key] = value;
-      }
+      const fields: Record<string, unknown> = { title, ...parseSetPairs(opts.set ?? []) };
       return {
         instance: workgraph.store.create(workspacePath, type, fields, opts.body, opts.actor),
       };
     },
     (result) => [`Created ${result.instance.type}: ${result.instance.path}`]
+  )
+);
+
+addWorkspaceOption(
+  primitiveCmd
+    .command('update <path>')
+    .description('Update an existing primitive instance')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--set <fields...>', 'Set fields as "key=value"')
+    .option('--body <text>', 'Replace markdown body content')
+    .option('--body-file <path>', 'Read markdown body content from file')
+    .option('--json', 'Emit structured JSON output')
+).action((targetPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const updates = parseSetPairs(opts.set ?? []);
+      let body: string | undefined = opts.body;
+      if (opts.bodyFile) {
+        body = fs.readFileSync(path.resolve(opts.bodyFile), 'utf-8');
+      }
+      return {
+        instance: workgraph.store.update(workspacePath, targetPath, updates, body, opts.actor),
+      };
+    },
+    (result) => [`Updated ${result.instance.type}: ${result.instance.path}`]
   )
 );
 
@@ -844,6 +861,519 @@ addWorkspaceOption(
   )
 );
 
+// ============================================================================
+// orientation
+// ============================================================================
+
+addWorkspaceOption(
+  program
+    .command('status')
+    .description('Show workspace situational status snapshot')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.orientation.statusSnapshot(workspacePath);
+    },
+    (result) => [
+      `Threads: total=${result.threads.total} open=${result.threads.open} active=${result.threads.active} blocked=${result.threads.blocked} done=${result.threads.done}`,
+      `Ready threads: ${result.threads.ready} Active claims: ${result.claims.active}`,
+      `Primitive types: ${Object.keys(result.primitives.byType).length}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('brief')
+    .description('Show actor-centric operational brief')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--recent <count>', 'Recent activity count', '12')
+    .option('--next <count>', 'Next ready threads to include', '5')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.orientation.brief(workspacePath, opts.actor, {
+        recentCount: Number.parseInt(String(opts.recent), 10),
+        nextCount: Number.parseInt(String(opts.next), 10),
+      });
+    },
+    (result) => [
+      `Brief for ${result.actor}`,
+      `My claims: ${result.myClaims.length}`,
+      `Blocked threads: ${result.blockedThreads.length}`,
+      `Next ready: ${result.nextReadyThreads.map((item) => item.path).join(', ') || 'none'}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('checkpoint <summary>')
+    .description('Create a checkpoint primitive for hand-off continuity')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--next <items>', 'Comma-separated next actions')
+    .option('--blocked <items>', 'Comma-separated blockers')
+    .option('--tags <items>', 'Comma-separated tags')
+    .option('--json', 'Emit structured JSON output')
+).action((summary, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        checkpoint: workgraph.orientation.checkpoint(workspacePath, opts.actor, summary, {
+          next: csv(opts.next),
+          blocked: csv(opts.blocked),
+          tags: csv(opts.tags),
+        }),
+      };
+    },
+    (result) => [`Created checkpoint: ${result.checkpoint.path}`],
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('intake <observation>')
+    .description('Capture intake observation as lightweight checkpoint note')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--tags <items>', 'Comma-separated tags')
+    .option('--json', 'Emit structured JSON output')
+).action((observation, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        intake: workgraph.orientation.intake(workspacePath, opts.actor, observation, {
+          tags: csv(opts.tags),
+        }),
+      };
+    },
+    (result) => [`Captured intake: ${result.intake.path}`],
+  )
+);
+
+// ============================================================================
+// query/search
+// ============================================================================
+
+addWorkspaceOption(
+  program
+    .command('query')
+    .description('Query primitive instances with multi-field filters')
+    .option('--type <type>', 'Primitive type')
+    .option('--status <status>', 'Status value')
+    .option('--owner <owner>', 'Owner/actor value')
+    .option('--tag <tag>', 'Tag filter')
+    .option('--text <text>', 'Full-text contains filter')
+    .option('--path-includes <text>', 'Path substring filter')
+    .option('--updated-after <iso>', 'Updated at or after')
+    .option('--updated-before <iso>', 'Updated at or before')
+    .option('--created-after <iso>', 'Created at or after')
+    .option('--created-before <iso>', 'Created at or before')
+    .option('--limit <n>', 'Result limit')
+    .option('--offset <n>', 'Result offset')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const results = workgraph.query.queryPrimitives(workspacePath, {
+        type: opts.type,
+        status: opts.status,
+        owner: opts.owner,
+        tag: opts.tag,
+        text: opts.text,
+        pathIncludes: opts.pathIncludes,
+        updatedAfter: opts.updatedAfter,
+        updatedBefore: opts.updatedBefore,
+        createdAfter: opts.createdAfter,
+        createdBefore: opts.createdBefore,
+        limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+        offset: opts.offset ? Number.parseInt(String(opts.offset), 10) : undefined,
+      });
+      return { results, count: results.length };
+    },
+    (result) => result.results.map((item) => `${item.type} ${item.path}`),
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('search <text>')
+    .description('Keyword search across markdown body/frontmatter with optional QMD-compatible mode')
+    .option('--type <type>', 'Limit to primitive type')
+    .option('--mode <mode>', 'auto | core | qmd', 'auto')
+    .option('--limit <n>', 'Result limit')
+    .option('--json', 'Emit structured JSON output')
+).action((text, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const result = workgraph.searchQmdAdapter.search(workspacePath, text, {
+        mode: opts.mode,
+        type: opts.type,
+        limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+      });
+      return {
+        ...result,
+        count: result.results.length,
+      };
+    },
+    (result) => [
+      `Mode: ${result.mode}`,
+      ...(result.fallbackReason ? [`Note: ${result.fallbackReason}`] : []),
+      ...result.results.map((item) => `${item.type} ${item.path}`),
+    ],
+  )
+);
+
+// ============================================================================
+// board/graph
+// ============================================================================
+
+const boardCmd = program
+  .command('board')
+  .description('Generate and sync Obsidian Kanban board views');
+
+addWorkspaceOption(
+  boardCmd
+    .command('generate')
+    .description('Generate Obsidian Kanban board markdown from thread states')
+    .option('-o, --output <path>', 'Output board path', 'ops/Workgraph Board.md')
+    .option('--include-cancelled', 'Include cancelled lane')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.board.generateKanbanBoard(workspacePath, {
+        outputPath: opts.output,
+        includeCancelled: !!opts.includeCancelled,
+      });
+    },
+    (result) => [
+      `Generated board: ${result.outputPath}`,
+      `Backlog=${result.counts.backlog} InProgress=${result.counts.inProgress} Blocked=${result.counts.blocked} Done=${result.counts.done}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  boardCmd
+    .command('sync')
+    .description('Sync existing board markdown from current thread states')
+    .option('-o, --output <path>', 'Output board path', 'ops/Workgraph Board.md')
+    .option('--include-cancelled', 'Include cancelled lane')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.board.syncKanbanBoard(workspacePath, {
+        outputPath: opts.output,
+        includeCancelled: !!opts.includeCancelled,
+      });
+    },
+    (result) => [
+      `Synced board: ${result.outputPath}`,
+      `Backlog=${result.counts.backlog} InProgress=${result.counts.inProgress} Blocked=${result.counts.blocked} Done=${result.counts.done}`,
+    ],
+  )
+);
+
+const graphCmd = program
+  .command('graph')
+  .description('Wiki-link graph indexing and hygiene');
+
+addWorkspaceOption(
+  graphCmd
+    .command('index')
+    .description('Build wiki-link graph index')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.graph.refreshWikiLinkGraphIndex(workspacePath);
+    },
+    (result) => [
+      `Nodes: ${result.nodes.length}`,
+      `Edges: ${result.edges.length}`,
+      `Broken links: ${result.brokenLinks.length}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  graphCmd
+    .command('hygiene')
+    .description('Generate graph hygiene report (orphans, broken links, hubs)')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.graph.graphHygieneReport(workspacePath);
+    },
+    (result) => [
+      `Nodes=${result.nodeCount} Edges=${result.edgeCount}`,
+      `Orphans=${result.orphanCount} BrokenLinks=${result.brokenLinkCount}`,
+      `Top hub: ${result.hubs[0]?.node ?? 'none'}`,
+    ],
+  )
+);
+
+// ============================================================================
+// policy
+// ============================================================================
+
+const policyCmd = program
+  .command('policy')
+  .description('Manage policy parties and capabilities');
+
+const policyPartyCmd = policyCmd
+  .command('party')
+  .description('Manage registered policy parties');
+
+addWorkspaceOption(
+  policyPartyCmd
+    .command('upsert <id>')
+    .description('Create or update a policy party')
+    .option('--roles <roles>', 'Comma-separated roles')
+    .option('--capabilities <caps>', 'Comma-separated capabilities')
+    .option('--json', 'Emit structured JSON output')
+).action((id, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        party: workgraph.policy.upsertParty(workspacePath, id, {
+          roles: csv(opts.roles),
+          capabilities: csv(opts.capabilities),
+        }),
+      };
+    },
+    (result) => [`Upserted policy party: ${result.party.id}`],
+  )
+);
+
+addWorkspaceOption(
+  policyPartyCmd
+    .command('get <id>')
+    .description('Get one policy party')
+    .option('--json', 'Emit structured JSON output')
+).action((id, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const party = workgraph.policy.getParty(workspacePath, id);
+      if (!party) throw new Error(`Policy party not found: ${id}`);
+      return { party };
+    },
+    (result) => [`${result.party.id} roles=${result.party.roles.join(',')}`],
+  )
+);
+
+addWorkspaceOption(
+  policyPartyCmd
+    .command('list')
+    .description('List policy parties')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const registry = workgraph.policy.loadPolicyRegistry(workspacePath);
+      return {
+        parties: Object.values(registry.parties),
+      };
+    },
+    (result) => result.parties.map((party) => `${party.id} [${party.roles.join(', ')}]`),
+  )
+);
+
+// ============================================================================
+// dispatch
+// ============================================================================
+
+const dispatchCmd = program
+  .command('dispatch')
+  .description('Programmatic runtime dispatch contract');
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('create <objective>')
+    .description('Create a new run dispatch request')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--adapter <name>', 'Adapter name', 'cursor-cloud')
+    .option('--idempotency-key <key>', 'Idempotency key')
+    .option('--json', 'Emit structured JSON output')
+).action((objective, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        run: workgraph.dispatch.createRun(workspacePath, {
+          actor: opts.actor,
+          adapter: opts.adapter,
+          objective,
+          idempotencyKey: opts.idempotencyKey,
+        }),
+      };
+    },
+    (result) => [`Run created: ${result.run.id} [${result.run.status}]`],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('list')
+    .description('List runs')
+    .option('--status <status>', 'queued|running|succeeded|failed|cancelled')
+    .option('--limit <n>', 'Result limit')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        runs: workgraph.dispatch.listRuns(workspacePath, {
+          status: opts.status,
+          limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+        }),
+      };
+    },
+    (result) => result.runs.map((run) => `${run.id} [${run.status}] ${run.objective}`),
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('status <runId>')
+    .description('Get run status by ID')
+    .option('--json', 'Emit structured JSON output')
+).action((runId, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        run: workgraph.dispatch.status(workspacePath, runId),
+      };
+    },
+    (result) => [`${result.run.id} [${result.run.status}]`],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('followup <runId> <input>')
+    .description('Send follow-up input to a run')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((runId, input, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        run: workgraph.dispatch.followup(workspacePath, runId, opts.actor, input),
+      };
+    },
+    (result) => [`Follow-up recorded: ${result.run.id} [${result.run.status}]`],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('stop <runId>')
+    .description('Cancel a run')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((runId, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        run: workgraph.dispatch.stop(workspacePath, runId, opts.actor),
+      };
+    },
+    (result) => [`Stopped run: ${result.run.id} [${result.run.status}]`],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('logs <runId>')
+    .description('Read logs from a run')
+    .option('--json', 'Emit structured JSON output')
+).action((runId, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        runId,
+        logs: workgraph.dispatch.logs(workspacePath, runId),
+      };
+    },
+    (result) => result.logs.map((entry) => `${entry.ts} [${entry.level}] ${entry.message}`),
+  )
+);
+
+// ============================================================================
+// onboarding
+// ============================================================================
+
+addWorkspaceOption(
+  program
+    .command('onboard')
+    .description('Guided agent-first workspace setup and starter artifacts')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--spaces <list>', 'Comma-separated space names')
+    .option('--no-demo-threads', 'Skip starter onboarding threads')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.onboard.onboardWorkspace(workspacePath, {
+        actor: opts.actor,
+        spaces: csv(opts.spaces),
+        createDemoThreads: opts.demoThreads,
+      });
+    },
+    (result) => [
+      `Onboarded actor: ${result.actor}`,
+      `Spaces created: ${result.spacesCreated.length}`,
+      `Threads created: ${result.threadsCreated.length}`,
+      `Board: ${result.boardPath}`,
+      `Command center: ${result.commandCenterPath}`,
+    ],
+  )
+);
+
 program.parse();
 
 function addWorkspaceOption<T extends Command>(command: T): T {
@@ -861,9 +1391,43 @@ function resolveWorkspacePath(opts: JsonCapableOptions): string {
   return process.cwd();
 }
 
+function parseSetPairs(pairs: string[]): Record<string, unknown> {
+  const fields: Record<string, unknown> = {};
+  for (const pair of pairs) {
+    const eqIdx = String(pair).indexOf('=');
+    if (eqIdx === -1) continue;
+    const key = String(pair).slice(0, eqIdx).trim();
+    const raw = String(pair).slice(eqIdx + 1).trim();
+    if (!key) continue;
+    fields[key] = parseScalar(raw);
+  }
+  return fields;
+}
+
 function csv(value?: string): string[] | undefined {
   if (!value) return undefined;
   return String(value).split(',').map(s => s.trim()).filter(Boolean);
+}
+
+function parseScalar(value: string): unknown {
+  if (value === 'true') return true;
+  if (value === 'false') return false;
+  if (value === 'null') return null;
+  if (value === '') return '';
+  if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
+  if (value.startsWith('[') && value.endsWith(']')) {
+    const inner = value.slice(1, -1).trim();
+    if (!inner) return [];
+    return inner.split(',').map((item) => parseScalar(item.trim()));
+  }
+  if (value.includes(',')) {
+    return value.split(',').map((item) => parseScalar(item.trim()));
+  }
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
 }
 
 function wantsJson(opts: JsonCapableOptions): boolean {

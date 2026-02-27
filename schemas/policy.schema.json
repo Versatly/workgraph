@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://versatly.dev/workgraph/schemas/policy.schema.json",
+  "title": "Workgraph Policy Registry",
+  "type": "object",
+  "required": ["version", "parties"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "parties": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["id", "roles", "capabilities", "createdAt", "updatedAt"],
+        "properties": {
+          "id": { "type": "string" },
+          "roles": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "capabilities": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "createdAt": { "type": "string", "format": "date-time" },
+          "updatedAt": { "type": "string", "format": "date-time" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

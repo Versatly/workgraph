@@ -7,6 +7,8 @@ import path from 'node:path';
 import matter from 'gray-matter';
 import { loadRegistry, getType } from './registry.js';
 import * as ledger from './ledger.js';
+import * as graph from './graph.js';
+import * as policy from './policy.js';
 import type { PrimitiveInstance, PrimitiveTypeDefinition } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -31,7 +33,7 @@ export function create(
     created: fields.created ?? now,
     updated: now,
   });
-  validateFields(typeDef, merged, 'create');
+  validateFields(workspacePath, typeDef, merged, 'create');
 
   const slug = slugify(String(merged.title ?? merged.name ?? typeName));
   const relDir = typeDef.directory;
@@ -50,6 +52,7 @@ export function create(
   ledger.append(workspacePath, actor, 'create', relPath, typeName, {
     title: merged.title ?? slug,
   });
+  graph.refreshWikiLinkGraphIndex(workspacePath);
 
   return { path: relPath, type: typeName, fields: merged, body };
 }
@@ -103,10 +106,27 @@ export function update(
   if (!existing) throw new Error(`Not found: ${relPath}`);
 
   const now = new Date().toISOString();
-  const newFields = { ...existing.fields, ...fieldUpdates, updated: now };
+  const newFields: Record<string, unknown> = { ...existing.fields, ...fieldUpdates, updated: now };
   const typeDef = getType(workspacePath, existing.type);
   if (!typeDef) throw new Error(`Unknown primitive type "${existing.type}" for ${relPath}`);
-  validateFields(typeDef, newFields, 'update');
+  const previousStatus = typeof existing.fields['status'] === 'string'
+    ? String(existing.fields['status'])
+    : undefined;
+  const nextStatus = typeof newFields['status'] === 'string'
+    ? String(newFields['status'])
+    : undefined;
+  const transitionDecision = policy.canTransitionStatus(
+    workspacePath,
+    actor,
+    existing.type,
+    previousStatus,
+    nextStatus,
+  );
+  if (!transitionDecision.allowed) {
+    throw new Error(transitionDecision.reason ?? 'Policy gate blocked status transition.');
+  }
+
+  validateFields(workspacePath, typeDef, newFields, 'update');
   const newBody = bodyUpdate ?? existing.body;
   const absPath = path.join(workspacePath, relPath);
 
@@ -116,6 +136,7 @@ export function update(
   ledger.append(workspacePath, actor, 'update', relPath, existing.type, {
     changed: Object.keys(fieldUpdates),
   });
+  graph.refreshWikiLinkGraphIndex(workspacePath);
 
   return { path: relPath, type: existing.type, fields: newFields, body: newBody };
 }
@@ -136,6 +157,7 @@ export function remove(workspacePath: string, relPath: string, actor: string): v
 
   const typeName = inferType(workspacePath, relPath);
   ledger.append(workspacePath, actor, 'delete', relPath, typeName);
+  graph.refreshWikiLinkGraphIndex(workspacePath);
 }
 
 // ---------------------------------------------------------------------------
@@ -225,6 +247,7 @@ function normalizeRefPath(value: unknown): string {
 }
 
 function validateFields(
+  workspacePath: string,
   typeDef: PrimitiveTypeDefinition,
   fields: Record<string, unknown>,
   mode: 'create' | 'update',
@@ -240,6 +263,39 @@ function validateFields(
     if (value === undefined || value === null) continue;
     if (!isFieldTypeCompatible(definition.type, value)) {
       issues.push(`Field "${fieldName}" expected ${definition.type}, got ${describeValue(value)}`);
+      continue;
+    }
+
+    if (definition.enum && definition.enum.length > 0 && !definition.enum.includes(value as string | number | boolean)) {
+      issues.push(`Field "${fieldName}" must be one of [${definition.enum.join(', ')}]`);
+      continue;
+    }
+
+    if (definition.template && typeof value === 'string' && !matchesTemplate(definition.template, value)) {
+      issues.push(`Field "${fieldName}" does not satisfy template "${definition.template}"`);
+      continue;
+    }
+
+    if (definition.pattern && typeof value === 'string') {
+      let expression: RegExp;
+      try {
+        expression = new RegExp(definition.pattern);
+      } catch {
+        issues.push(`Field "${fieldName}" has invalid pattern "${definition.pattern}"`);
+        continue;
+      }
+      if (!expression.test(value)) {
+        issues.push(`Field "${fieldName}" does not match pattern "${definition.pattern}"`);
+        continue;
+      }
+    }
+
+    if (definition.type === 'ref' && typeof value === 'string') {
+      const refValidation = validateRefValue(workspacePath, value, definition.refTypes);
+      if (!refValidation.ok) {
+        issues.push(refValidation.reason);
+        continue;
+      }
     }
   }
 
@@ -258,8 +314,9 @@ function isFieldTypeCompatible(type: PrimitiveTypeDefinition['fields'][string]['
   switch (type) {
     case 'string':
     case 'ref':
-    case 'date':
       return typeof value === 'string';
+    case 'date':
+      return typeof value === 'string' && isDateString(value);
     case 'number':
       return typeof value === 'number' && Number.isFinite(value);
     case 'boolean':
@@ -277,4 +334,67 @@ function describeValue(value: unknown): string {
   if (Array.isArray(value)) return 'array';
   if (value === null) return 'null';
   return typeof value;
+}
+
+function matchesTemplate(template: NonNullable<PrimitiveTypeDefinition['fields'][string]['template']>, value: string): boolean {
+  switch (template) {
+    case 'slug':
+      return /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(value);
+    case 'semver':
+      return /^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(value);
+    case 'email':
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value);
+    case 'url':
+      try {
+        const url = new URL(value);
+        return url.protocol === 'http:' || url.protocol === 'https:';
+      } catch {
+        return false;
+      }
+    case 'iso-date':
+      return isDateString(value);
+    default:
+      return true;
+  }
+}
+
+function isDateString(value: string): boolean {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp);
+}
+
+function validateRefValue(
+  workspacePath: string,
+  rawRef: string,
+  allowedTypes?: string[],
+): { ok: true } | { ok: false; reason: string } {
+  const normalized = normalizeRefPath(rawRef);
+  if (normalized.startsWith('external/')) {
+    return { ok: true };
+  }
+
+  const target = read(workspacePath, normalized);
+  if (!target && allowedTypes && allowedTypes.length > 0) {
+    const refDir = normalized.split('/')[0];
+    const registry = loadRegistry(workspacePath);
+    const allowedDirs = allowedTypes
+      .map((typeName) => registry.types[typeName]?.directory)
+      .filter((dirName): dirName is string => !!dirName);
+    if (allowedDirs.includes(refDir)) {
+      return { ok: true };
+    }
+  }
+
+  if (!target) {
+    return { ok: false, reason: `Reference target not found: ${normalized}` };
+  }
+
+  if (allowedTypes && allowedTypes.length > 0 && !allowedTypes.includes(target.type)) {
+    return {
+      ok: false,
+      reason: `Reference ${normalized} has type "${target.type}" but allowed types are [${allowedTypes.join(', ')}]`,
+    };
+  }
+
+  return { ok: true };
 }

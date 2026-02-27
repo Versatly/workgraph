@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://versatly.dev/workgraph/schemas/dispatch.schema.json",
+  "title": "Workgraph Dispatch API Contract",
+  "type": "object",
+  "required": ["create", "status", "followup", "stop", "logs"],
+  "properties": {
+    "create": {
+      "type": "object",
+      "required": ["objective"],
+      "properties": {
+        "objective": { "type": "string", "minLength": 1 },
+        "actor": { "type": "string" },
+        "adapter": { "type": "string" },
+        "idempotencyKey": { "type": "string" },
+        "context": { "type": "object", "additionalProperties": true }
+      },
+      "additionalProperties": false
+    },
+    "status": {
+      "type": "object",
+      "required": ["runId"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "followup": {
+      "type": "object",
+      "required": ["runId", "input"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "actor": { "type": "string" },
+        "input": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "stop": {
+      "type": "object",
+      "required": ["runId"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 },
+        "actor": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "logs": {
+      "type": "object",
+      "required": ["runId"],
+      "properties": {
+        "runId": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

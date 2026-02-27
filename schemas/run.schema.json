@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://versatly.dev/workgraph/schemas/run.schema.json",
+  "title": "Workgraph Dispatch Run",
+  "type": "object",
+  "required": ["id", "createdAt", "updatedAt", "actor", "adapter", "objective", "status", "followups", "logs"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "updatedAt": { "type": "string", "format": "date-time" },
+    "actor": { "type": "string", "minLength": 1 },
+    "adapter": { "type": "string", "minLength": 1 },
+    "objective": { "type": "string", "minLength": 1 },
+    "status": {
+      "type": "string",
+      "enum": ["queued", "running", "succeeded", "failed", "cancelled"]
+    },
+    "idempotencyKey": { "type": "string" },
+    "context": { "type": "object", "additionalProperties": true },
+    "output": { "type": "string" },
+    "error": { "type": "string" },
+    "followups": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ts", "actor", "input"],
+        "properties": {
+          "ts": { "type": "string", "format": "date-time" },
+          "actor": { "type": "string" },
+          "input": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    },
+    "logs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["ts", "level", "message"],
+        "properties": {
+          "ts": { "type": "string", "format": "date-time" },
+          "level": { "type": "string", "enum": ["info", "warn", "error"] },
+          "message": { "type": "string" }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

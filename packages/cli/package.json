@@ -1,0 +1,11 @@
+{
+  "name": "@versatly/workgraph-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "workgraph-monorepo": "src/index.ts"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts"
+}
