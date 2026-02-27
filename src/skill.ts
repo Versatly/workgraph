@@ -2,6 +2,7 @@
  * Skill primitive lifecycle.
  */
 
+import fs from 'node:fs';
 import path from 'node:path';
 import * as store from './store.js';
 import * as thread from './thread.js';
@@ -35,12 +36,15 @@ export function writeSkill(
   actor: string,
   options: WriteSkillOptions = {},
 ): PrimitiveInstance {
-  const relPath = pathForSkillTitle(title);
-  const existing = store.read(workspacePath, relPath);
+  const slug = skillSlug(title);
+  const bundleSkillPath = folderSkillPath(slug);
+  const legacyPath = legacySkillPath(slug);
+  const existing = store.read(workspacePath, bundleSkillPath) ?? store.read(workspacePath, legacyPath);
   const status = options.status ?? (existing?.fields.status as string | undefined) ?? 'draft';
 
   if (!existing) {
-    return store.create(workspacePath, 'skill', {
+    ensureSkillBundleScaffold(workspacePath, slug);
+    const created = store.create(workspacePath, 'skill', {
       title,
       owner: options.owner ?? actor,
       version: options.version ?? '0.1.0',
@@ -49,10 +53,14 @@ export function writeSkill(
       tailscale_path: options.tailscalePath,
       reviewers: options.reviewers ?? [],
       tags: options.tags ?? [],
-    }, body, actor);
+    }, body, actor, {
+      pathOverride: bundleSkillPath,
+    });
+    writeSkillManifest(workspacePath, slug, created, actor);
+    return created;
   }
 
-  return store.update(workspacePath, existing.path, {
+  const updated = store.update(workspacePath, existing.path, {
     title,
     owner: options.owner ?? existing.fields.owner ?? actor,
     version: options.version ?? existing.fields.version ?? '0.1.0',
@@ -62,11 +70,15 @@ export function writeSkill(
     reviewers: options.reviewers ?? existing.fields.reviewers ?? [],
     tags: options.tags ?? existing.fields.tags ?? [],
   }, body, actor);
+  writeSkillManifest(workspacePath, slug, updated, actor);
+  return updated;
 }
 
 export function loadSkill(workspacePath: string, skillRef: string): PrimitiveInstance {
-  const normalized = normalizeSkillRef(skillRef);
-  const skill = store.read(workspacePath, normalized);
+  const normalizedCandidates = normalizeSkillRefCandidates(skillRef);
+  const skill = normalizedCandidates
+    .map((candidate) => store.read(workspacePath, candidate))
+    .find((entry): entry is PrimitiveInstance => entry !== null);
   if (!skill) throw new Error(`Skill not found: ${skillRef}`);
   if (skill.type !== 'skill') throw new Error(`Target is not a skill primitive: ${skillRef}`);
   return skill;
@@ -90,6 +102,7 @@ export function proposeSkill(
   options: ProposeSkillOptions = {},
 ): PrimitiveInstance {
   const skill = loadSkill(workspacePath, skillRef);
+  const slug = skillSlug(String(skill.fields.title ?? skillRef));
 
   let proposalThread = options.proposalThread;
   if (!proposalThread && options.createThreadIfMissing !== false) {
@@ -107,12 +120,14 @@ export function proposeSkill(
     proposalThread = createdThread.path;
   }
 
-  return store.update(workspacePath, skill.path, {
+  const updated = store.update(workspacePath, skill.path, {
     status: 'proposed',
     proposal_thread: proposalThread ?? skill.fields.proposal_thread,
     proposed_at: new Date().toISOString(),
     reviewers: options.reviewers ?? skill.fields.reviewers ?? [],
   }, undefined, actor);
+  writeSkillManifest(workspacePath, slug, updated, actor);
+  return updated;
 }
 
 export function promoteSkill(
@@ -122,37 +137,42 @@ export function promoteSkill(
   options: PromoteSkillOptions = {},
 ): PrimitiveInstance {
   const skill = loadSkill(workspacePath, skillRef);
+  const slug = skillSlug(String(skill.fields.title ?? skillRef));
   const currentVersion = String(skill.fields.version ?? '0.1.0');
   const nextVersion = options.version ?? bumpPatchVersion(currentVersion);
 
-  return store.update(workspacePath, skill.path, {
+  const updated = store.update(workspacePath, skill.path, {
     status: 'active',
     version: nextVersion,
     promoted_at: new Date().toISOString(),
   }, undefined, actor);
+  writeSkillManifest(workspacePath, slug, updated, actor);
+  return updated;
 }
 
-function pathForSkillTitle(title: string): string {
-  const slug = title
+function skillSlug(title: string): string {
+  return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 80);
-  return `skills/${slug}.md`;
 }
 
-function normalizeSkillRef(skillRef: string): string {
+function normalizeSkillRefCandidates(skillRef: string): string[] {
   const raw = skillRef.trim();
-  if (!raw) return raw;
+  if (!raw) return [];
   if (raw.includes('/')) {
-    return raw.endsWith('.md') ? raw : `${raw}.md`;
+    const normalized = raw.endsWith('.md') ? raw : `${raw}.md`;
+    if (normalized.endsWith('/SKILL.md')) return [normalized];
+    if (normalized.endsWith('/SKILL')) return [`${normalized}.md`];
+    if (normalized.endsWith('.md')) {
+      const noExt = normalized.slice(0, -3);
+      return [normalized, `${noExt}/SKILL.md`];
+    }
+    return [normalized, `${normalized}/SKILL.md`];
   }
-  const slug = raw
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 80);
-  return `skills/${slug}.md`;
+  const slug = skillSlug(raw);
+  return [folderSkillPath(slug), legacySkillPath(slug)];
 }
 
 function bumpPatchVersion(version: string): string {
@@ -162,4 +182,49 @@ function bumpPatchVersion(version: string): string {
   const minor = Number.parseInt(match[2], 10);
   const patch = Number.parseInt(match[3], 10) + 1;
   return `${major}.${minor}.${patch}`;
+}
+
+function folderSkillPath(slug: string): string {
+  return `skills/${slug}/SKILL.md`;
+}
+
+function legacySkillPath(slug: string): string {
+  return `skills/${slug}.md`;
+}
+
+function ensureSkillBundleScaffold(workspacePath: string, slug: string): void {
+  const skillRoot = path.join(workspacePath, 'skills', slug);
+  fs.mkdirSync(skillRoot, { recursive: true });
+  for (const subdir of ['scripts', 'examples', 'tests', 'assets']) {
+    fs.mkdirSync(path.join(skillRoot, subdir), { recursive: true });
+  }
+}
+
+function writeSkillManifest(
+  workspacePath: string,
+  slug: string,
+  skill: PrimitiveInstance,
+  actor: string,
+): void {
+  const manifestPath = path.join(workspacePath, 'skills', slug, 'skill-manifest.json');
+  const dir = path.dirname(manifestPath);
+  fs.mkdirSync(dir, { recursive: true });
+  const manifest = {
+    version: 1,
+    slug,
+    title: String(skill.fields.title ?? slug),
+    primitivePath: skill.path,
+    owner: String(skill.fields.owner ?? actor),
+    skillVersion: String(skill.fields.version ?? '0.1.0'),
+    status: String(skill.fields.status ?? 'draft'),
+    components: {
+      skillDoc: 'SKILL.md',
+      scriptsDir: 'scripts/',
+      examplesDir: 'examples/',
+      testsDir: 'tests/',
+      assetsDir: 'assets/',
+    },
+    updatedAt: new Date().toISOString(),
+  };
+  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2) + '\n', 'utf-8');
 }

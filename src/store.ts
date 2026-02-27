@@ -21,6 +21,7 @@ export function create(
   fields: Record<string, unknown>,
   body: string,
   actor: string,
+  options: { pathOverride?: string } = {},
 ): PrimitiveInstance {
   const typeDef = getType(workspacePath, typeName);
   if (!typeDef) {
@@ -48,10 +49,10 @@ export function create(
   }
   validateFields(workspacePath, typeDef, merged, 'create');
 
-  const slug = slugify(String(merged.title ?? merged.name ?? typeName));
   const relDir = typeDef.directory;
-  const relPath = `${relDir}/${slug}.md`;
-  const absDir = path.join(workspacePath, relDir);
+  const slug = slugify(String(merged.title ?? merged.name ?? typeName));
+  const relPath = resolveCreatePath(relDir, slug, options.pathOverride);
+  const absDir = path.dirname(path.join(workspacePath, relPath));
   const absPath = path.join(workspacePath, relPath);
 
   if (!fs.existsSync(absDir)) fs.mkdirSync(absDir, { recursive: true });
@@ -93,11 +94,11 @@ export function list(workspacePath: string, typeName: string): PrimitiveInstance
   const dir = path.join(workspacePath, typeDef.directory);
   if (!fs.existsSync(dir)) return [];
 
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.md'));
+  const files = listMarkdownFilesRecursive(dir);
   const instances: PrimitiveInstance[] = [];
 
   for (const file of files) {
-    const relPath = `${typeDef.directory}/${file}`;
+    const relPath = path.relative(workspacePath, file).replace(/\\/g, '/');
     const inst = read(workspacePath, relPath);
     if (inst) instances.push(inst);
   }
@@ -224,6 +225,38 @@ function slugify(text: string): string {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, 80);
+}
+
+function resolveCreatePath(directory: string, slug: string, pathOverride?: string): string {
+  if (!pathOverride) {
+    return `${directory}/${slug}.md`;
+  }
+  const normalized = pathOverride.replace(/\\/g, '/').replace(/^\.\//, '');
+  const withExtension = normalized.endsWith('.md') ? normalized : `${normalized}.md`;
+  if (!withExtension.startsWith(`${directory}/`)) {
+    throw new Error(`Invalid create path override "${pathOverride}". Must stay under "${directory}/".`);
+  }
+  return withExtension;
+}
+
+function listMarkdownFilesRecursive(rootDir: string): string[] {
+  const output: string[] = [];
+  const stack = [rootDir];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    const entries = fs.readdirSync(current, { withFileTypes: true });
+    for (const entry of entries) {
+      const absPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(absPath);
+        continue;
+      }
+      if (entry.isFile() && entry.name.endsWith('.md')) {
+        output.push(absPath);
+      }
+    }
+  }
+  return output;
 }
 
 function applyDefaults(

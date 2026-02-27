@@ -36,8 +36,8 @@
     "typecheck:packages": "npm run typecheck --workspaces --if-present",
     "test": "vitest run --config vitest.config.ts",
     "test:packages": "npm run test --workspaces --if-present",
-    "demo:workspace": "node scripts/generate-demo-workspace.mjs /tmp/workgraph-obsidian-demo",
-    "demo:obsidian-setup": "node scripts/setup-obsidian-demo.mjs /tmp/workgraph-obsidian-demo",
+    "demo:workspace": "npm run build --silent && node scripts/generate-demo-workspace.mjs /tmp/workgraph-obsidian-demo",
+    "demo:obsidian-setup": "npm run build --silent && node scripts/setup-obsidian-demo.mjs /tmp/workgraph-obsidian-demo",
     "ci": "npm run typecheck && npm run typecheck:packages && npm run test && npm run build",
     "prepublishOnly": "npm run ci"
   },

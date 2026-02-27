@@ -33,8 +33,13 @@ describe('skill primitive lifecycle', () => {
     );
 
     expect(created.type).toBe('skill');
-    expect(created.path).toBe('skills/workgraph-manual.md');
+    expect(created.path).toBe('skills/workgraph-manual/SKILL.md');
     expect(created.fields.status).toBe('draft');
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/skill-manifest.json'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/scripts'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/examples'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/tests'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'skills/workgraph-manual/assets'))).toBe(true);
 
     const loaded = loadSkill(workspacePath, 'workgraph-manual');
     expect(loaded.path).toBe(created.path);
@@ -82,5 +87,28 @@ describe('skill primitive lifecycle', () => {
     expect(all).toHaveLength(2);
     expect(active).toHaveLength(1);
     expect(active[0].fields.title).toBe('skill-b');
+  });
+
+  it('loads legacy flat skill paths for backwards compatibility', () => {
+    const legacyPath = path.join(workspacePath, 'skills');
+    fs.mkdirSync(legacyPath, { recursive: true });
+    fs.writeFileSync(
+      path.join(legacyPath, 'legacy-skill.md'),
+      [
+        '---',
+        'title: legacy-skill',
+        'status: draft',
+        'version: 0.1.0',
+        'created: 2026-02-27T00:00:00.000Z',
+        'updated: 2026-02-27T00:00:00.000Z',
+        '---',
+        '',
+        '# Legacy Skill',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    const loaded = loadSkill(workspacePath, 'legacy-skill');
+    expect(loaded.path).toBe('skills/legacy-skill.md');
   });
 });

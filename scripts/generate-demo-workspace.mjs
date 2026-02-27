@@ -79,7 +79,7 @@ for (let i = 1; i <= 120; i += 1) {
     '--actor', 'agent-architect',
     '--set', `cluster=cluster-${((i - 1) % 10) + 1}`,
     '--set', `energy=${(i * 7) % 100}`,
-    '--body', `# Context Node ${i}\n\nLinks: [[threads/review-workspace-policy-gates.md]] [[skills/workgraph-manual.md]]${i > 1 ? ` [[context-nodes/context-node-${i - 1}.md]]` : ''}`,
+    '--body', `# Context Node ${i}\n\nLinks: [[threads/review-workspace-policy-gates.md]] [[skills/workgraph-manual/SKILL.md]]${i > 1 ? ` [[context-nodes/context-node-${i - 1}.md]]` : ''}`,
     '--json',
   ];
   if (i > 1) {
