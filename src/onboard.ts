@@ -6,6 +6,7 @@ import * as board from './board.js';
 import * as commandCenter from './command-center.js';
 import * as orientation from './orientation.js';
 import * as store from './store.js';
+import type { PrimitiveInstance } from './types.js';
 
 export interface OnboardOptions {
   actor: string;
@@ -22,6 +23,8 @@ export interface OnboardResult {
   checkpointPath: string;
   onboardingPath: string;
 }
+
+export type OnboardingStatus = 'active' | 'completed' | 'paused';
 
 export function onboardWorkspace(workspacePath: string, options: OnboardOptions): OnboardResult {
   const spaces = options.spaces && options.spaces.length > 0
@@ -132,6 +135,37 @@ export function onboardWorkspace(workspacePath: string, options: OnboardOptions)
     onboardingPath: onboarding.path,
   };
 }
+
+export function updateOnboardingStatus(
+  workspacePath: string,
+  onboardingPath: string,
+  status: OnboardingStatus,
+  actor: string,
+): PrimitiveInstance {
+  const onboarding = store.read(workspacePath, onboardingPath);
+  if (!onboarding) throw new Error(`Onboarding primitive not found: ${onboardingPath}`);
+  if (onboarding.type !== 'onboarding') {
+    throw new Error(`Target is not an onboarding primitive: ${onboardingPath}`);
+  }
+  const current = String(onboarding.fields.status ?? 'active') as OnboardingStatus;
+  const allowed = ONBOARDING_STATUS_TRANSITIONS[current] ?? [];
+  if (!allowed.includes(status)) {
+    throw new Error(`Invalid onboarding transition: ${current} -> ${status}. Allowed: ${allowed.join(', ') || 'none'}`);
+  }
+  return store.update(
+    workspacePath,
+    onboardingPath,
+    { status },
+    undefined,
+    actor,
+  );
+}
+
+const ONBOARDING_STATUS_TRANSITIONS: Record<OnboardingStatus, OnboardingStatus[]> = {
+  active: ['paused', 'completed'],
+  paused: ['active', 'completed'],
+  completed: [],
+};
 
 function titleCase(value: string): string {
   return value

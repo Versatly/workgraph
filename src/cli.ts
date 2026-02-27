@@ -1508,6 +1508,58 @@ addWorkspaceOption(
   )
 );
 
+const onboardingCmd = program
+  .command('onboarding')
+  .description('Manage onboarding primitive lifecycle');
+
+addWorkspaceOption(
+  onboardingCmd
+    .command('show <onboardingPath>')
+    .description('Show one onboarding primitive')
+    .option('--json', 'Emit structured JSON output')
+).action((onboardingPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const onboarding = workgraph.store.read(workspacePath, onboardingPath);
+      if (!onboarding) throw new Error(`Onboarding primitive not found: ${onboardingPath}`);
+      if (onboarding.type !== 'onboarding') throw new Error(`Target is not onboarding primitive: ${onboardingPath}`);
+      return { onboarding };
+    },
+    (result) => [
+      `Onboarding: ${result.onboarding.path}`,
+      `Status: ${String(result.onboarding.fields.status)}`,
+      `Actor: ${String(result.onboarding.fields.actor)}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  onboardingCmd
+    .command('update <onboardingPath>')
+    .description('Update onboarding lifecycle status')
+    .requiredOption('--status <status>', 'active|paused|completed')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((onboardingPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        onboarding: workgraph.onboard.updateOnboardingStatus(
+          workspacePath,
+          onboardingPath,
+          normalizeOnboardingStatus(opts.status),
+          opts.actor,
+        ),
+      };
+    },
+    (result) => [`Updated onboarding: ${result.onboarding.path} [${String(result.onboarding.fields.status)}]`],
+  )
+);
+
 program.parse();
 
 function addWorkspaceOption<T extends Command>(command: T): T {
@@ -1570,6 +1622,14 @@ function normalizeRunStatus(status: string): 'running' | 'succeeded' | 'failed' 
     return normalized;
   }
   throw new Error(`Invalid run status "${status}". Expected running|succeeded|failed|cancelled.`);
+}
+
+function normalizeOnboardingStatus(status: string): 'active' | 'paused' | 'completed' {
+  const normalized = String(status).toLowerCase();
+  if (normalized === 'active' || normalized === 'paused' || normalized === 'completed') {
+    return normalized;
+  }
+  throw new Error(`Invalid onboarding status "${status}". Expected active|paused|completed.`);
 }
 
 function wantsJson(opts: JsonCapableOptions): boolean {

@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { loadRegistry, saveRegistry } from './registry.js';
-import { onboardWorkspace } from './onboard.js';
+import { onboardWorkspace, updateOnboardingStatus } from './onboard.js';
 import { read as readPrimitive } from './store.js';
 
 let workspacePath: string;
@@ -37,5 +37,22 @@ describe('onboard workspace', () => {
     expect(onboarding?.type).toBe('onboarding');
     expect(onboarding?.fields.actor).toBe('agent-setup');
     expect(onboarding?.fields.status).toBe('active');
+  });
+
+  it('supports onboarding lifecycle transitions with guards', () => {
+    const result = onboardWorkspace(workspacePath, {
+      actor: 'agent-setup',
+      spaces: ['platform'],
+      createDemoThreads: false,
+    });
+
+    const paused = updateOnboardingStatus(workspacePath, result.onboardingPath, 'paused', 'agent-setup');
+    expect(paused.fields.status).toBe('paused');
+
+    const completed = updateOnboardingStatus(workspacePath, result.onboardingPath, 'completed', 'agent-setup');
+    expect(completed.fields.status).toBe('completed');
+
+    expect(() => updateOnboardingStatus(workspacePath, result.onboardingPath, 'active', 'agent-setup'))
+      .toThrow('Invalid onboarding transition');
   });
 });

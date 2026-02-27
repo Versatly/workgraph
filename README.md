@@ -70,6 +70,7 @@ workgraph graph neighbors context-nodes/context-node-1 --json
 workgraph dispatch create "Review blockers" --actor agent-lead --json
 workgraph dispatch mark run_123 --status succeeded --output "Review complete" --actor agent-lead --json
 workgraph trigger fire triggers/escalate-blocked.md --event-key "thread-blocked-001" --actor agent-lead --json
+workgraph onboarding update onboarding/onboarding-for-agent-architect.md --status paused --actor agent-lead --json
 workgraph ledger show --count 20 --json
 workgraph command-center --output "ops/Command Center.md" --json
 workgraph bases generate --refresh-registry --json
