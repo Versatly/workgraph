@@ -18,6 +18,8 @@ export * as board from './board.js';
 export * as policy from './policy.js';
 export * as dispatch from './dispatch.js';
 export * as onboard from './onboard.js';
+export * as claimLease from './claim-lease.js';
+export * as threadAudit from './thread-audit.js';
 export * as searchQmdAdapter from './search-qmd-adapter.js';
 export * as trigger from './trigger.js';
 export * as triggerEngine from './trigger-engine.js';

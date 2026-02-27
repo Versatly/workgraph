@@ -100,21 +100,27 @@ addWorkspaceOption(
       if (!goal) {
         throw new Error('Missing thread goal. Provide --goal (or --description).');
       }
+      const explicitDeps = csv(opts.deps) ?? [];
+      const inferredDeps = workgraph.thread.inferThreadDependenciesFromText(goal);
       return {
         thread: workgraph.thread.createThread(workspacePath, title, goal, opts.actor, {
           priority: opts.priority,
-          deps: csv(opts.deps),
+          deps: explicitDeps,
           parent: opts.parent,
           space: opts.space,
           context_refs: csv(opts.context),
           tags: csv(opts.tags),
         }),
+        inferredDeps: inferredDeps.filter((dep) => !explicitDeps.includes(dep)),
       };
     },
     (result) => [
       `Created thread: ${result.thread.path}`,
       `Status: ${String(result.thread.fields.status)}`,
       `Priority: ${String(result.thread.fields.priority)}`,
+      ...(result.inferredDeps.length > 0
+        ? [`Auto-inferred deps from thread text: ${result.inferredDeps.join(', ')}`]
+        : []),
     ]
   )
 );
@@ -232,13 +238,18 @@ addWorkspaceOption(
     .command('claim <threadPath>')
     .description('Claim a thread for this agent')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--lease-ttl-minutes <n>', 'Claim lease TTL in minutes', '30')
     .option('--json', 'Emit structured JSON output')
 ).action((threadPath, opts) =>
   runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
-      return { thread: workgraph.thread.claim(workspacePath, threadPath, opts.actor) };
+      return {
+        thread: workgraph.thread.claim(workspacePath, threadPath, opts.actor, {
+          leaseTtlMinutes: Number.parseFloat(String(opts.leaseTtlMinutes)),
+        }),
+      };
     },
     (result) => [`Claimed: ${result.thread.path}`, `Owner: ${String(result.thread.fields.owner)}`]
   )
@@ -282,6 +293,24 @@ addWorkspaceOption(
 
 addWorkspaceOption(
   threadCmd
+    .command('reopen <threadPath>')
+    .description('Reopen a done/cancelled thread via compensating ledger op')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--reason <reason>', 'Why the thread is being reopened')
+    .option('--json', 'Emit structured JSON output')
+).action((threadPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return { thread: workgraph.thread.reopen(workspacePath, threadPath, opts.actor, opts.reason) };
+    },
+    (result) => [`Reopened: ${result.thread.path}`, `Status: ${String(result.thread.fields.status)}`]
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
     .command('block <threadPath>')
     .description('Mark a thread blocked')
     .requiredOption('-b, --blocked-by <dep>', 'Dependency blocking this thread')
@@ -315,6 +344,88 @@ addWorkspaceOption(
       return { thread: workgraph.thread.unblock(workspacePath, threadPath, opts.actor) };
     },
     (result) => [`Unblocked: ${result.thread.path}`]
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('heartbeat [threadPath]')
+    .description('Refresh thread claim lease heartbeat (one thread or all active claims for actor)')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--ttl-minutes <n>', 'Lease TTL in minutes', '30')
+    .option('--json', 'Emit structured JSON output')
+).action((threadPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.thread.heartbeatClaim(
+        workspacePath,
+        opts.actor,
+        threadPath,
+        {
+          ttlMinutes: Number.parseFloat(String(opts.ttlMinutes)),
+        },
+      );
+    },
+    (result) => [
+      `Heartbeat actor: ${result.actor}`,
+      `Touched leases: ${result.touched.length}`,
+      ...(result.touched.length > 0
+        ? result.touched.map((entry) => `- ${entry.threadPath} expires=${entry.expiresAt}`)
+        : []),
+      ...(result.skipped.length > 0
+        ? result.skipped.map((entry) => `SKIP ${entry.threadPath}: ${entry.reason}`)
+        : []),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('reap-stale')
+    .description('Reopen/release stale claimed threads whose leases expired')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--limit <n>', 'Max stale leases to reap this run')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.thread.reapStaleClaims(workspacePath, opts.actor, {
+        limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+      });
+    },
+    (result) => [
+      `Reaper actor: ${result.actor}`,
+      `Scanned stale leases: ${result.scanned}`,
+      `Reaped: ${result.reaped.length}`,
+      ...(result.reaped.length > 0
+        ? result.reaped.map((entry) => `- ${entry.threadPath} (prev=${entry.previousOwner})`)
+        : []),
+      ...(result.skipped.length > 0
+        ? result.skipped.map((entry) => `SKIP ${entry.threadPath}: ${entry.reason}`)
+        : []),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('leases')
+    .description('List claim leases and staleness state')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const leases = workgraph.thread.listClaimLeaseStatus(workspacePath);
+      return { leases, count: leases.length };
+    },
+    (result) => result.leases.map((lease) =>
+      `${lease.stale ? 'STALE' : 'LIVE'} ${lease.owner} -> ${lease.target} expires=${lease.expiresAt}`)
   )
 );
 
@@ -595,8 +706,7 @@ addWorkspaceOption(
     .option('--owner <name>', 'Skill owner')
     .option('--skill-version <semver>', 'Skill version')
     .option('--status <status>', 'draft | proposed | active | deprecated | archived')
-    .option('--distribution <mode>', 'Distribution mode', 'tailscale-shared-vault')
-    .option('--tailscale-path <path>', 'Shared Tailscale workspace path')
+    .option('--distribution <mode>', 'Distribution mode', 'shared-vault')
     .option('--reviewers <list>', 'Comma-separated reviewer names')
     .option('--depends-on <list>', 'Comma-separated skill dependencies (slug/path)')
     .option('--expected-updated-at <iso>', 'Optimistic concurrency guard for updates')
@@ -624,7 +734,6 @@ addWorkspaceOption(
           version: opts.skillVersion,
           status: opts.status,
           distribution: opts.distribution,
-          tailscalePath: opts.tailscalePath,
           reviewers: csv(opts.reviewers),
           dependsOn: csv(opts.dependsOn),
           expectedUpdatedAt: opts.expectedUpdatedAt,
@@ -924,6 +1033,33 @@ addWorkspaceOption(
       `Last hash: ${result.lastHash}`,
       ...(result.issues.length > 0 ? result.issues.map((issue) => `ISSUE: ${issue}`) : []),
       ...(result.warnings.length > 0 ? result.warnings.map((warning) => `WARN: ${warning}`) : []),
+    ]
+  )
+);
+
+addWorkspaceOption(
+  ledgerCmd
+    .command('reconcile')
+    .description('Audit thread files against ledger claims, leases, and dependency wiring')
+    .option('--fail-on-issues', 'Exit non-zero when issues are found')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const report = workgraph.threadAudit.reconcileThreadState(workspacePath);
+      if (opts.failOnIssues && !report.ok) {
+        throw new Error(`Ledger reconcile found ${report.issues.length} issue(s).`);
+      }
+      return report;
+    },
+    (result) => [
+      `Reconcile ok: ${result.ok}`,
+      `Threads: ${result.totalThreads} Claims: ${result.totalClaims} Leases: ${result.totalLeases}`,
+      ...(result.issues.length > 0
+        ? result.issues.map((issue) => `${issue.kind}: ${issue.path} — ${issue.message}`)
+        : ['No reconcile issues found.']),
     ]
   )
 );

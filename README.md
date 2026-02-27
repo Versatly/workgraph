@@ -63,11 +63,15 @@ workgraph thread create "Ship command center" \
   --json
 
 workgraph thread next --claim --actor agent-worker --json
+workgraph thread heartbeat --actor agent-worker --ttl-minutes 30 --json
+workgraph thread leases --json
+workgraph thread reap-stale --actor agent-ops --json
 workgraph status --json
 workgraph brief --actor agent-worker --json
 workgraph query --type thread --status open --limit 10 --json
 workgraph search "auth" --mode auto --json
 workgraph checkpoint "Completed API layer" --next "implement tests" --actor agent-worker --json
+workgraph thread reopen threads/auth.md --actor agent-worker --reason "follow-up regression" --json
 workgraph board generate --output "ops/Workgraph Board.md" --json
 workgraph graph hygiene --json
 workgraph graph neighbors context-nodes/context-node-1 --json
@@ -92,6 +96,7 @@ workgraph onboarding update onboarding/onboarding-for-agent-architect.md --statu
 workgraph mcp serve -w /path/to/workspace --actor agent-ops --read-only
 workgraph mcp serve-http -w /path/to/workspace --host 0.0.0.0 --port 8787 --bearer-token-env WORKGRAPH_MCP_TOKEN
 workgraph ledger show --count 20 --json
+workgraph ledger reconcile --json
 workgraph command-center --output "ops/Command Center.md" --json
 workgraph bases generate --refresh-registry --json
 workgraph thread create "safe-op" -w /path/to/workspace --goal "preview mutation" --dry-run --json

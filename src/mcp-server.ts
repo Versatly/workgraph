@@ -11,6 +11,7 @@ import * as query from './query.js';
 import * as registry from './registry.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
+import * as threadAudit from './thread-audit.js';
 import * as triggerEngine from './trigger-engine.js';
 
 export interface WorkgraphMcpServerOptions {
@@ -345,6 +346,29 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
         return okResult(
           report,
           `Graph hygiene: nodes=${report.nodeCount}, edges=${report.edgeCount}, orphans=${report.orphanCount}, broken=${report.brokenLinkCount}`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_ledger_reconcile',
+    {
+      title: 'Ledger Reconcile',
+      description: 'Audit thread files against ledger claims, leases, and dependency wiring.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const report = threadAudit.reconcileThreadState(options.workspacePath);
+        return okResult(
+          report,
+          `Ledger reconcile ${report.ok ? 'ok' : 'issues'}: ${report.issues.length} issue(s) across ${report.totalThreads} thread(s).`,
         );
       } catch (error) {
         return errorResult(error);

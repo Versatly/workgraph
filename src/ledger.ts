@@ -359,7 +359,7 @@ function applyClaimMutation(index: LedgerIndex, entry: LedgerEntry): void {
     index.claims[entry.target] = entry.actor;
     return;
   }
-  if (entry.op === 'release' || entry.op === 'done' || entry.op === 'cancel') {
+  if (entry.op === 'release' || entry.op === 'done' || entry.op === 'cancel' || entry.op === 'reopen') {
     delete index.claims[entry.target];
   }
 }
@@ -369,7 +369,7 @@ function claimsFromLedger(workspacePath: string): Map<string, string> {
   const entries = readAll(workspacePath);
   for (const entry of entries) {
     if (entry.op === 'claim') claims.set(entry.target, entry.actor);
-    if (entry.op === 'release' || entry.op === 'done' || entry.op === 'cancel') {
+    if (entry.op === 'release' || entry.op === 'done' || entry.op === 'cancel' || entry.op === 'reopen') {
       claims.delete(entry.target);
     }
   }
