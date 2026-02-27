@@ -46,6 +46,7 @@
     "test:packages": "npm run test --workspaces --if-present",
     "demo:workspace": "npm run build --silent && node scripts/generate-demo-workspace.mjs /tmp/workgraph-obsidian-demo",
     "demo:obsidian-setup": "npm run build --silent && node scripts/setup-obsidian-demo.mjs /tmp/workgraph-obsidian-demo",
+    "demo:product": "npm run build --silent && node scripts/product-demo.mjs",
     "ci": "npm run typecheck && npm run typecheck:packages && npm run test && npm run build",
     "prepublishOnly": "npm run ci"
   },

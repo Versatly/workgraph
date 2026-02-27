@@ -127,6 +127,15 @@ npm run demo:obsidian-setup
 
 Runbook: `docs/OBSIDIAN_DEMO.md`.
 
+### One-command product demo
+
+Replay end-to-end autonomy + trigger + MCP HTTP + adapter validation:
+
+```bash
+npm run build
+node scripts/product-demo.mjs --log /tmp/workgraph-product-demo.log
+```
+
 ### MCP over Tailnet / third-party clients
 
 Use Streamable HTTP mode for remote MCP clients over Tailscale/tailnet:
