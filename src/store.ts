@@ -33,6 +33,19 @@ export function create(
     created: fields.created ?? now,
     updated: now,
   });
+  const initialStatus = typeof merged.status === 'string'
+    ? String(merged.status)
+    : undefined;
+  const createPolicyDecision = policy.canTransitionStatus(
+    workspacePath,
+    actor,
+    typeName,
+    'draft',
+    initialStatus ?? 'draft',
+  );
+  if (!createPolicyDecision.allowed) {
+    throw new Error(createPolicyDecision.reason ?? 'Policy gate blocked create transition.');
+  }
   validateFields(workspacePath, typeDef, merged, 'create');
 
   const slug = slugify(String(merged.title ?? merged.name ?? typeName));
@@ -51,6 +64,7 @@ export function create(
 
   ledger.append(workspacePath, actor, 'create', relPath, typeName, {
     title: merged.title ?? slug,
+    ...(typeof merged.status === 'string' ? { status: merged.status } : {}),
   });
   graph.refreshWikiLinkGraphIndex(workspacePath);
 
@@ -135,6 +149,12 @@ export function update(
 
   ledger.append(workspacePath, actor, 'update', relPath, existing.type, {
     changed: Object.keys(fieldUpdates),
+    ...(previousStatus !== nextStatus && nextStatus
+      ? {
+          from_status: previousStatus ?? null,
+          to_status: nextStatus,
+        }
+      : {}),
   });
   graph.refreshWikiLinkGraphIndex(workspacePath);
 

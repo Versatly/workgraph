@@ -6,6 +6,7 @@ import { loadRegistry, saveRegistry } from './registry.js';
 import * as store from './store.js';
 import * as policy from './policy.js';
 import * as dispatch from './dispatch.js';
+import * as ledger from './ledger.js';
 
 let workspacePath: string;
 
@@ -37,6 +38,39 @@ describe('policy gates and dispatch contract', () => {
 
     const approved = store.update(workspacePath, decision.path, { status: 'approved' }, undefined, 'agent-a');
     expect(approved.fields.status).toBe('approved');
+  });
+
+  it('blocks creating sensitive primitive directly in active state without capability', () => {
+    expect(() => store.create(workspacePath, 'policy', {
+      title: 'Direct active policy',
+      status: 'active',
+    }, '# policy\n', 'agent-plain')).toThrow('Policy gate blocked transition');
+
+    policy.upsertParty(workspacePath, 'agent-plain', {
+      roles: ['admin'],
+      capabilities: ['promote:sensitive'],
+    });
+    const created = store.create(workspacePath, 'policy', {
+      title: 'Direct active policy',
+      status: 'active',
+    }, '# policy\n', 'agent-plain');
+    expect(created.fields.status).toBe('active');
+  });
+
+  it('adds status transition audit metadata into ledger updates', () => {
+    const incident = store.create(workspacePath, 'incident', {
+      title: 'Service degradation',
+      status: 'draft',
+    }, '# incident\n', 'agent-x');
+    policy.upsertParty(workspacePath, 'agent-x', {
+      roles: ['reviewer'],
+      capabilities: ['promote:sensitive'],
+    });
+    store.update(workspacePath, incident.path, { status: 'approved' }, undefined, 'agent-x');
+    const entries = ledger.historyOf(workspacePath, incident.path);
+    const updateEntry = entries.find((entry) => entry.op === 'update');
+    expect(updateEntry?.data?.from_status).toBe('draft');
+    expect(updateEntry?.data?.to_status).toBe('approved');
   });
 
   it('supports dispatch create/status/followup/stop/logs flow', () => {

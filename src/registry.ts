@@ -75,7 +75,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     fields: {
       title:       { type: 'string', required: true },
       date:        { type: 'date', required: true },
-      status:      { type: 'string', default: 'active', enum: ['draft', 'proposed', 'approved', 'active', 'superseded', 'reverted'], description: 'draft | proposed | approved | active | superseded | reverted' },
+      status:      { type: 'string', default: 'draft', enum: ['draft', 'proposed', 'approved', 'active', 'superseded', 'reverted'], description: 'draft | proposed | approved | active | superseded | reverted' },
       context_refs:{ type: 'list', default: [], description: 'What informed this decision' },
       tags:        { type: 'list', default: [] },
     },
