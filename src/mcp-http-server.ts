@@ -30,7 +30,7 @@ export async function startWorkgraphMcpHttpServer(
   options: WorkgraphMcpHttpServerOptions,
 ): Promise<WorkgraphMcpHttpServerHandle> {
   const host = options.host ?? '127.0.0.1';
-  const port = clampInt(options.port, 8787, 1, 65535);
+  const port = normalizePort(options.port, 8787);
   const endpointPath = normalizeEndpointPath(options.endpointPath ?? '/mcp');
   const app = createMcpExpressApp({
     host,
@@ -39,7 +39,7 @@ export async function startWorkgraphMcpHttpServer(
   const sessions: Record<string, SessionBinding> = {};
   const authToken = readString(options.bearerToken);
 
-  app.get('/health', (_req, res) => {
+  app.get('/health', (_req: unknown, res: any) => {
     res.json({
       ok: true,
       mode: 'streamable-http',
@@ -48,7 +48,7 @@ export async function startWorkgraphMcpHttpServer(
     });
   });
 
-  app.use(endpointPath, (req, res, next) => {
+  app.use(endpointPath, (req: any, res: any, next: () => void) => {
     if (!authToken) return next();
     const authorization = readString(req.headers.authorization);
     if (!authorization || !authorization.startsWith('Bearer ')) {
@@ -69,7 +69,7 @@ export async function startWorkgraphMcpHttpServer(
     next();
   });
 
-  app.post(endpointPath, async (req, res) => {
+  app.post(endpointPath, async (req: any, res: any) => {
     const sessionId = readSessionId(req.headers['mcp-session-id']);
     try {
       let binding: SessionBinding | undefined;
@@ -128,7 +128,7 @@ export async function startWorkgraphMcpHttpServer(
     }
   });
 
-  app.get(endpointPath, async (req, res) => {
+  app.get(endpointPath, async (req: any, res: any) => {
     const sessionId = readSessionId(req.headers['mcp-session-id']);
     if (!sessionId || !sessions[sessionId]) {
       res.status(400).send('Invalid or missing MCP session ID.');
@@ -137,7 +137,7 @@ export async function startWorkgraphMcpHttpServer(
     await sessions[sessionId].transport.handleRequest(req, res);
   });
 
-  app.delete(endpointPath, async (req, res) => {
+  app.delete(endpointPath, async (req: any, res: any) => {
     const sessionId = readSessionId(req.headers['mcp-session-id']);
     if (!sessionId || !sessions[sessionId]) {
       res.status(400).send('Invalid or missing MCP session ID.');
@@ -161,7 +161,11 @@ export async function startWorkgraphMcpHttpServer(
 
   const address = server.address();
   const actualPort = typeof address === 'object' && address ? address.port : port;
-  const baseUrl = `http://${host}:${actualPort}`;
+  const resolvedAddress = typeof address === 'object' && address
+    ? address.address
+    : host;
+  const displayHost = formatHostForUrl(resolvedAddress);
+  const baseUrl = `http://${displayHost}:${actualPort}`;
   return {
     host,
     port: actualPort,
@@ -206,4 +210,21 @@ function readString(value: unknown): string | undefined {
 function clampInt(value: number | undefined, fallback: number, min: number, max: number): number {
   const raw = typeof value === 'number' && Number.isFinite(value) ? Math.trunc(value) : fallback;
   return Math.min(max, Math.max(min, raw));
+}
+
+function normalizePort(value: number | undefined, fallback: number): number {
+  const raw = typeof value === 'number' && Number.isFinite(value)
+    ? Math.trunc(value)
+    : fallback;
+  if (raw < 0 || raw > 65535) {
+    throw new Error(`Invalid port "${raw}". Expected 0..65535.`);
+  }
+  return raw;
+}
+
+function formatHostForUrl(host: string): string {
+  if (host.includes(':')) {
+    return `[${host}]`;
+  }
+  return host;
 }
