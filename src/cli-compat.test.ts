@@ -33,6 +33,8 @@ describe('CLI compatibility smoke', () => {
         '--json',
       ]);
       expect(create.ok).toBe(true);
+      const createdThreadPath = ((create.data as { thread: { path: string } }).thread.path);
+      const createdThreadEtag = String((create.data as { thread: { fields: { etag: string } } }).thread.fields.etag);
 
       const list = runCli(['thread', 'list', '-w', workspacePath, '--json']);
       expect(list.ok).toBe(true);
@@ -64,6 +66,78 @@ describe('CLI compatibility smoke', () => {
         '--json',
       ]);
       expect(commandCenter.ok).toBe(true);
+
+      const primitiveUpdate = runCli([
+        'primitive', 'update', createdThreadPath,
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--set', 'priority=high',
+        '--etag', createdThreadEtag,
+        '--json',
+      ]);
+      expect(primitiveUpdate.ok).toBe(true);
+
+      const dispatchCreate = runCli([
+        'dispatch', 'create', 'Compatibility dispatch objective',
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--json',
+      ]);
+      expect(dispatchCreate.ok).toBe(true);
+      const runId = String((dispatchCreate.data as { run: { id: string } }).run.id);
+
+      const dispatchMark = runCli([
+        'dispatch', 'mark', runId,
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--status', 'running',
+        '--json',
+      ]);
+      expect(dispatchMark.ok).toBe(true);
+
+      const dispatchHeartbeat = runCli([
+        'dispatch', 'heartbeat', runId,
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--lease-minutes', '35',
+        '--json',
+      ]);
+      expect(dispatchHeartbeat.ok).toBe(true);
+
+      const dispatchHandoff = runCli([
+        'dispatch', 'handoff', runId,
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--to', 'agent-specialist',
+        '--reason', 'compatibility handoff',
+        '--json',
+      ]);
+      expect(dispatchHandoff.ok).toBe(true);
+
+      const dispatchReconcile = runCli([
+        'dispatch', 'reconcile',
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--json',
+      ]);
+      expect(dispatchReconcile.ok).toBe(true);
+
+      const agentHeartbeat = runCli([
+        'agent', 'heartbeat', 'agent-compat',
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--status', 'online',
+        '--capabilities', 'cli,testing',
+        '--json',
+      ]);
+      expect(agentHeartbeat.ok).toBe(true);
+
+      const agentList = runCli([
+        'agent', 'list',
+        '-w', workspacePath,
+        '--json',
+      ]);
+      expect(agentList.ok).toBe(true);
 
       const skillWrite = runCli([
         'skill', 'write', 'compat-skill',
@@ -99,5 +173,28 @@ describe('CLI compatibility smoke', () => {
     } finally {
       fs.rmSync(workspacePath, { recursive: true, force: true });
     }
+  });
+
+  it('documents new dispatch, agent, and primitive etag options in --help output', () => {
+    const dispatchHelp = spawnSync('node', [path.resolve('bin/workgraph.js'), 'dispatch', '--help'], {
+      encoding: 'utf-8',
+    });
+    expect(dispatchHelp.status).toBe(0);
+    expect(dispatchHelp.stdout).toContain('heartbeat');
+    expect(dispatchHelp.stdout).toContain('reconcile');
+    expect(dispatchHelp.stdout).toContain('handoff');
+
+    const agentHelp = spawnSync('node', [path.resolve('bin/workgraph.js'), 'agent', '--help'], {
+      encoding: 'utf-8',
+    });
+    expect(agentHelp.status).toBe(0);
+    expect(agentHelp.stdout).toContain('heartbeat');
+    expect(agentHelp.stdout).toContain('list');
+
+    const primitiveUpdateHelp = spawnSync('node', [path.resolve('bin/workgraph.js'), 'primitive', 'update', 'target.md', '--help'], {
+      encoding: 'utf-8',
+    });
+    expect(primitiveUpdateHelp.status).toBe(0);
+    expect(primitiveUpdateHelp.stdout).toContain('--etag');
   });
 });

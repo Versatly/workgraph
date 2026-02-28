@@ -72,6 +72,40 @@ describe('store', () => {
     expect(updated.body).toBe('new body');
   });
 
+  it('stores etag hashes in frontmatter and rotates them on update', () => {
+    const created = create(workspacePath, 'thread', { title: 'Etag Thread', goal: 'etag test' }, 'body', 'agent');
+    const createdEtag = String(created.fields.etag ?? '');
+    expect(createdEtag).toMatch(/^[a-f0-9]{32}$/);
+
+    const updated = update(
+      workspacePath,
+      created.path,
+      { priority: 'high' },
+      'new body',
+      'agent',
+      { expectedEtag: createdEtag },
+    );
+    const updatedEtag = String(updated.fields.etag ?? '');
+    expect(updatedEtag).toMatch(/^[a-f0-9]{32}$/);
+    expect(updatedEtag).not.toBe(createdEtag);
+  });
+
+  it('detects concurrent modification when expected etag is stale', () => {
+    const created = create(workspacePath, 'thread', { title: 'Concurrent', goal: 'etag guard' }, 'body', 'agent');
+    const originalEtag = String(created.fields.etag);
+
+    update(workspacePath, created.path, { priority: 'high' }, undefined, 'agent');
+
+    expect(() => update(
+      workspacePath,
+      created.path,
+      { priority: 'low' },
+      undefined,
+      'agent',
+      { expectedEtag: originalEtag },
+    )).toThrow('Concurrent modification detected');
+  });
+
   it('soft-deletes (archives) a primitive', () => {
     create(workspacePath, 'thread', { title: 'Delete Me', goal: 'test' }, '', 'agent');
     remove(workspacePath, 'threads/delete-me.md', 'agent');

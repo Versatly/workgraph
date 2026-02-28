@@ -125,6 +125,71 @@ describe('policy gates and dispatch contract', () => {
     expect(failed.error).toBe('runtime timeout');
   });
 
+  it('tracks run leases with heartbeat and requeues expired leases during reconcile', () => {
+    const created = dispatch.createRun(workspacePath, {
+      actor: 'agent-runner',
+      objective: 'Lease lifecycle',
+    });
+    const running = dispatch.markRun(workspacePath, created.id, 'agent-runner', 'running');
+    expect(running.leaseExpires).toBeDefined();
+    expect(running.leaseDurationMinutes).toBe(30);
+
+    const heartbeated = dispatch.heartbeat(workspacePath, created.id, {
+      actor: 'agent-runner',
+      leaseMinutes: 45,
+    });
+    expect(heartbeated.heartbeats).toHaveLength(1);
+    expect(heartbeated.leaseDurationMinutes).toBe(45);
+    expect(Date.parse(String(heartbeated.leaseExpires))).toBeGreaterThan(Date.now());
+
+    const runPrimitive = store.list(workspacePath, 'run')
+      .find((entry) => String(entry.fields.run_id) === created.id);
+    expect(runPrimitive).toBeDefined();
+    expect(runPrimitive?.fields.heartbeat_timestamps).toHaveLength(1);
+
+    const dispatchStatePath = path.join(workspacePath, '.workgraph', 'dispatch-runs.json');
+    const dispatchState = JSON.parse(fs.readFileSync(dispatchStatePath, 'utf-8')) as { version: number; runs: Array<Record<string, unknown>> };
+    const idx = dispatchState.runs.findIndex((entry) => entry.id === created.id);
+    dispatchState.runs[idx].leaseExpires = '2000-01-01T00:00:00.000Z';
+    fs.writeFileSync(dispatchStatePath, JSON.stringify(dispatchState, null, 2) + '\n', 'utf-8');
+
+    const reconciled = dispatch.reconcileExpiredLeases(workspacePath, 'agent-ops');
+    expect(reconciled.requeuedRuns.map((run) => run.id)).toContain(created.id);
+    const requeued = dispatch.status(workspacePath, created.id);
+    expect(requeued.status).toBe('queued');
+    expect(requeued.leaseExpires).toBeUndefined();
+  });
+
+  it('creates structured handoff runs and logs handoff entries', () => {
+    const source = dispatch.createRun(workspacePath, {
+      actor: 'agent-source',
+      objective: 'Investigate production issue',
+      context: {
+        thread_slug: 'threads/prod-incident.md',
+        incident_id: 'inc-123',
+      },
+    });
+
+    const handoff = dispatch.handoffRun(workspacePath, source.id, {
+      actor: 'agent-source',
+      to: 'agent-specialist',
+      reason: 'Needs database specialist',
+    });
+
+    expect(handoff.sourceRun.id).toBe(source.id);
+    expect(handoff.handoffRun.id).not.toBe(source.id);
+    expect(handoff.handoffRun.actor).toBe('agent-specialist');
+    expect(handoff.handoffRun.objective).toBe(source.objective);
+    expect(handoff.handoffRun.context?.thread_slug).toBe('threads/prod-incident.md');
+    expect(handoff.handoffRun.context?.handoff_from_run_id).toBe(source.id);
+    expect(handoff.handoffRun.context?.handoff_reason).toBe('Needs database specialist');
+
+    const handoffEntries = ledger.readAll(workspacePath).filter((entry) => entry.op === 'handoff');
+    expect(handoffEntries).toHaveLength(1);
+    expect(handoffEntries[0].data?.from_run_id).toBe(source.id);
+    expect(handoffEntries[0].data?.to_run_id).toBe(handoff.handoffRun.id);
+  });
+
   it('rejects invalid run status transitions and followups after terminal state', () => {
     const created = dispatch.createRun(workspacePath, {
       actor: 'agent-runner',

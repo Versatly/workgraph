@@ -332,6 +332,77 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// agent presence
+// ============================================================================
+
+const agentCmd = program
+  .command('agent')
+  .description('Track agent presence heartbeats');
+
+addWorkspaceOption(
+  agentCmd
+    .command('heartbeat <name>')
+    .description('Create/update an agent presence heartbeat')
+    .option('-a, --actor <name>', 'Actor writing the heartbeat', DEFAULT_ACTOR)
+    .option('--status <status>', 'online | busy | offline', 'online')
+    .option('--current-task <threadRef>', 'Current task/thread slug for this agent')
+    .option('--capabilities <items>', 'Comma-separated capability tags')
+    .option('--json', 'Emit structured JSON output')
+).action((name, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        presence: workgraph.agent.heartbeat(workspacePath, name, {
+          actor: opts.actor,
+          status: normalizeAgentPresenceStatus(opts.status),
+          currentTask: opts.currentTask,
+          capabilities: csv(opts.capabilities),
+        }),
+      };
+    },
+    (result) => [
+      `Heartbeat: ${String(result.presence.fields.name)} [${String(result.presence.fields.status)}]`,
+      `Last seen: ${String(result.presence.fields.last_seen)}`,
+      `Current task: ${String(result.presence.fields.current_task ?? 'none')}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  agentCmd
+    .command('list')
+    .description('List known agent presence entries')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const agents = workgraph.agent.list(workspacePath);
+      return {
+        agents,
+        count: agents.length,
+      };
+    },
+    (result) => {
+      if (result.agents.length === 0) return ['No agent presence entries found.'];
+      return [
+        ...result.agents.map((entry) => {
+          const name = String(entry.fields.name ?? entry.path);
+          const status = String(entry.fields.status ?? 'unknown');
+          const task = String(entry.fields.current_task ?? 'none');
+          const lastSeen = String(entry.fields.last_seen ?? 'unknown');
+          return `${name} [${status}] task=${task} last_seen=${lastSeen}`;
+        }),
+        `${result.count} agent(s)`,
+      ];
+    },
+  )
+);
+
+// ============================================================================
 // primitive
 // ============================================================================
 
@@ -487,6 +558,7 @@ addWorkspaceOption(
     .description('Update an existing primitive instance')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
     .option('--set <fields...>', 'Set fields as "key=value"')
+    .option('--etag <etag>', 'Expected etag for optimistic concurrency')
     .option('--body <text>', 'Replace markdown body content')
     .option('--body-file <path>', 'Read markdown body content from file')
     .option('--json', 'Emit structured JSON output')
@@ -501,7 +573,9 @@ addWorkspaceOption(
         body = fs.readFileSync(path.resolve(opts.bodyFile), 'utf-8');
       }
       return {
-        instance: workgraph.store.update(workspacePath, targetPath, updates, body, opts.actor),
+        instance: workgraph.store.update(workspacePath, targetPath, updates, body, opts.actor, {
+          expectedEtag: opts.etag,
+        }),
       };
     },
     (result) => [`Updated ${result.instance.type}: ${result.instance.path}`]
@@ -1541,6 +1615,84 @@ addWorkspaceOption(
 
 addWorkspaceOption(
   dispatchCmd
+    .command('heartbeat <runId>')
+    .description('Heartbeat a running run lease and extend lease_expiry')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--lease-minutes <n>', 'Lease extension in minutes')
+    .option('--json', 'Emit structured JSON output')
+).action((runId, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        run: workgraph.dispatch.heartbeat(workspacePath, runId, {
+          actor: opts.actor,
+          leaseMinutes: opts.leaseMinutes ? Number.parseInt(String(opts.leaseMinutes), 10) : undefined,
+        }),
+      };
+    },
+    (result) => [
+      `Heartbeated run: ${result.run.id}`,
+      `Lease expires: ${String(result.run.leaseExpires ?? 'none')}`,
+      `Heartbeats: ${(result.run.heartbeats ?? []).length}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('reconcile')
+    .description('Requeue runs with expired leases')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.dispatch.reconcileExpiredLeases(workspacePath, opts.actor);
+    },
+    (result) => [
+      `Reconciled at: ${result.reconciledAt}`,
+      `Inspected runs: ${result.inspectedRuns}`,
+      `Requeued runs: ${result.requeuedRuns.length}`,
+      ...result.requeuedRuns.map((run) => `- ${run.id}`),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('handoff <runId>')
+    .description('Create a structured run handoff to another agent')
+    .requiredOption('--to <agent>', 'Target agent')
+    .requiredOption('--reason <text>', 'Reason for handoff')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--adapter <name>', 'Adapter override for handoff run')
+    .option('--json', 'Emit structured JSON output')
+).action((runId, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.dispatch.handoffRun(workspacePath, runId, {
+        actor: opts.actor,
+        to: opts.to,
+        reason: opts.reason,
+        adapter: opts.adapter,
+      });
+    },
+    (result) => [
+      `Handoff created: ${result.handoffRun.id} (from ${result.sourceRun.id})`,
+      `Target agent: ${result.handoffRun.actor}`,
+      `Objective: ${result.handoffRun.objective}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
     .command('mark <runId>')
     .description('Set run status transition explicitly')
     .requiredOption('--status <status>', 'running|succeeded|failed|cancelled')
@@ -1820,6 +1972,14 @@ function normalizeRunStatus(status: string): 'running' | 'succeeded' | 'failed' 
     return normalized;
   }
   throw new Error(`Invalid run status "${status}". Expected running|succeeded|failed|cancelled.`);
+}
+
+function normalizeAgentPresenceStatus(status: string): 'online' | 'busy' | 'offline' {
+  const normalized = String(status).toLowerCase();
+  if (normalized === 'online' || normalized === 'busy' || normalized === 'offline') {
+    return normalized;
+  }
+  throw new Error(`Invalid agent status "${status}". Expected online|busy|offline.`);
 }
 
 function normalizeOnboardingStatus(status: string): 'active' | 'paused' | 'completed' {
