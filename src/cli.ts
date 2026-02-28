@@ -2679,6 +2679,119 @@ addWorkspaceOption(
   });
 });
 
+// ============================================================================
+// swarm
+// ============================================================================
+
+const swarmCmd = program
+  .command('swarm')
+  .description('Decompose goals into tasks and orchestrate agent swarms');
+
+addWorkspaceOption(
+  swarmCmd
+    .command('deploy <planFile>')
+    .description('Deploy a swarm plan (JSON) into the workspace as threads')
+    .option('-a, --actor <name>', 'Actor name', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((planFile, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const planPath = path.resolve(planFile);
+      const planData = JSON.parse(fs.readFileSync(planPath, 'utf-8'));
+      return workgraph.swarm.deployPlan(workspacePath, planData, opts.actor);
+    },
+    (result) => [
+      `Swarm deployed: ${result.spaceSlug}`,
+      `Threads: ${result.threadPaths.length}`,
+      `Status: ${result.status}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  swarmCmd
+    .command('status <spaceSlug>')
+    .description('Show swarm progress')
+    .option('--json', 'Emit structured JSON output')
+).action((spaceSlug, opts) =>
+  runCommand(
+    opts,
+    () => workgraph.swarm.getSwarmStatus(resolveWorkspacePath(opts), spaceSlug),
+    (result) => [
+      `Swarm: ${result.deployment.spaceSlug} [${result.deployment.status}]`,
+      `Progress: ${result.done}/${result.total} (${result.percentComplete}%)`,
+      `Claimed: ${result.claimed} | Open: ${result.open} | Blocked: ${result.blocked}`,
+      `Ready to claim: ${result.readyToClaim}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  swarmCmd
+    .command('claim <spaceSlug>')
+    .description('Claim the next available task in a swarm')
+    .option('-a, --actor <name>', 'Worker agent name', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((spaceSlug, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const result = workgraph.swarm.workerClaim(resolveWorkspacePath(opts), spaceSlug, opts.actor);
+      if (!result) return { claimed: false, message: 'No tasks available' };
+      return { claimed: true, path: result.path, title: result.fields.title };
+    },
+    (result) => result.claimed
+      ? [`Claimed: ${result.path} — ${result.title}`]
+      : ['No tasks available to claim'],
+  )
+);
+
+addWorkspaceOption(
+  swarmCmd
+    .command('complete <threadPath>')
+    .description('Mark a swarm task as done with result')
+    .option('-a, --actor <name>', 'Worker agent name', DEFAULT_ACTOR)
+    .requiredOption('--result <text>', 'Result text (or @file to read from file)')
+    .option('--json', 'Emit structured JSON output')
+).action((threadPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      let resultText = opts.result;
+      if (resultText.startsWith('@')) {
+        resultText = fs.readFileSync(resultText.slice(1), 'utf-8');
+      }
+      return workgraph.swarm.workerComplete(resolveWorkspacePath(opts), threadPath, opts.actor, resultText);
+    },
+    (result) => [`Completed: ${result.path}`],
+  )
+);
+
+addWorkspaceOption(
+  swarmCmd
+    .command('synthesize <spaceSlug>')
+    .description('Merge all completed task results into a single document')
+    .option('-o, --output <file>', 'Output file path')
+    .option('--json', 'Emit structured JSON output')
+).action((spaceSlug, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const result = workgraph.swarm.synthesize(resolveWorkspacePath(opts), spaceSlug);
+      if (opts.output) {
+        fs.writeFileSync(path.resolve(opts.output), result.markdown);
+      }
+      return result;
+    },
+    (result) => [
+      `Synthesized: ${result.completedCount}/${result.totalCount} tasks`,
+      opts.output ? `Written to: ${opts.output}` : result.markdown,
+    ],
+  )
+);
+
 await program.parseAsync();
 
 function addWorkspaceOption<T extends Command>(command: T): T {
