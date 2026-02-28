@@ -75,10 +75,13 @@ function renderFocusedGraph(
     return lines.join('\n');
   }
 
-  const sections: Array<{ title: string; neighbors: string[]; map: Record<string, string[]>; arrow: '▶' | '◀' }> = [
-    { title: 'Outgoing', neighbors: outgoing, map: graph.outgoing, arrow: '▶' },
-    { title: 'Incoming', neighbors: incoming, map: graph.incoming, arrow: '◀' },
-  ].filter((section) => section.neighbors.length > 0);
+  const sections: Array<{ title: string; neighbors: string[]; map: Record<string, string[]>; arrow: '▶' | '◀' }> = [];
+  if (outgoing.length > 0) {
+    sections.push({ title: 'Outgoing', neighbors: outgoing, map: graph.outgoing, arrow: '▶' });
+  }
+  if (incoming.length > 0) {
+    sections.push({ title: 'Incoming', neighbors: incoming, map: graph.incoming, arrow: '◀' });
+  }
 
   sections.forEach((section, index) => {
     const isLastSection = index === sections.length - 1;
