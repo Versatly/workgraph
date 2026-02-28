@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { Command } from 'commander';
 import * as workgraph from './index.js';
@@ -8,6 +9,10 @@ type JsonCapableOptions = {
   workspace?: string;
   vault?: string;
   sharedVault?: string;
+  dryRun?: boolean;
+  __dryRunWorkspace?: string;
+  __dryRunWorkspaceRoot?: string;
+  __dryRunOriginal?: string;
 };
 
 const DEFAULT_ACTOR =
@@ -46,7 +51,7 @@ addWorkspaceOption(
   runCommand(
     opts,
     () => {
-      const workspacePath = path.resolve(targetPath || resolveWorkspacePath(opts));
+      const workspacePath = resolveInitTargetPath(targetPath, opts);
       const result = workgraph.workspace.initWorkspace(workspacePath, {
         name: opts.name,
         createTypeDirs: opts.typeDirs,
@@ -222,13 +227,18 @@ addWorkspaceOption(
     .command('claim <threadPath>')
     .description('Claim a thread for this agent')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--lease-ttl-minutes <n>', 'Claim lease TTL in minutes', '30')
     .option('--json', 'Emit structured JSON output')
 ).action((threadPath, opts) =>
   runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
-      return { thread: workgraph.thread.claim(workspacePath, threadPath, opts.actor) };
+      return {
+        thread: workgraph.thread.claim(workspacePath, threadPath, opts.actor, {
+          leaseTtlMinutes: Number.parseFloat(String(opts.leaseTtlMinutes)),
+        }),
+      };
     },
     (result) => [`Claimed: ${result.thread.path}`, `Owner: ${String(result.thread.fields.owner)}`]
   )
@@ -272,6 +282,24 @@ addWorkspaceOption(
 
 addWorkspaceOption(
   threadCmd
+    .command('reopen <threadPath>')
+    .description('Reopen a done/cancelled thread via compensating ledger op')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--reason <reason>', 'Why the thread is being reopened')
+    .option('--json', 'Emit structured JSON output')
+).action((threadPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return { thread: workgraph.thread.reopen(workspacePath, threadPath, opts.actor, opts.reason) };
+    },
+    (result) => [`Reopened: ${result.thread.path}`, `Status: ${String(result.thread.fields.status)}`]
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
     .command('block <threadPath>')
     .description('Mark a thread blocked')
     .requiredOption('-b, --blocked-by <dep>', 'Dependency blocking this thread')
@@ -305,6 +333,88 @@ addWorkspaceOption(
       return { thread: workgraph.thread.unblock(workspacePath, threadPath, opts.actor) };
     },
     (result) => [`Unblocked: ${result.thread.path}`]
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('heartbeat [threadPath]')
+    .description('Refresh thread claim lease heartbeat (one thread or all active claims for actor)')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--ttl-minutes <n>', 'Lease TTL in minutes', '30')
+    .option('--json', 'Emit structured JSON output')
+).action((threadPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.thread.heartbeatClaim(
+        workspacePath,
+        opts.actor,
+        threadPath,
+        {
+          ttlMinutes: Number.parseFloat(String(opts.ttlMinutes)),
+        },
+      );
+    },
+    (result) => [
+      `Heartbeat actor: ${result.actor}`,
+      `Touched leases: ${result.touched.length}`,
+      ...(result.touched.length > 0
+        ? result.touched.map((entry) => `- ${entry.threadPath} expires=${entry.expiresAt}`)
+        : []),
+      ...(result.skipped.length > 0
+        ? result.skipped.map((entry) => `SKIP ${entry.threadPath}: ${entry.reason}`)
+        : []),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('reap-stale')
+    .description('Reopen/release stale claimed threads whose leases expired')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--limit <n>', 'Max stale leases to reap this run')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.thread.reapStaleClaims(workspacePath, opts.actor, {
+        limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+      });
+    },
+    (result) => [
+      `Reaper actor: ${result.actor}`,
+      `Scanned stale leases: ${result.scanned}`,
+      `Reaped: ${result.reaped.length}`,
+      ...(result.reaped.length > 0
+        ? result.reaped.map((entry) => `- ${entry.threadPath} (prev=${entry.previousOwner})`)
+        : []),
+      ...(result.skipped.length > 0
+        ? result.skipped.map((entry) => `SKIP ${entry.threadPath}: ${entry.reason}`)
+        : []),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('leases')
+    .description('List claim leases and staleness state')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const leases = workgraph.thread.listClaimLeaseStatus(workspacePath);
+      return { leases, count: leases.length };
+    },
+    (result) => result.leases.map((lease) =>
+      `${lease.stale ? 'STALE' : 'LIVE'} ${lease.owner} -> ${lease.target} expires=${lease.expiresAt}`)
   )
 );
 
@@ -383,6 +493,9 @@ addWorkspaceOption(
   )
 );
 
+registerPrimitiveSchemaCommand('schema', 'Show supported fields for a primitive type');
+registerPrimitiveSchemaCommand('fields', 'Alias for schema');
+
 // ============================================================================
 // bases
 // ============================================================================
@@ -458,6 +571,51 @@ addWorkspaceOption(
     (result) => result.types.map(t => `${t.name} (${t.directory}/) ${t.builtIn ? '[built-in]' : ''}`)
   )
 );
+
+function registerPrimitiveSchemaCommand(commandName: string, description: string): void {
+  addWorkspaceOption(
+    primitiveCmd
+      .command(`${commandName} <typeName>`)
+      .description(description)
+      .option('--json', 'Emit structured JSON output')
+  ).action((typeName, opts) =>
+    runCommand(
+      opts,
+      () => {
+        const workspacePath = resolveWorkspacePath(opts);
+        const typeDef = workgraph.registry.getType(workspacePath, typeName);
+        if (!typeDef) {
+          throw new Error(`Unknown primitive type "${typeName}". Use \`workgraph primitive list\` to inspect available types.`);
+        }
+        const fields = Object.entries(typeDef.fields).map(([name, definition]) => ({
+          name,
+          type: definition.type,
+          required: definition.required === true,
+          default: definition.default,
+          enum: definition.enum ?? [],
+          description: definition.description ?? '',
+          template: definition.template ?? undefined,
+          pattern: definition.pattern ?? undefined,
+          refTypes: definition.refTypes ?? [],
+        }));
+        return {
+          type: typeDef.name,
+          description: typeDef.description,
+          directory: typeDef.directory,
+          builtIn: typeDef.builtIn,
+          fields,
+        };
+      },
+      (result) => [
+        `Type: ${result.type}`,
+        `Directory: ${result.directory}/`,
+        `Built-in: ${result.builtIn}`,
+        ...result.fields.map((field) =>
+          `- ${field.name}: ${field.type}${field.required ? ' (required)' : ''}${field.description ? ` — ${field.description}` : ''}`),
+      ],
+    )
+  );
+}
 
 addWorkspaceOption(
   primitiveCmd
@@ -917,6 +1075,33 @@ addWorkspaceOption(
       `Last hash: ${result.lastHash}`,
       ...(result.issues.length > 0 ? result.issues.map((issue) => `ISSUE: ${issue}`) : []),
       ...(result.warnings.length > 0 ? result.warnings.map((warning) => `WARN: ${warning}`) : []),
+    ]
+  )
+);
+
+addWorkspaceOption(
+  ledgerCmd
+    .command('reconcile')
+    .description('Audit thread files against ledger claims, leases, and dependency wiring')
+    .option('--fail-on-issues', 'Exit non-zero when issues are found')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const report = workgraph.threadAudit.reconcileThreadState(workspacePath);
+      if (opts.failOnIssues && !report.ok) {
+        throw new Error(`Ledger reconcile found ${report.issues.length} issue(s).`);
+      }
+      return report;
+    },
+    (result) => [
+      `Reconcile ok: ${result.ok}`,
+      `Threads: ${result.totalThreads} Claims: ${result.totalClaims} Leases: ${result.totalLeases}`,
+      ...(result.issues.length > 0
+        ? result.issues.map((issue) => `${issue.kind}: ${issue.path} — ${issue.message}`)
+        : ['No reconcile issues found.']),
     ]
   )
 );
@@ -1618,6 +1803,55 @@ addWorkspaceOption(
   )
 );
 
+const triggerEngineCmd = triggerCmd
+  .command('engine')
+  .description('Run trigger engine over ledger events');
+
+addWorkspaceOption(
+  triggerEngineCmd
+    .command('run')
+    .description('Process trigger events once or continuously')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--watch', 'Continuously process new events')
+    .option('--poll-ms <ms>', 'Poll interval in watch mode', '2000')
+    .option('--max-cycles <n>', 'Maximum cycles before exiting')
+    .option('--entry-limit <n>', 'Maximum ledger entries per cycle')
+    .option('--agents <actors>', 'Comma-separated agents used when executing runs')
+    .option('--max-steps <n>', 'Maximum adapter scheduler steps', '200')
+    .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
+    .option('--space <spaceRef>', 'Restrict run execution to one space')
+    .option('--stale-claim-minutes <m>', 'Drift warning threshold for stale claims', '30')
+    .option('--no-execute-runs', 'Do not execute dispatched runs')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    async () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.triggerEngine.runTriggerEngineLoop(workspacePath, {
+        actor: opts.actor,
+        watch: !!opts.watch,
+        pollMs: Number.parseInt(String(opts.pollMs), 10),
+        maxCycles: opts.maxCycles ? Number.parseInt(String(opts.maxCycles), 10) : undefined,
+        executeRuns: opts.executeRuns,
+        agents: csv(opts.agents),
+        maxSteps: Number.parseInt(String(opts.maxSteps), 10),
+        stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
+        space: opts.space,
+        staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
+        entryLimit: opts.entryLimit ? Number.parseInt(String(opts.entryLimit), 10) : undefined,
+      });
+    },
+    (result) => [
+      `Cycles: ${result.cycles.length}`,
+      `Last processed index: ${result.finalState.lastProcessedIndex}`,
+      ...result.cycles.map((cycle, idx) =>
+        `Cycle ${idx + 1}: entries=${cycle.processedEntries} actions=${cycle.actions.length} drift_ok=${cycle.drift.ok}`,
+      ),
+    ],
+  )
+);
+
 // ============================================================================
 // onboarding
 // ============================================================================
@@ -1705,6 +1939,169 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// autonomy
+// ============================================================================
+
+const autonomyCmd = program
+  .command('autonomy')
+  .description('Run long-lived autonomous collaboration loops');
+
+addWorkspaceOption(
+  autonomyCmd
+    .command('run')
+    .description('Run autonomy cycles (trigger engine + ready-thread execution)')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--adapter <name>', 'Dispatch adapter name', 'cursor-cloud')
+    .option('--agents <actors>', 'Comma-separated autonomous worker identities')
+    .option('--watch', 'Run continuously instead of stopping when idle')
+    .option('--poll-ms <ms>', 'Cycle poll interval', '2000')
+    .option('--max-cycles <n>', 'Maximum cycles before exit')
+    .option('--max-idle-cycles <n>', 'Idle cycles before exit in non-watch mode', '2')
+    .option('--max-steps <n>', 'Maximum adapter scheduler steps', '200')
+    .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
+    .option('--space <spaceRef>', 'Restrict autonomy to one space')
+    .option('--stale-claim-minutes <m>', 'Drift warning threshold', '30')
+    .option('--heartbeat-file <path>', 'Write daemon heartbeat JSON to this path')
+    .option('--no-execute-triggers', 'Disable trigger engine actions')
+    .option('--no-execute-ready-threads', 'Disable ready-thread dispatch execution')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    async () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.autonomy.runAutonomyLoop(workspacePath, {
+        actor: opts.actor,
+        adapter: opts.adapter,
+        agents: csv(opts.agents),
+        watch: !!opts.watch,
+        pollMs: Number.parseInt(String(opts.pollMs), 10),
+        maxCycles: opts.maxCycles ? Number.parseInt(String(opts.maxCycles), 10) : undefined,
+        maxIdleCycles: Number.parseInt(String(opts.maxIdleCycles), 10),
+        maxSteps: Number.parseInt(String(opts.maxSteps), 10),
+        stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
+        space: opts.space,
+        staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
+        heartbeatFile: opts.heartbeatFile,
+        executeTriggers: opts.executeTriggers,
+        executeReadyThreads: opts.executeReadyThreads,
+      });
+    },
+    (result) => [
+      `Cycles: ${result.cycles.length}`,
+      `Final ready threads: ${result.finalReadyThreads}`,
+      `Final drift status: ${result.finalDriftOk ? 'ok' : 'issues'}`,
+      ...result.cycles.map((cycle) =>
+        `Cycle ${cycle.cycle}: ready=${cycle.readyThreads} trigger_actions=${cycle.triggerActions} run=${cycle.runStatus ?? 'none'} drift_issues=${cycle.driftIssues}`,
+      ),
+    ],
+  )
+);
+
+const autonomyDaemonCmd = autonomyCmd
+  .command('daemon')
+  .description('Manage autonomy process lifecycle (pid + heartbeat + logs)');
+
+addWorkspaceOption(
+  autonomyDaemonCmd
+    .command('start')
+    .description('Start autonomy in detached daemon mode')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--adapter <name>', 'Dispatch adapter name', 'cursor-cloud')
+    .option('--agents <actors>', 'Comma-separated autonomous worker identities')
+    .option('--poll-ms <ms>', 'Cycle poll interval', '2000')
+    .option('--max-cycles <n>', 'Maximum cycles before daemon exits')
+    .option('--max-steps <n>', 'Maximum adapter scheduler steps', '200')
+    .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
+    .option('--space <spaceRef>', 'Restrict autonomy to one space')
+    .option('--stale-claim-minutes <m>', 'Drift warning threshold', '30')
+    .option('--log-path <path>', 'Daemon log file path (workspace-relative)')
+    .option('--heartbeat-path <path>', 'Heartbeat file path (workspace-relative)')
+    .option('--no-execute-triggers', 'Disable trigger engine actions')
+    .option('--no-execute-ready-threads', 'Disable ready-thread dispatch execution')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.autonomyDaemon.startAutonomyDaemon(workspacePath, {
+        cliEntrypointPath: process.argv[1] ?? path.resolve('bin/workgraph.js'),
+        actor: opts.actor,
+        adapter: opts.adapter,
+        agents: csv(opts.agents),
+        pollMs: Number.parseInt(String(opts.pollMs), 10),
+        maxCycles: opts.maxCycles ? Number.parseInt(String(opts.maxCycles), 10) : undefined,
+        maxSteps: Number.parseInt(String(opts.maxSteps), 10),
+        stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
+        space: opts.space,
+        staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
+        logPath: opts.logPath,
+        heartbeatPath: opts.heartbeatPath,
+        executeTriggers: opts.executeTriggers,
+        executeReadyThreads: opts.executeReadyThreads,
+      });
+    },
+    (result) => [
+      `Daemon running: ${result.running}`,
+      ...(result.pid ? [`PID: ${result.pid}`] : []),
+      `PID file: ${result.pidPath}`,
+      `Heartbeat: ${result.heartbeatPath}`,
+      `Log: ${result.logPath}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  autonomyDaemonCmd
+    .command('status')
+    .description('Show autonomy daemon status')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.autonomyDaemon.readAutonomyDaemonStatus(workspacePath);
+    },
+    (result) => [
+      `Daemon running: ${result.running}`,
+      ...(result.pid ? [`PID: ${result.pid}`] : []),
+      ...(result.heartbeat ? [`Last heartbeat: ${result.heartbeat.ts}`] : ['Last heartbeat: none']),
+      `PID file: ${result.pidPath}`,
+      `Heartbeat: ${result.heartbeatPath}`,
+      `Log: ${result.logPath}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  autonomyDaemonCmd
+    .command('stop')
+    .description('Stop autonomy daemon by PID')
+    .option('--signal <signal>', 'Signal for graceful stop', 'SIGTERM')
+    .option('--timeout-ms <ms>', 'Graceful wait timeout', '5000')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    async () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.autonomyDaemon.stopAutonomyDaemon(workspacePath, {
+        signal: String(opts.signal) as NodeJS.Signals,
+        timeoutMs: Number.parseInt(String(opts.timeoutMs), 10),
+      });
+    },
+    (result) => [
+      `Stopped: ${result.stopped}`,
+      `Previously running: ${result.previouslyRunning}`,
+      ...(result.pid ? [`PID: ${result.pid}`] : []),
+      `Daemon running now: ${result.status.running}`,
+    ],
+  )
+);
+
+// ============================================================================
 // mcp
 // ============================================================================
 
@@ -1734,15 +2131,58 @@ function addWorkspaceOption<T extends Command>(command: T): T {
   return command
     .option('-w, --workspace <path>', 'Workgraph workspace path')
     .option('--vault <path>', 'Alias for --workspace')
-    .option('--shared-vault <path>', 'Shared vault path (e.g. mounted via Tailscale)');
+    .option('--shared-vault <path>', 'Shared vault path (e.g. mounted via Tailscale)')
+    .option('--dry-run', 'Execute against a temporary workspace copy and discard changes');
 }
 
 function resolveWorkspacePath(opts: JsonCapableOptions): string {
+  const originalWorkspacePath = resolveWorkspacePathBase(opts);
+  if (!opts.dryRun) return originalWorkspacePath;
+  if (opts.__dryRunWorkspace) return opts.__dryRunWorkspace;
+
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workgraph-dry-run-'));
+  const sandboxWorkspace = path.join(sandboxRoot, 'workspace');
+  if (fs.existsSync(originalWorkspacePath)) {
+    fs.cpSync(originalWorkspacePath, sandboxWorkspace, {
+      recursive: true,
+      force: true,
+    });
+  } else {
+    fs.mkdirSync(sandboxWorkspace, { recursive: true });
+  }
+
+  opts.__dryRunWorkspaceRoot = sandboxRoot;
+  opts.__dryRunWorkspace = sandboxWorkspace;
+  opts.__dryRunOriginal = originalWorkspacePath;
+  return sandboxWorkspace;
+}
+
+function resolveWorkspacePathBase(opts: JsonCapableOptions): string {
   const explicit = opts.workspace || opts.vault || opts.sharedVault;
   if (explicit) return path.resolve(explicit);
   if (process.env.WORKGRAPH_SHARED_VAULT) return path.resolve(process.env.WORKGRAPH_SHARED_VAULT);
   if (process.env.WORKGRAPH_PATH) return path.resolve(process.env.WORKGRAPH_PATH);
   return process.cwd();
+}
+
+function resolveInitTargetPath(targetPath: string | undefined, opts: JsonCapableOptions): string {
+  const requestedPath = path.resolve(targetPath || resolveWorkspacePathBase(opts));
+  if (!opts.dryRun) return requestedPath;
+  if (opts.__dryRunWorkspace) return opts.__dryRunWorkspace;
+
+  const sandboxRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'workgraph-init-dry-run-'));
+  const sandboxWorkspace = path.join(sandboxRoot, path.basename(requestedPath));
+  if (fs.existsSync(requestedPath)) {
+    fs.cpSync(requestedPath, sandboxWorkspace, {
+      recursive: true,
+      force: true,
+    });
+  }
+
+  opts.__dryRunWorkspaceRoot = sandboxRoot;
+  opts.__dryRunWorkspace = sandboxWorkspace;
+  opts.__dryRunOriginal = requestedPath;
+  return sandboxWorkspace;
 }
 
 function parseSetPairs(pairs: string[]): Record<string, unknown> {
@@ -1843,19 +2283,48 @@ async function runCommand<T>(
 ): Promise<void> {
   try {
     const result = await action();
+    const dryRunMetadata = opts.dryRun
+      ? {
+          dryRun: true,
+          targetWorkspace: opts.__dryRunOriginal ?? resolveWorkspacePathBase(opts),
+          sandboxWorkspace: opts.__dryRunWorkspace,
+        }
+      : {};
     if (wantsJson(opts)) {
-      console.log(JSON.stringify({ ok: true, data: result }, null, 2));
+      console.log(JSON.stringify({ ok: true, ...dryRunMetadata, data: result }, null, 2));
       return;
+    }
+    if (opts.dryRun) {
+      console.log(
+        [
+          '[dry-run] Executed against sandbox workspace and discarded changes.',
+          `Target: ${opts.__dryRunOriginal ?? resolveWorkspacePathBase(opts)}`,
+          `Sandbox: ${opts.__dryRunWorkspace ?? 'n/a'}`,
+        ].join(' '),
+      );
     }
     const lines = renderText(result);
     for (const line of lines) console.log(line);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (wantsJson(opts)) {
-      console.error(JSON.stringify({ ok: false, error: message }, null, 2));
+      console.error(JSON.stringify({ ok: false, dryRun: !!opts.dryRun, error: message }, null, 2));
     } else {
       console.error(`Error: ${message}`);
     }
+    cleanupDryRunSandbox(opts);
     process.exit(1);
+  } finally {
+    cleanupDryRunSandbox(opts);
   }
+}
+
+function cleanupDryRunSandbox(opts: JsonCapableOptions): void {
+  if (!opts.dryRun || !opts.__dryRunWorkspaceRoot) return;
+  if (fs.existsSync(opts.__dryRunWorkspaceRoot)) {
+    fs.rmSync(opts.__dryRunWorkspaceRoot, { recursive: true, force: true });
+  }
+  delete opts.__dryRunWorkspaceRoot;
+  delete opts.__dryRunWorkspace;
+  delete opts.__dryRunOriginal;
 }

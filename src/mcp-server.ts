@@ -1,14 +1,18 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import * as autonomy from './autonomy.js';
 import * as dispatch from './dispatch.js';
 import * as graph from './graph.js';
 import * as ledger from './ledger.js';
 import * as orientation from './orientation.js';
 import * as policy from './policy.js';
 import * as query from './query.js';
+import * as registry from './registry.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
+import * as threadAudit from './thread-audit.js';
+import * as triggerEngine from './trigger-engine.js';
 
 export interface WorkgraphMcpServerOptions {
   workspacePath: string;
@@ -184,6 +188,52 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
   );
 
   server.registerTool(
+    'workgraph_primitive_schema',
+    {
+      title: 'Primitive Schema',
+      description: 'Return field schema and metadata for a primitive type.',
+      inputSchema: {
+        typeName: z.string().min(1),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const typeDef = registry.getType(options.workspacePath, args.typeName);
+        if (!typeDef) {
+          return errorResult(`Unknown primitive type "${args.typeName}".`);
+        }
+        const fields = Object.entries(typeDef.fields).map(([name, definition]) => ({
+          name,
+          type: definition.type,
+          required: definition.required === true,
+          default: definition.default,
+          enum: definition.enum ?? [],
+          description: definition.description ?? '',
+          template: definition.template ?? undefined,
+          pattern: definition.pattern ?? undefined,
+          refTypes: definition.refTypes ?? [],
+        }));
+        return okResult(
+          {
+            type: typeDef.name,
+            description: typeDef.description,
+            directory: typeDef.directory,
+            builtIn: typeDef.builtIn,
+            fields,
+          },
+          `Primitive schema for ${typeDef.name}.`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
     'workgraph_thread_list',
     {
       title: 'Thread List',
@@ -274,6 +324,29 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
           entries = entries.filter((entry) => entry.actor === args.actor);
         }
         return okResult({ entries, count: entries.length }, `Ledger returned ${entries.length} event(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_ledger_reconcile',
+    {
+      title: 'Ledger Reconcile',
+      description: 'Audit thread files against ledger claims, leases, and dependency wiring.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const report = threadAudit.reconcileThreadState(options.workspacePath);
+        return okResult(
+          report,
+          `Ledger reconcile ${report.ok ? 'ok' : 'issues'}: ${report.issues.length} issue(s) across ${report.totalThreads} thread(s).`,
+        );
       } catch (error) {
         return errorResult(error);
       }
@@ -514,6 +587,101 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
         if (!gate.allowed) return errorResult(gate.reason);
         const run = dispatch.stop(options.workspacePath, args.runId, actor);
         return okResult({ run }, `Stopped run ${run.id}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_trigger_engine_cycle',
+    {
+      title: 'Trigger Engine Cycle',
+      description: 'Process trigger events from ledger with idempotent cursor tracking.',
+      inputSchema: {
+        actor: z.string().optional(),
+        executeRuns: z.boolean().optional(),
+        agents: z.array(z.string()).optional(),
+        maxSteps: z.number().int().min(1).max(5000).optional(),
+        stepDelayMs: z.number().int().min(0).max(5000).optional(),
+        staleClaimMinutes: z.number().int().min(1).max(24 * 60).optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        if (!gate.allowed) return errorResult(gate.reason);
+        const result = await triggerEngine.runTriggerEngineCycle(options.workspacePath, {
+          actor,
+          executeRuns: args.executeRuns,
+          agents: args.agents,
+          maxSteps: args.maxSteps,
+          stepDelayMs: args.stepDelayMs,
+          staleClaimMinutes: args.staleClaimMinutes,
+          strictLedger: true,
+        });
+        return okResult(
+          result,
+          `Trigger cycle processed ${result.processedEntries} entries, fired ${result.actions.length} action(s).`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_autonomy_run',
+    {
+      title: 'Autonomy Run',
+      description: 'Run autonomous collaboration cycles with drift checks.',
+      inputSchema: {
+        actor: z.string().optional(),
+        adapter: z.string().optional(),
+        agents: z.array(z.string()).optional(),
+        maxCycles: z.number().int().min(1).max(10_000).optional(),
+        maxIdleCycles: z.number().int().min(1).max(1_000).optional(),
+        pollMs: z.number().int().min(1).max(60_000).optional(),
+        watch: z.boolean().optional(),
+        maxSteps: z.number().int().min(1).max(5000).optional(),
+        stepDelayMs: z.number().int().min(0).max(5000).optional(),
+        staleClaimMinutes: z.number().int().min(1).max(24 * 60).optional(),
+        executeTriggers: z.boolean().optional(),
+        executeReadyThreads: z.boolean().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        if (!gate.allowed) return errorResult(gate.reason);
+        const result = await autonomy.runAutonomyLoop(options.workspacePath, {
+          actor,
+          adapter: args.adapter,
+          agents: args.agents,
+          maxCycles: args.maxCycles,
+          maxIdleCycles: args.maxIdleCycles,
+          pollMs: args.pollMs,
+          watch: args.watch,
+          maxSteps: args.maxSteps,
+          stepDelayMs: args.stepDelayMs,
+          staleClaimMinutes: args.staleClaimMinutes,
+          executeTriggers: args.executeTriggers,
+          executeReadyThreads: args.executeReadyThreads,
+        });
+        return okResult(
+          result,
+          `Autonomy completed ${result.cycles.length} cycle(s); final ready threads=${result.finalReadyThreads}.`,
+        );
       } catch (error) {
         return errorResult(error);
       }

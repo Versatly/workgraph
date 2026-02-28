@@ -57,6 +57,8 @@ describe('workgraph mcp server', () => {
       const tools = await client.listTools();
       const toolNames = tools.tools.map((entry) => entry.name);
       expect(toolNames).toContain('workgraph_status');
+      expect(toolNames).toContain('workgraph_primitive_schema');
+      expect(toolNames).toContain('workgraph_ledger_reconcile');
       expect(toolNames).toContain('workgraph_thread_claim');
       expect(toolNames).toContain('workgraph_dispatch_execute');
 
@@ -72,6 +74,25 @@ describe('workgraph mcp server', () => {
       const firstContent = statusResource.contents[0];
       const statusText = firstContent && 'text' in firstContent ? firstContent.text : '';
       expect(statusText).toContain('"threads"');
+
+      const schemaResult = await client.callTool({
+        name: 'workgraph_primitive_schema',
+        arguments: {
+          typeName: 'thread',
+        },
+      });
+      expect(isToolError(schemaResult)).toBe(false);
+      const schemaPayload = getStructured<{ type: string; fields: Array<{ name: string }> }>(schemaResult);
+      expect(schemaPayload.type).toBe('thread');
+      expect(schemaPayload.fields.some((field) => field.name === 'goal')).toBe(true);
+
+      const reconcileResult = await client.callTool({
+        name: 'workgraph_ledger_reconcile',
+        arguments: {},
+      });
+      expect(isToolError(reconcileResult)).toBe(false);
+      const reconcilePayload = getStructured<{ totalThreads: number; issues: unknown[] }>(reconcileResult);
+      expect(reconcilePayload.totalThreads).toBeGreaterThan(0);
 
       const blockedWrite = await client.callTool({
         name: 'workgraph_thread_claim',

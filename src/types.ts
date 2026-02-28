@@ -62,10 +62,12 @@ export type LedgerOp =
   | 'update'
   | 'delete'
   | 'claim'
+  | 'heartbeat'
   | 'release'
   | 'block'
   | 'unblock'
   | 'done'
+  | 'reopen'
   | 'cancel'
   | 'define'
   | 'decompose';
@@ -110,7 +112,7 @@ export const THREAD_STATUS_TRANSITIONS: Record<ThreadStatus, ThreadStatus[]> = {
   open: ['active', 'cancelled'],
   active: ['blocked', 'done', 'cancelled', 'open'],
   blocked: ['active', 'cancelled'],
-  done: [],
+  done: ['open'],
   cancelled: ['open'],
 };
 

@@ -9,7 +9,11 @@ import {
   block,
   unblock,
   done,
+  reopen,
   cancel,
+  heartbeatClaim,
+  reapStaleClaims,
+  listClaimLeaseStatus,
   decompose,
   isReadyForClaim,
   listReadyThreads,
@@ -18,6 +22,7 @@ import {
   pickNextReadyThreadInSpace,
   claimNextReady,
   claimNextReadyInSpace,
+  inferThreadDependenciesFromText,
 } from './thread.js';
 import { loadRegistry, saveRegistry } from './registry.js';
 import * as ledger from './ledger.js';
@@ -114,6 +119,19 @@ describe('thread lifecycle', () => {
     expect(ledger.isClaimed(workspacePath, 'threads/completable.md')).toBe(false);
   });
 
+  it('reopen creates compensating ledger op and returns thread to open', () => {
+    createThread(workspacePath, 'Reopenable', 'test', 'agent-a');
+    claim(workspacePath, 'threads/reopenable.md', 'agent-a');
+    done(workspacePath, 'threads/reopenable.md', 'agent-a', 'done');
+
+    const reopened = reopen(workspacePath, 'threads/reopenable.md', 'agent-a', 'needs follow-up');
+    expect(reopened.fields.status).toBe('open');
+    expect(reopened.fields.owner).toBeNull();
+
+    const history = ledger.historyOf(workspacePath, 'threads/reopenable.md');
+    expect(history.some((entry) => entry.op === 'reopen')).toBe(true);
+  });
+
   it('done by non-owner fails', () => {
     createThread(workspacePath, 'NotYours', 'test', 'agent-a');
     claim(workspacePath, 'threads/notyours.md', 'agent-a');
@@ -127,6 +145,26 @@ describe('thread lifecycle', () => {
     const cancelled = cancel(workspacePath, 'threads/cancellable.md', 'agent-a', 'no longer needed');
 
     expect(cancelled.fields.status).toBe('cancelled');
+  });
+
+  it('records claim leases, heartbeats, and stale reaping', () => {
+    createThread(workspacePath, 'Lease tracked', 'test', 'agent-a');
+    claim(workspacePath, 'threads/lease-tracked.md', 'agent-a', { leaseTtlMinutes: 0 });
+
+    const beforeHeartbeat = listClaimLeaseStatus(workspacePath);
+    expect(beforeHeartbeat).toHaveLength(1);
+    expect(beforeHeartbeat[0].target).toBe('threads/lease-tracked.md');
+
+    const heartbeat = heartbeatClaim(workspacePath, 'agent-a', 'threads/lease-tracked.md', { ttlMinutes: 0 });
+    expect(heartbeat.touched).toHaveLength(1);
+    expect(heartbeat.touched[0].threadPath).toBe('threads/lease-tracked.md');
+
+    const reaped = reapStaleClaims(workspacePath, 'agent-reaper');
+    expect(reaped.reaped.length + reaped.skipped.length).toBeGreaterThan(0);
+
+    const post = store.read(workspacePath, 'threads/lease-tracked.md');
+    expect(post?.fields.status).toBe('open');
+    expect(post?.fields.owner).toBeNull();
   });
 
   it('decompose creates sub-threads with parent ref', () => {
@@ -191,6 +229,11 @@ describe('thread lifecycle', () => {
 
     expect(() => claim(workspacePath, 'threads/bad-transition.md', 'agent-b'))
       .toThrow('Cannot claim thread in "done" state');
+  });
+
+  it('infers dependency refs from text payloads', () => {
+    const inferred = inferThreadDependenciesFromText('wait for [[threads/api-schema]] and threads/db-migration.md');
+    expect(inferred).toEqual(['threads/api-schema.md', 'threads/db-migration.md']);
   });
 });
 
