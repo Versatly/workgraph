@@ -145,14 +145,13 @@ describe('ShellWorkerAdapter', () => {
   });
 
   it('marks command as failed when execution times out', async () => {
-    vi.useFakeTimers();
     let childRef: FakeChildProcess | undefined;
     spawnMock.mockImplementation(() => {
       const child = createFakeChildProcess();
       child.kill.mockImplementation(() => {
-        queueMicrotask(() => {
+        setTimeout(() => {
           child.emit('close', 143);
-        });
+        }, 0);
         return true;
       });
       childRef = child;
@@ -164,11 +163,10 @@ describe('ShellWorkerAdapter', () => {
       makeInput({
         context: {
           shell_command: 'sleep 999',
-          shell_timeout_ms: 20,
+          shell_timeout_ms: 10,
         },
       }),
     );
-    await vi.advanceTimersByTimeAsync(25);
     const result = await execution;
 
     expect(childRef?.kill).toHaveBeenCalledWith('SIGTERM');
