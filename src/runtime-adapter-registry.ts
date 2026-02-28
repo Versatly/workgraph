@@ -1,10 +1,16 @@
 import { CursorCloudAdapter } from './adapter-cursor-cloud.js';
+import { ShellWorkerAdapter } from './adapter-shell-worker.js';
+import { HttpWebhookAdapter } from './adapter-http-webhook.js';
+import { ClaudeCodeAdapter } from './adapter-claude-code.js';
 import type { DispatchAdapter } from './runtime-adapter-contracts.js';
 
 type DispatchAdapterFactory = () => DispatchAdapter;
 
 const adapterFactories = new Map<string, DispatchAdapterFactory>([
   ['cursor-cloud', () => new CursorCloudAdapter()],
+  ['shell-worker', () => new ShellWorkerAdapter()],
+  ['http-webhook', () => new HttpWebhookAdapter()],
+  ['claude-code', () => new ClaudeCodeAdapter()],
 ]);
 
 export function registerDispatchAdapter(name: string, factory: DispatchAdapterFactory): void {

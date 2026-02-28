@@ -14,6 +14,7 @@ export interface WriteSkillOptions {
   version?: string;
   status?: 'draft' | 'proposed' | 'active' | 'deprecated' | 'archived';
   distribution?: string;
+  tailscalePath?: string;
   reviewers?: string[];
   tags?: string[];
   dependsOn?: string[];
@@ -59,6 +60,7 @@ export function writeSkill(
       version: options.version ?? '0.1.0',
       status,
       distribution: options.distribution ?? 'shared-vault',
+      tailscale_path: options.tailscalePath,
       reviewers: options.reviewers ?? [],
       depends_on: options.dependsOn ?? [],
       tags: options.tags ?? [],
@@ -75,6 +77,7 @@ export function writeSkill(
     version: options.version ?? existing.fields.version ?? '0.1.0',
     status,
     distribution: options.distribution ?? existing.fields.distribution ?? 'shared-vault',
+    tailscale_path: options.tailscalePath ?? existing.fields.tailscale_path,
     reviewers: options.reviewers ?? existing.fields.reviewers ?? [],
     depends_on: options.dependsOn ?? existing.fields.depends_on ?? [],
     tags: options.tags ?? existing.fields.tags ?? [],
