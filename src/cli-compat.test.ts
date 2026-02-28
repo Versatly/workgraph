@@ -4,6 +4,16 @@ import path from 'node:path';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
 
+beforeAll(() => {
+  const build = spawnSync('npm', ['run', 'build', '--silent'], {
+    cwd: path.resolve('.'),
+    encoding: 'utf-8',
+  });
+  if (build.status !== 0) {
+    throw new Error(`Failed to build CLI before compatibility test:\n${build.stderr || build.stdout}`);
+  }
+});
+
 function runCli(args: string[]): { ok: boolean; data?: unknown; error?: string } {
   const result = spawnSync('node', [path.resolve('bin/workgraph.js'), ...args], {
     encoding: 'utf-8',

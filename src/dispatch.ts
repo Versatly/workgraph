@@ -7,9 +7,11 @@ import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
+import * as thread from './thread.js';
+import * as gate from './gate.js';
 import { resolveDispatchAdapter } from './runtime-adapter-registry.js';
 import type { DispatchAdapterLogEntry } from './runtime-adapter-contracts.js';
-import type { DispatchRun, RunStatus } from './types.js';
+import type { DispatchRun, PrimitiveInstance, RunStatus } from './types.js';
 
 const RUNS_FILE = '.workgraph/dispatch-runs.json';
 const DEFAULT_LEASE_MINUTES = 30;
@@ -54,6 +56,11 @@ export interface DispatchHandoffResult {
   handoffRun: DispatchRun;
 }
 
+export interface DispatchClaimResult {
+  thread: PrimitiveInstance;
+  gateCheck: gate.ThreadGateCheckResult;
+}
+
 export function createRun(workspacePath: string, input: DispatchCreateInput): DispatchRun {
   const state = loadRuns(workspacePath);
   if (input.idempotencyKey) {
@@ -90,6 +97,19 @@ export function createRun(workspacePath: string, input: DispatchCreateInput): Di
 
   ensureRunPrimitive(workspacePath, run, input.actor);
   return run;
+}
+
+export function claimThread(workspacePath: string, threadRef: string, actor: string): DispatchClaimResult {
+  const threadPath = resolveThreadRef(threadRef);
+  const gateCheck = gate.checkThreadGates(workspacePath, threadPath);
+  if (!gateCheck.allowed) {
+    throw new Error(gate.summarizeGateFailures(gateCheck));
+  }
+  const claimedThread = thread.claim(workspacePath, threadPath, actor);
+  return {
+    thread: claimedThread,
+    gateCheck,
+  };
 }
 
 export function status(workspacePath: string, runId: string): DispatchRun {
@@ -572,4 +592,18 @@ function assertRunStatusTransition(from: RunStatus, to: RunStatus, runId: string
   if (!allowed.includes(to)) {
     throw new Error(`Invalid run transition for ${runId}: ${from} -> ${to}. Allowed: ${allowed.join(', ') || 'none'}.`);
   }
+}
+
+function resolveThreadRef(threadRef: string): string {
+  const raw = String(threadRef ?? '').trim();
+  const unwrapped = raw.startsWith('[[') && raw.endsWith(']]')
+    ? raw.slice(2, -2)
+    : raw;
+  if (!unwrapped) {
+    throw new Error('Thread reference is required.');
+  }
+  if (unwrapped.includes('/')) {
+    return unwrapped.endsWith('.md') ? unwrapped : `${unwrapped}.md`;
+  }
+  return `threads/${unwrapped.endsWith('.md') ? unwrapped : `${unwrapped}.md`}`;
 }

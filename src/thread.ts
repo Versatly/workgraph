@@ -8,6 +8,7 @@ import crypto from 'node:crypto';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
 import * as claimLease from './claim-lease.js';
+import * as triggerEngine from './trigger-engine.js';
 import type { PrimitiveInstance, ThreadStatus } from './types.js';
 import { THREAD_STATUS_TRANSITIONS } from './types.js';
 
@@ -251,6 +252,14 @@ export function done(
     status: 'done',
   }, newBody, actor);
   claimLease.removeClaimLease(workspacePath, threadPath);
+
+  // Cascade trigger failures should not roll back a successful thread completion.
+  try {
+    triggerEngine.evaluateThreadCompleteCascadeTriggers(workspacePath, threadPath, actor);
+  } catch {
+    // No-op: trigger engine state captures per-trigger errors during cascade evaluation.
+  }
+
   return completed;
 }
 

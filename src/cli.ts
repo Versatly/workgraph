@@ -1744,6 +1744,44 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// gate
+// ============================================================================
+
+const gateCmd = program
+  .command('gate')
+  .description('Evaluate thread quality gates before claim');
+
+addWorkspaceOption(
+  gateCmd
+    .command('check <threadRef>')
+    .description('Check policy-gate status for one thread')
+    .option('--json', 'Emit structured JSON output')
+).action((threadRef, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.gate.checkThreadGates(workspacePath, threadRef);
+    },
+    (result) => {
+      const header = [`Gate check for ${result.threadPath}: ${result.allowed ? 'PASSED' : 'FAILED'}`];
+      if (result.gates.length === 0) {
+        return [...header, 'No gates configured.'];
+      }
+      const details = result.gates.map((gate) => {
+        const failingRules = gate.rules.filter((rule) => !rule.ok);
+        const gateLabel = gate.gatePath ?? gate.gateRef;
+        if (failingRules.length === 0) {
+          return `[pass] ${gateLabel}`;
+        }
+        return `[fail] ${gateLabel} :: ${failingRules.map((rule) => rule.message).join('; ')}`;
+      });
+      return [...header, ...details];
+    },
+  )
+);
+
+// ============================================================================
 // dispatch
 // ============================================================================
 
@@ -1774,6 +1812,26 @@ addWorkspaceOption(
       };
     },
     (result) => [`Run created: ${result.run.id} [${result.run.status}]`],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('claim <threadRef>')
+    .description('Claim a thread after passing quality gates')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((threadRef, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.dispatch.claimThread(workspacePath, threadRef, opts.actor);
+    },
+    (result) => [
+      `Claimed thread: ${result.thread.path}`,
+      `Gates checked: ${result.gateCheck.gates.length}`,
+    ],
   )
 );
 
@@ -2095,7 +2153,7 @@ addWorkspaceOption(
 
 const triggerEngineCmd = triggerCmd
   .command('engine')
-  .description('Run trigger engine over ledger events');
+  .description('Run trigger engine');
 
 addWorkspaceOption(
   triggerEngineCmd
@@ -2116,27 +2174,18 @@ addWorkspaceOption(
 ).action((opts) =>
   runCommand(
     opts,
-    async () => {
+    () => {
       const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.triggerEngine.runTriggerEngineLoop(workspacePath, {
+      return workgraph.triggerEngine.runTriggerEngineCycle(workspacePath, {
         actor: opts.actor,
-        watch: !!opts.watch,
-        pollMs: Number.parseInt(String(opts.pollMs), 10),
-        maxCycles: opts.maxCycles ? Number.parseInt(String(opts.maxCycles), 10) : undefined,
-        executeRuns: opts.executeRuns,
-        agents: csv(opts.agents),
-        maxSteps: Number.parseInt(String(opts.maxSteps), 10),
-        stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
-        space: opts.space,
-        staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
-        entryLimit: opts.entryLimit ? Number.parseInt(String(opts.entryLimit), 10) : undefined,
       });
     },
     (result) => [
-      `Cycles: ${result.cycles.length}`,
-      `Last processed index: ${result.finalState.lastProcessedIndex}`,
-      ...result.cycles.map((cycle, idx) =>
-        `Cycle ${idx + 1}: entries=${cycle.processedEntries} actions=${cycle.actions.length} drift_ok=${cycle.drift.ok}`,
+      `Evaluated: ${result.evaluated} triggers`,
+      `Fired: ${result.fired}`,
+      `Errors: ${result.errors}`,
+      ...result.triggers.map((t) =>
+        `  ${t.triggerPath}: ${t.fired ? 'FIRED' : 'skipped'} (${t.reason})${t.error ? ` error: ${t.error}` : ''}`,
       ),
     ],
   )

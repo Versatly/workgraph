@@ -616,18 +616,12 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
         const actor = resolveActor(args.actor, options.defaultActor);
         const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
         if (!gate.allowed) return errorResult(gate.reason);
-        const result = await triggerEngine.runTriggerEngineCycle(options.workspacePath, {
+        const result = triggerEngine.runTriggerEngineCycle(options.workspacePath, {
           actor,
-          executeRuns: args.executeRuns,
-          agents: args.agents,
-          maxSteps: args.maxSteps,
-          stepDelayMs: args.stepDelayMs,
-          staleClaimMinutes: args.staleClaimMinutes,
-          strictLedger: true,
         });
         return okResult(
           result,
-          `Trigger cycle processed ${result.processedEntries} entries, fired ${result.actions.length} action(s).`,
+          `Trigger cycle evaluated ${result.evaluated} triggers, fired ${result.fired} action(s).`,
         );
       } catch (error) {
         return errorResult(error);
