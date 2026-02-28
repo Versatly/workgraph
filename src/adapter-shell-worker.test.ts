@@ -31,7 +31,7 @@ function createFakeChildProcess(): FakeChildProcess {
   const child = new EventEmitter() as FakeChildProcess;
   child.stdout = new EventEmitter();
   child.stderr = new EventEmitter();
-  child.kill = vi.fn(() => true);
+  child.kill = vi.fn(() => true) as any;
   return child;
 }
 
