@@ -5,9 +5,12 @@ import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createWorkgraphMcpServer } from './mcp-server.js';
+import { startWorkgraphEventStream } from './mcp-events.js';
 import { loadRegistry, saveRegistry } from './registry.js';
 import * as policy from './policy.js';
 import * as thread from './thread.js';
+import * as trigger from './trigger.js';
+import * as store from './store.js';
 
 let workspacePath: string;
 
@@ -155,6 +158,63 @@ describe('workgraph mcp server', () => {
       await server.close();
     }
   });
+
+  it('exposes primitive tool coverage with context/graph/dispatch aliases', async () => {
+    policy.upsertParty(workspacePath, 'agent-mcp', {
+      roles: ['operator'],
+      capabilities: ['mcp:write', 'thread:claim', 'thread:done', 'dispatch:run'],
+    });
+
+    const server = createWorkgraphMcpServer({
+      workspacePath,
+      defaultActor: 'agent-mcp',
+    });
+    const client = new Client({
+      name: 'workgraph-mcp-test-client-tools',
+      version: '1.0.0',
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    try {
+      const tools = await client.listTools();
+      const toolNames = new Set(tools.tools.map((entry) => entry.name));
+      // Core tools our MCP server exposes
+      const expectedTools = [
+        'workgraph_status',
+        'workgraph_brief',
+        'workgraph_query',
+        'workgraph_primitive_schema',
+        'workgraph_thread_list',
+        'workgraph_thread_show',
+        'workgraph_ledger_recent',
+        'workgraph_ledger_reconcile',
+        'workgraph_graph_hygiene',
+        'workgraph_thread_claim',
+        'workgraph_thread_done',
+        'workgraph_checkpoint_create',
+        'workgraph_dispatch_create',
+        'workgraph_dispatch_execute',
+        'workgraph_dispatch_followup',
+        'workgraph_dispatch_stop',
+        'workgraph_trigger_engine_cycle',
+        'workgraph_autonomy_run',
+      ];
+      for (const name of expectedTools) {
+        expect(toolNames.has(name)).toBe(true);
+      }
+
+      // Verify status tool works end-to-end
+      expect(toolNames.size).toBeGreaterThan(10);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
 });
 
 function getStructured<T>(result: unknown): T {
@@ -172,4 +232,68 @@ function isToolError(result: unknown): boolean {
   if (!result || typeof result !== 'object') return false;
   if (!('isError' in result)) return false;
   return (result as { isError?: boolean }).isError === true;
+}
+
+async function readSseEvents(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  minEvents: number,
+  timeoutMs: number,
+): Promise<Array<{ type: string; data: unknown }>> {
+  const decoder = new TextDecoder();
+  let buffer = '';
+  const events: Array<{ type: string; data: unknown }> = [];
+  const deadline = Date.now() + timeoutMs;
+
+  while (events.length < minEvents && Date.now() < deadline) {
+    const remaining = deadline - Date.now();
+    const nextChunk = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Timed out waiting for SSE events.')), remaining)),
+    ]);
+    if (nextChunk.done) break;
+    buffer += decoder.decode(nextChunk.value, { stream: true });
+
+    let separatorIndex = buffer.indexOf('\n\n');
+    while (separatorIndex !== -1) {
+      const rawEvent = buffer.slice(0, separatorIndex);
+      buffer = buffer.slice(separatorIndex + 2);
+      const parsed = parseSseEvent(rawEvent);
+      if (parsed) events.push(parsed);
+      separatorIndex = buffer.indexOf('\n\n');
+    }
+  }
+
+  if (events.length < minEvents) {
+    throw new Error(`Expected at least ${minEvents} SSE events, received ${events.length}.`);
+  }
+
+  return events;
+}
+
+function parseSseEvent(rawEvent: string): { type: string; data: unknown } | null {
+  const lines = rawEvent
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith(':'));
+  if (lines.length === 0) return null;
+
+  let type = 'message';
+  let dataLine = '';
+  for (const line of lines) {
+    if (line.startsWith('event:')) {
+      type = line.slice('event:'.length).trim();
+    } else if (line.startsWith('data:')) {
+      dataLine += line.slice('data:'.length).trim();
+    }
+  }
+  if (!dataLine) return null;
+  try {
+    return {
+      type,
+      data: JSON.parse(dataLine),
+    };
+  } catch {
+    return null;
+  }
 }

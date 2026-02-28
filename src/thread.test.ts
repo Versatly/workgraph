@@ -23,6 +23,8 @@ import {
   claimNextReady,
   claimNextReadyInSpace,
   inferThreadDependenciesFromText,
+  heartbeat,
+  handoff,
 } from './thread.js';
 import { loadRegistry, saveRegistry } from './registry.js';
 import * as ledger from './ledger.js';
@@ -220,6 +222,38 @@ describe('thread lifecycle', () => {
 
     expect(reclaimed.fields.status).toBe('active');
     expect(reclaimed.fields.owner).toBe('agent-b');
+  });
+
+  it('records heartbeat lease extension for active owner', () => {
+    createThread(workspacePath, 'Heartbeat', 'keep lease alive', 'agent-a');
+    claim(workspacePath, 'threads/heartbeat.md', 'agent-a');
+    const updated = heartbeat(workspacePath, 'threads/heartbeat.md', 'agent-a', 30);
+
+    expect(updated.fields.status).toBe('active');
+    expect(typeof updated.fields.last_heartbeat_at).toBe('string');
+    expect(typeof updated.fields.claim_lease_until).toBe('string');
+    expect(ledger.historyOf(workspacePath, 'threads/heartbeat.md').some((entry) =>
+      entry.op === 'update' && entry.data?.heartbeat === true
+    )).toBe(true);
+  });
+
+  it('hands off active thread to another actor', () => {
+    createThread(workspacePath, 'Handoff Transfer', 'test transfer', 'agent-a');
+    claim(workspacePath, 'threads/handoff-transfer.md', 'agent-a');
+    const transferred = handoff(
+      workspacePath,
+      'threads/handoff-transfer.md',
+      'agent-a',
+      'agent-b',
+      'Taking over implementation while I handle incident response.',
+    );
+
+    expect(transferred.fields.status).toBe('active');
+    expect(transferred.fields.owner).toBe('agent-b');
+    expect(transferred.fields.handoff_from).toBe('agent-a');
+    expect(transferred.fields.handoff_to).toBe('agent-b');
+    expect(transferred.body).toContain('## Handoff');
+    expect(ledger.currentOwner(workspacePath, 'threads/handoff-transfer.md')).toBe('agent-b');
   });
 
   it('invalid state transitions are rejected', () => {
