@@ -1512,6 +1512,144 @@ addWorkspaceOption(
 
 addWorkspaceOption(
   graphCmd
+    .command('neighborhood <slug>')
+    .description('Find connected primitives within N wiki-link hops')
+    .option('--depth <n>', 'Traversal depth (default: 2)', '2')
+    .option('--refresh', 'Refresh graph index before querying')
+    .option('--json', 'Emit structured JSON output')
+).action((slug, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.graph.graphNeighborhoodQuery(workspacePath, slug, {
+        depth: parseNonNegativeIntOption(opts.depth, 'depth'),
+        refresh: !!opts.refresh,
+      });
+    },
+    (result) => [
+      `Center: ${result.center.path} (${result.center.exists ? 'exists' : 'missing'})`,
+      `Depth: ${result.depth}`,
+      `Connected nodes: ${result.connectedNodes.length}`,
+      `Edges in neighborhood: ${result.edges.length}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  graphCmd
+    .command('impact <slug>')
+    .description('Analyze reverse-link impact for a primitive')
+    .option('--refresh', 'Refresh graph index before querying')
+    .option('--json', 'Emit structured JSON output')
+).action((slug, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.graph.graphImpactAnalysis(workspacePath, slug, {
+        refresh: !!opts.refresh,
+      });
+    },
+    (result) => [
+      `Target: ${result.target.path} (${result.target.exists ? 'exists' : 'missing'})`,
+      `Total references: ${result.totalReferences}`,
+      ...result.groups.map((group) => `${group.type}: ${group.referenceCount}`),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  graphCmd
+    .command('context <slug>')
+    .description('Assemble token-budgeted markdown context from graph neighborhood')
+    .option('--budget <tokens>', 'Approx token budget (chars/4)', '2000')
+    .option('--refresh', 'Refresh graph index before querying')
+    .option('--json', 'Emit structured JSON output')
+).action((slug, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.graph.graphContextAssembly(workspacePath, slug, {
+        budgetTokens: parsePositiveIntOption(opts.budget, 'budget'),
+        refresh: !!opts.refresh,
+      });
+    },
+    (result) => [
+      `Center: ${result.center.path}`,
+      `Budget: ${result.budgetTokens} tokens`,
+      `Used: ${result.usedTokens} tokens`,
+      `Sections: ${result.sections.length}`,
+      '',
+      result.markdown,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  graphCmd
+    .command('edges <slug>')
+    .description('Show typed incoming/outgoing edges for one primitive')
+    .option('--refresh', 'Refresh graph index before querying')
+    .option('--json', 'Emit structured JSON output')
+).action((slug, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.graph.graphTypedEdges(workspacePath, slug, {
+        refresh: !!opts.refresh,
+      });
+    },
+    (result) => [
+      `Node: ${result.node.path} (${result.node.exists ? 'exists' : 'missing'})`,
+      `Outgoing edges: ${result.outgoing.length}`,
+      `Incoming edges: ${result.incoming.length}`,
+      ...result.outgoing.map((edge) => `OUT ${edge.type} ${edge.from} -> ${edge.to}`),
+      ...result.incoming.map((edge) => `IN  ${edge.type} ${edge.from} -> ${edge.to}`),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  graphCmd
+    .command('export <slug>')
+    .description('Export a markdown subgraph directory around a center primitive')
+    .option('--depth <n>', 'Traversal depth (default: 2)', '2')
+    .option('--format <format>', 'Export format (default: md)', 'md')
+    .option('--output-dir <path>', 'Output directory (default under .workgraph/graph-exports)')
+    .option('--refresh', 'Refresh graph index before querying')
+    .option('--json', 'Emit structured JSON output')
+).action((slug, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const format = String(opts.format ?? 'md').trim().toLowerCase();
+      if (format !== 'md') {
+        throw new Error(`Invalid --format "${opts.format}". Supported formats: md.`);
+      }
+      return workgraph.graph.graphExportSubgraph(workspacePath, slug, {
+        depth: parseNonNegativeIntOption(opts.depth, 'depth'),
+        format,
+        outputDir: opts.outputDir,
+        refresh: !!opts.refresh,
+      });
+    },
+    (result) => [
+      `Exported subgraph: ${result.outputDirectory}`,
+      `Center: ${result.center.path}`,
+      `Depth: ${result.depth}`,
+      `Nodes: ${result.exportedNodes.length}`,
+      `Edges: ${result.exportedEdgeCount}`,
+      `Manifest: ${result.manifestPath}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  graphCmd
     .command('neighbors <nodePath>')
     .description('Query incoming/outgoing wiki-link neighbors for one node')
     .option('--refresh', 'Refresh graph index before querying')
@@ -2404,6 +2542,22 @@ function parseScalar(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function parsePositiveIntOption(value: unknown, name: string): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid --${name} value "${String(value)}". Expected a positive integer.`);
+  }
+  return parsed;
+}
+
+function parseNonNegativeIntOption(value: unknown, name: string): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed < 0) {
+    throw new Error(`Invalid --${name} value "${String(value)}". Expected a non-negative integer.`);
+  }
+  return parsed;
 }
 
 function normalizeRunStatus(status: string): 'running' | 'succeeded' | 'failed' | 'cancelled' {
