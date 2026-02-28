@@ -30,6 +30,7 @@ export * as mcpServer from './mcp-server.js';
 export * as clawdapus from './clawdapus.js';
 export * as integration from './integration.js';
 export * from './cron.js';
+export * as diagnostics from './diagnostics/index.js';
 export * from './integration-core.js';
 export * as autonomyDaemon from './autonomy-daemon.js';
 export * from './runtime-adapter-contracts.js';
