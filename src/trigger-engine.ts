@@ -1382,6 +1382,12 @@ function globToRegExp(globPattern: string): RegExp {
   let regex = '^';
   const pattern = normalizeGlob(globPattern);
   for (let idx = 0; idx < pattern.length; idx += 1) {
+    const remaining = pattern.slice(idx);
+    if (remaining.startsWith('**/')) {
+      regex += '(?:.*/)?';
+      idx += 2;
+      continue;
+    }
     const ch = pattern[idx]!;
     if (ch === '*') {
       if (pattern[idx + 1] === '*') {
