@@ -946,6 +946,135 @@ addWorkspaceOption(
   )
 );
 
+// ============================================================================
+// diagnostics / developer experience
+// ============================================================================
+
+addWorkspaceOption(
+  program
+    .command('doctor')
+    .description('Diagnose vault health, warnings, and repairable issues')
+    .option('--fix', 'Auto-repair safe issues (orphan links, stale claims/runs)')
+    .option('--stale-after-minutes <n>', 'Threshold for stale claims/runs in minutes', '60')
+    .option('-a, --actor <name>', 'Actor used for --fix mutations', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const staleAfterMinutes = Number.parseInt(String(opts.staleAfterMinutes), 10);
+      const safeStaleAfterMinutes = Number.isNaN(staleAfterMinutes) ? 60 : Math.max(1, staleAfterMinutes);
+      return workgraph.diagnostics.diagnoseVaultHealth(workspacePath, {
+        fix: !!opts.fix,
+        actor: opts.actor,
+        staleAfterMs: safeStaleAfterMinutes * 60 * 1000,
+      });
+    },
+    (result) => workgraph.diagnostics.renderDoctorReport(result),
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('replay')
+    .description('Replay ledger events chronologically with typed filters')
+    .option('--type <type>', 'create | update | transition')
+    .option('--actor <name>', 'Filter by actor')
+    .option('--primitive <ref>', 'Filter by primitive path/type substring')
+    .option('--since <iso>', 'Filter events on/after ISO timestamp')
+    .option('--until <iso>', 'Filter events on/before ISO timestamp')
+    .option('--no-color', 'Disable colorized output')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.diagnostics.replayLedger(workspacePath, {
+        type: opts.type,
+        actor: opts.actor,
+        primitive: opts.primitive,
+        since: opts.since,
+        until: opts.until,
+      });
+    },
+    (result) => workgraph.diagnostics.renderReplayText(result, {
+      color: opts.color !== false && !wantsJson(opts),
+    }),
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('viz')
+    .description('Render an ASCII wiki-link graph of primitives in this vault')
+    .option('--focus <slugOrPath>', 'Center the graph on a specific node')
+    .option('--depth <n>', 'Traversal depth from each root', '2')
+    .option('--top <n>', 'When large, show top N most-connected roots', '10')
+    .option('--no-color', 'Disable colorized output')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const parsedDepth = Number.parseInt(String(opts.depth), 10);
+      const parsedTop = Number.parseInt(String(opts.top), 10);
+      return workgraph.diagnostics.visualizeVaultGraph(workspacePath, {
+        focus: opts.focus,
+        depth: Number.isNaN(parsedDepth) ? 2 : Math.max(1, parsedDepth),
+        top: Number.isNaN(parsedTop) ? 10 : Math.max(1, parsedTop),
+        color: opts.color !== false && !wantsJson(opts),
+      });
+    },
+    (result) => [
+      ...result.rendered.split('\n'),
+      '',
+      `Nodes: ${result.nodeCount}`,
+      `Edges: ${result.edgeCount}`,
+      ...(result.focus ? [`Focus: ${result.focus}`] : []),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('stats')
+    .description('Show detailed vault statistics and graph/ledger health metrics')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.diagnostics.computeVaultStats(workspacePath);
+    },
+    (result) => workgraph.diagnostics.renderStatsReport(result),
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('changelog')
+    .description('Generate a human-readable changelog from ledger events')
+    .requiredOption('--since <date>', 'Include entries on/after this date (ISO-8601)')
+    .option('--until <date>', 'Include entries on/before this date (ISO-8601)')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.diagnostics.generateLedgerChangelog(workspacePath, {
+        since: opts.since,
+        until: opts.until,
+      });
+    },
+    (result) => workgraph.diagnostics.renderChangelogText(result),
+  )
+);
+
 addWorkspaceOption(
   program
     .command('command-center')

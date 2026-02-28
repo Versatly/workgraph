@@ -23,6 +23,7 @@ export * as trigger from './trigger.js';
 export * as mcpServer from './mcp-server.js';
 export * as clawdapus from './clawdapus.js';
 export * as integration from './integration.js';
+export * as diagnostics from './diagnostics/index.js';
 export * from './integration-core.js';
 export * from './runtime-adapter-contracts.js';
 export * from './adapter-cursor-cloud.js';
