@@ -18,6 +18,7 @@ export interface WriteSkillOptions {
   tags?: string[];
   dependsOn?: string[];
   expectedUpdatedAt?: string;
+  tailscalePath?: string;
 }
 
 export interface ProposeSkillOptions {
