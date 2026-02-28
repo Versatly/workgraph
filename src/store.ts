@@ -4,12 +4,16 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import matter from 'gray-matter';
 import { loadRegistry, getType } from './registry.js';
 import * as ledger from './ledger.js';
 import * as graph from './graph.js';
 import * as policy from './policy.js';
 import type { PrimitiveInstance, PrimitiveTypeDefinition } from './types.js';
+
+const ETAG_FIELD = 'etag';
+const TYPE_HINT_FIELD = '_wg_type';
 
 // ---------------------------------------------------------------------------
 // Create
@@ -34,8 +38,9 @@ export function create(
     created: fields.created ?? now,
     updated: now,
   });
-  const initialStatus = typeof merged.status === 'string'
-    ? String(merged.status)
+  const mergedWithTypeHint = maybeAddTypeHint(workspacePath, typeDef, merged, typeName);
+  const initialStatus = typeof mergedWithTypeHint.status === 'string'
+    ? String(mergedWithTypeHint.status)
     : undefined;
   const createPolicyDecision = policy.canTransitionStatus(
     workspacePath,
@@ -47,10 +52,10 @@ export function create(
   if (!createPolicyDecision.allowed) {
     throw new Error(createPolicyDecision.reason ?? 'Policy gate blocked create transition.');
   }
-  validateFields(workspacePath, typeDef, merged, 'create');
+  validateFields(workspacePath, typeDef, mergedWithTypeHint, 'create');
 
   const relDir = typeDef.directory;
-  const slug = slugify(String(merged.title ?? merged.name ?? typeName));
+  const slug = slugify(String(mergedWithTypeHint.title ?? mergedWithTypeHint.name ?? typeName));
   const relPath = resolveCreatePath(relDir, slug, options.pathOverride);
   const absDir = path.dirname(path.join(workspacePath, relPath));
   const absPath = path.join(workspacePath, relPath);
@@ -60,16 +65,16 @@ export function create(
     throw new Error(`File already exists: ${relPath}. Use update instead.`);
   }
 
-  const content = matter.stringify(body, stripUndefined(merged));
-  fs.writeFileSync(absPath, content, 'utf-8');
+  const serialized = renderDocumentWithEtag(body, mergedWithTypeHint);
+  fs.writeFileSync(absPath, serialized.content, 'utf-8');
 
   ledger.append(workspacePath, actor, 'create', relPath, typeName, {
-    title: merged.title ?? slug,
-    ...(typeof merged.status === 'string' ? { status: merged.status } : {}),
+    title: serialized.frontmatter.title ?? slug,
+    ...(typeof serialized.frontmatter.status === 'string' ? { status: serialized.frontmatter.status } : {}),
   });
   graph.refreshWikiLinkGraphIndex(workspacePath);
 
-  return { path: relPath, type: typeName, fields: merged, body };
+  return { path: relPath, type: typeName, fields: serialized.frontmatter, body };
 }
 
 // ---------------------------------------------------------------------------
@@ -82,9 +87,10 @@ export function read(workspacePath: string, relPath: string): PrimitiveInstance 
 
   const raw = fs.readFileSync(absPath, 'utf-8');
   const { data, content } = matter(raw);
+  const fields = ensureEtagField(raw, data as Record<string, unknown>);
 
-  const typeName = inferType(workspacePath, relPath);
-  return { path: relPath, type: typeName, fields: data, body: content.trim() };
+  const typeName = inferType(workspacePath, relPath, fields);
+  return { path: relPath, type: typeName, fields, body: content.trim() };
 }
 
 export function list(workspacePath: string, typeName: string): PrimitiveInstance[] {
@@ -110,18 +116,46 @@ export function list(workspacePath: string, typeName: string): PrimitiveInstance
 // Update
 // ---------------------------------------------------------------------------
 
+export interface PrimitiveUpdateOptions {
+  expectedEtag?: string;
+  concurrentConflictMode?: 'warn' | 'error';
+}
+
 export function update(
   workspacePath: string,
   relPath: string,
   fieldUpdates: Record<string, unknown>,
   bodyUpdate: string | undefined,
   actor: string,
+  options: PrimitiveUpdateOptions = {},
 ): PrimitiveInstance {
   const existing = read(workspacePath, relPath);
   if (!existing) throw new Error(`Not found: ${relPath}`);
+  const absPath = path.join(workspacePath, relPath);
+  const rawBeforeWrite = fs.readFileSync(absPath, 'utf-8');
+  const computedCurrentEtag = computeEtagFromRawFileContent(rawBeforeWrite);
+  const storedEtag = typeof existing.fields[ETAG_FIELD] === 'string'
+    ? String(existing.fields[ETAG_FIELD])
+    : undefined;
+  const currentEtag = storedEtag ?? computedCurrentEtag;
+  if (storedEtag && storedEtag !== computedCurrentEtag) {
+    handleConcurrentConflict(
+      `Stored etag mismatch for ${relPath}. Expected stored="${storedEtag}" but computed="${computedCurrentEtag}".`,
+      'warn',
+    );
+  }
+  if (options.expectedEtag && options.expectedEtag !== currentEtag) {
+    handleConcurrentConflict(
+      `Concurrent modification detected for ${relPath}. Expected etag="${options.expectedEtag}" but found "${currentEtag}".`,
+      options.concurrentConflictMode ?? 'error',
+    );
+  }
 
   const now = new Date().toISOString();
-  const newFields: Record<string, unknown> = { ...existing.fields, ...fieldUpdates, updated: now };
+  const sanitizedFieldUpdates = { ...fieldUpdates };
+  delete sanitizedFieldUpdates[ETAG_FIELD];
+  const newFields: Record<string, unknown> = { ...existing.fields, ...sanitizedFieldUpdates, updated: now };
+  delete newFields[ETAG_FIELD];
   const typeDef = getType(workspacePath, existing.type);
   if (!typeDef) throw new Error(`Unknown primitive type "${existing.type}" for ${relPath}`);
   const previousStatus = typeof existing.fields['status'] === 'string'
@@ -143,13 +177,15 @@ export function update(
 
   validateFields(workspacePath, typeDef, newFields, 'update');
   const newBody = bodyUpdate ?? existing.body;
-  const absPath = path.join(workspacePath, relPath);
-
-  const content = matter.stringify(newBody, stripUndefined(newFields));
-  fs.writeFileSync(absPath, content, 'utf-8');
+  const serialized = renderDocumentWithEtag(newBody, newFields);
+  fs.writeFileSync(absPath, serialized.content, 'utf-8');
+  const changedFields = Object.keys(sanitizedFieldUpdates);
 
   ledger.append(workspacePath, actor, 'update', relPath, existing.type, {
-    changed: Object.keys(fieldUpdates),
+    changed: changedFields,
+    ...(options.expectedEtag ? { expected_etag: options.expectedEtag } : {}),
+    ...(options.expectedEtag ? { previous_etag: currentEtag } : {}),
+    new_etag: serialized.frontmatter[ETAG_FIELD],
     ...(previousStatus !== nextStatus && nextStatus
       ? {
           from_status: previousStatus ?? null,
@@ -159,7 +195,7 @@ export function update(
   });
   graph.refreshWikiLinkGraphIndex(workspacePath);
 
-  return { path: relPath, type: existing.type, fields: newFields, body: newBody };
+  return { path: relPath, type: existing.type, fields: serialized.frontmatter, body: newBody };
 }
 
 // ---------------------------------------------------------------------------
@@ -176,7 +212,7 @@ export function remove(workspacePath: string, relPath: string, actor: string): v
   const archivePath = path.join(archiveDir, path.basename(relPath));
   fs.renameSync(absPath, archivePath);
 
-  const typeName = inferType(workspacePath, relPath);
+  const typeName = inferType(workspacePath, relPath, {});
   ledger.append(workspacePath, actor, 'delete', relPath, typeName);
   graph.refreshWikiLinkGraphIndex(workspacePath);
 }
@@ -280,14 +316,92 @@ function stripUndefined(obj: Record<string, unknown>): Record<string, unknown> {
   return result;
 }
 
-function inferType(workspacePath: string, relPath: string): string {
-  const registry = loadRegistry(workspacePath);
-  const dir = relPath.split('/')[0];
+function omitField(obj: Record<string, unknown>, fieldName: string): Record<string, unknown> {
+  const clone = { ...obj };
+  delete clone[fieldName];
+  return clone;
+}
 
-  for (const typeDef of Object.values(registry.types)) {
-    if (typeDef.directory === dir) return typeDef.name;
+function renderDocumentWithEtag(
+  body: string,
+  frontmatterFields: Record<string, unknown>,
+): { content: string; frontmatter: Record<string, unknown> } {
+  const withoutEtag = stripUndefined(omitField(frontmatterFields, ETAG_FIELD));
+  const canonical = matter.stringify(body, withoutEtag);
+  const etag = createHash('md5').update(canonical).digest('hex');
+  const frontmatter = {
+    ...withoutEtag,
+    [ETAG_FIELD]: etag,
+  };
+  return {
+    content: matter.stringify(body, frontmatter),
+    frontmatter,
+  };
+}
+
+function ensureEtagField(raw: string, fields: Record<string, unknown>): Record<string, unknown> {
+  const existing = typeof fields[ETAG_FIELD] === 'string'
+    ? String(fields[ETAG_FIELD]).trim()
+    : '';
+  if (existing) return fields;
+  return {
+    ...fields,
+    [ETAG_FIELD]: computeEtagFromRawFileContent(raw),
+  };
+}
+
+function computeEtagFromRawFileContent(raw: string): string {
+  const parsed = matter(raw);
+  const withoutEtag = stripUndefined(omitField(parsed.data as Record<string, unknown>, ETAG_FIELD));
+  const canonical = matter.stringify(parsed.content, withoutEtag);
+  return createHash('md5').update(canonical).digest('hex');
+}
+
+function maybeAddTypeHint(
+  workspacePath: string,
+  typeDef: PrimitiveTypeDefinition,
+  fields: Record<string, unknown>,
+  typeName: string,
+): Record<string, unknown> {
+  if (typeof fields[TYPE_HINT_FIELD] === 'string') return fields;
+  const registry = loadRegistry(workspacePath);
+  const sharedDirectory = Object.values(registry.types)
+    .filter((entry) => entry.directory === typeDef.directory)
+    .length > 1;
+  if (!sharedDirectory) return fields;
+  return {
+    ...fields,
+    [TYPE_HINT_FIELD]: typeName,
+  };
+}
+
+function handleConcurrentConflict(message: string, mode: 'warn' | 'error'): void {
+  if (mode === 'warn') {
+    console.warn(`Warning: ${message}`);
+    return;
   }
-  return 'unknown';
+  throw new Error(message);
+}
+
+function inferType(workspacePath: string, relPath: string, fields: Record<string, unknown>): string {
+  const registry = loadRegistry(workspacePath);
+  const hintedType = typeof fields[TYPE_HINT_FIELD] === 'string'
+    ? String(fields[TYPE_HINT_FIELD]).trim()
+    : '';
+  if (hintedType && registry.types[hintedType]) {
+    return hintedType;
+  }
+
+  const normalizedPath = relPath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const candidates = Object.values(registry.types).filter((typeDef) =>
+    normalizedPath === typeDef.directory || normalizedPath.startsWith(`${typeDef.directory}/`)
+  );
+  if (candidates.length === 0) return 'unknown';
+  if (candidates.length === 1) return candidates[0].name;
+
+  return candidates
+    .sort((a, b) => b.directory.length - a.directory.length || a.name.localeCompare(b.name))[0]
+    .name;
 }
 
 function normalizeRefPath(value: unknown): string {

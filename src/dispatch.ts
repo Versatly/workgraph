@@ -12,6 +12,7 @@ import type { DispatchAdapterLogEntry } from './runtime-adapter-contracts.js';
 import type { DispatchRun, RunStatus } from './types.js';
 
 const RUNS_FILE = '.workgraph/dispatch-runs.json';
+const DEFAULT_LEASE_MINUTES = 30;
 
 export interface DispatchCreateInput {
   actor: string;
@@ -30,6 +31,29 @@ export interface DispatchExecuteInput {
   createCheckpoint?: boolean;
 }
 
+export interface DispatchHeartbeatInput {
+  actor: string;
+  leaseMinutes?: number;
+}
+
+export interface DispatchReconcileResult {
+  reconciledAt: string;
+  inspectedRuns: number;
+  requeuedRuns: DispatchRun[];
+}
+
+export interface DispatchHandoffInput {
+  actor: string;
+  to: string;
+  reason: string;
+  adapter?: string;
+}
+
+export interface DispatchHandoffResult {
+  sourceRun: DispatchRun;
+  handoffRun: DispatchRun;
+}
+
 export function createRun(workspacePath: string, input: DispatchCreateInput): DispatchRun {
   const state = loadRuns(workspacePath);
   if (input.idempotencyKey) {
@@ -46,6 +70,8 @@ export function createRun(workspacePath: string, input: DispatchCreateInput): Di
     adapter: input.adapter ?? 'cursor-cloud',
     objective: input.objective,
     status: 'queued',
+    leaseDurationMinutes: DEFAULT_LEASE_MINUTES,
+    heartbeats: [],
     idempotencyKey: input.idempotencyKey,
     context: input.context,
     followups: [],
@@ -83,7 +109,10 @@ export function followup(workspacePath: string, runId: string, actor: string, in
   run.followups.push({ ts: now, actor, input });
   run.updatedAt = now;
   run.logs.push({ ts: now, level: 'info', message: `Follow-up from ${actor}: ${input}` });
-  if (run.status === 'queued') run.status = 'running';
+  if (run.status === 'queued') {
+    run.status = 'running';
+    applyLease(run, now);
+  }
   saveRuns(workspacePath, state);
   ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
     followup: true,
@@ -124,6 +153,126 @@ export function markRun(
     syncRunPrimitive(workspacePath, target, actor);
   }
   return target ?? run;
+}
+
+export function heartbeat(
+  workspacePath: string,
+  runId: string,
+  input: DispatchHeartbeatInput,
+): DispatchRun {
+  const state = loadRuns(workspacePath);
+  const run = state.runs.find((entry) => entry.id === runId);
+  if (!run) throw new Error(`Run not found: ${runId}`);
+  if (run.status !== 'running') {
+    throw new Error(`Cannot heartbeat run ${runId} in "${run.status}" state. Only running runs may heartbeat.`);
+  }
+
+  const now = new Date().toISOString();
+  run.heartbeats = [...(run.heartbeats ?? []), now];
+  applyLease(run, now, input.leaseMinutes);
+  run.updatedAt = now;
+  run.logs.push({
+    ts: now,
+    level: 'info',
+    message: `Lease heartbeat from ${input.actor}. Extended until ${run.leaseExpires}.`,
+  });
+
+  saveRuns(workspacePath, state);
+  ledger.append(workspacePath, input.actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+    heartbeat: true,
+    lease_expires: run.leaseExpires,
+  });
+  syncRunPrimitive(workspacePath, run, input.actor);
+  return run;
+}
+
+export function reconcileExpiredLeases(
+  workspacePath: string,
+  actor: string,
+): DispatchReconcileResult {
+  const state = loadRuns(workspacePath);
+  const nowMs = Date.now();
+  const nowIso = new Date(nowMs).toISOString();
+  const requeuedRuns: DispatchRun[] = [];
+
+  for (const run of state.runs) {
+    if (run.status !== 'running') continue;
+    if (!run.leaseExpires) continue;
+    const leaseExpiresMs = Date.parse(run.leaseExpires);
+    if (!Number.isFinite(leaseExpiresMs) || leaseExpiresMs > nowMs) continue;
+
+    run.status = 'queued';
+    run.updatedAt = nowIso;
+    run.logs.push({
+      ts: nowIso,
+      level: 'warn',
+      message: `Lease expired at ${run.leaseExpires}. Run returned to queued.`,
+    });
+    clearLease(run);
+    requeuedRuns.push(run);
+  }
+
+  if (requeuedRuns.length > 0) {
+    saveRuns(workspacePath, state);
+    for (const run of requeuedRuns) {
+      ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+        status: run.status,
+        reconciled_expired_lease: true,
+      });
+      syncRunPrimitive(workspacePath, run, actor);
+    }
+  }
+
+  return {
+    reconciledAt: nowIso,
+    inspectedRuns: state.runs.length,
+    requeuedRuns,
+  };
+}
+
+export function handoffRun(
+  workspacePath: string,
+  runId: string,
+  input: DispatchHandoffInput,
+): DispatchHandoffResult {
+  const sourceRun = status(workspacePath, runId);
+  const now = new Date().toISOString();
+  const handoffContext: Record<string, unknown> = {
+    ...(sourceRun.context ?? {}),
+    handoff_from_run_id: sourceRun.id,
+    handoff_from_actor: sourceRun.actor,
+    handoff_initiated_by: input.actor,
+    handoff_reason: input.reason,
+    handoff_at: now,
+  };
+  const created = createRun(workspacePath, {
+    actor: input.to,
+    adapter: input.adapter ?? sourceRun.adapter,
+    objective: sourceRun.objective,
+    context: handoffContext,
+  });
+
+  appendRunLogs(workspacePath, sourceRun.id, input.actor, [{
+    ts: now,
+    level: 'info',
+    message: `Run handed off to ${input.to} as ${created.id}. Reason: ${input.reason}`,
+  }]);
+  appendRunLogs(workspacePath, created.id, input.actor, [{
+    ts: now,
+    level: 'info',
+    message: `Handoff received from ${sourceRun.id} by ${input.actor}. Reason: ${input.reason}`,
+  }]);
+  ledger.append(workspacePath, input.actor, 'handoff', `.workgraph/runs/${sourceRun.id}`, 'run', {
+    from_run_id: sourceRun.id,
+    to_run_id: created.id,
+    to_actor: input.to,
+    reason: input.reason,
+  });
+
+  return {
+    sourceRun: status(workspacePath, sourceRun.id),
+    handoffRun: status(workspacePath, created.id),
+  };
 }
 
 export function logs(workspacePath: string, runId: string): DispatchRun['logs'] {
@@ -233,6 +382,11 @@ function setStatus(
   assertRunStatusTransition(run.status, statusValue, runId);
   const now = new Date().toISOString();
   run.status = statusValue;
+  if (statusValue === 'running') {
+    applyLease(run, now);
+  } else {
+    clearLease(run);
+  }
   run.updatedAt = now;
   run.logs.push({ ts: now, level: 'info', message: logMessage });
   saveRuns(workspacePath, state);
@@ -258,7 +412,7 @@ function loadRuns(workspacePath: string): { version: number; runs: DispatchRun[]
   const parsed = JSON.parse(raw) as { version: number; runs: DispatchRun[] };
   return {
     version: parsed.version ?? 1,
-    runs: parsed.runs ?? [],
+    runs: (parsed.runs ?? []).map(hydrateRun),
   };
 }
 
@@ -289,6 +443,10 @@ function ensureRunPrimitive(workspacePath: string, run: DispatchRun, actor: stri
       status: run.status,
       run_id: run.id,
       owner: run.actor,
+      lease_expires: run.leaseExpires,
+      lease_duration_minutes: run.leaseDurationMinutes,
+      last_heartbeat: latestHeartbeat(run),
+      heartbeat_timestamps: run.heartbeats ?? [],
       tags: ['dispatch'],
     },
     `## Objective\n\n${run.objective}\n`,
@@ -309,6 +467,10 @@ function syncRunPrimitive(workspacePath: string, run: DispatchRun, actor: string
       runtime: run.adapter,
       objective: run.objective,
       owner: run.actor,
+      lease_expires: run.leaseExpires,
+      lease_duration_minutes: run.leaseDurationMinutes,
+      last_heartbeat: latestHeartbeat(run),
+      heartbeat_timestamps: run.heartbeats ?? [],
     },
     renderRunBody(run),
     actor,
@@ -325,11 +487,23 @@ function renderRunBody(run: DispatchRun): string {
     '',
     run.status,
     '',
+    '## Lease',
+    '',
+    run.leaseExpires
+      ? `expires: ${run.leaseExpires} (${run.leaseDurationMinutes ?? DEFAULT_LEASE_MINUTES} min lease)`
+      : 'none',
+    '',
     '## Logs',
     '',
     ...run.logs.slice(-20).map((entry) => `- ${entry.ts} [${entry.level}] ${entry.message}`),
     '',
   ];
+  if ((run.heartbeats ?? []).length > 0) {
+    lines.push('## Heartbeats');
+    lines.push('');
+    lines.push(...(run.heartbeats ?? []).slice(-20).map((ts) => `- ${ts}`));
+    lines.push('');
+  }
   if (run.output) {
     lines.push('## Output');
     lines.push('');
@@ -353,9 +527,40 @@ function renderRunBody(run: DispatchRun): string {
   return lines.join('\n');
 }
 
+function hydrateRun(run: DispatchRun): DispatchRun {
+  return {
+    ...run,
+    leaseDurationMinutes: normalizeLeaseMinutes(run.leaseDurationMinutes),
+    heartbeats: Array.isArray(run.heartbeats) ? run.heartbeats : [],
+  };
+}
+
+function normalizeLeaseMinutes(value: unknown): number {
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return Math.trunc(value);
+  }
+  return DEFAULT_LEASE_MINUTES;
+}
+
+function applyLease(run: DispatchRun, nowIso: string, requestedLeaseMinutes?: number): void {
+  const leaseMinutes = normalizeLeaseMinutes(requestedLeaseMinutes ?? run.leaseDurationMinutes);
+  const expiresAt = new Date(Date.parse(nowIso) + leaseMinutes * 60_000).toISOString();
+  run.leaseDurationMinutes = leaseMinutes;
+  run.leaseExpires = expiresAt;
+}
+
+function clearLease(run: DispatchRun): void {
+  run.leaseExpires = undefined;
+}
+
+function latestHeartbeat(run: DispatchRun): string | undefined {
+  const heartbeats = run.heartbeats ?? [];
+  return heartbeats.length > 0 ? heartbeats[heartbeats.length - 1] : undefined;
+}
+
 const RUN_STATUS_TRANSITIONS: Record<RunStatus, RunStatus[]> = {
   queued: ['running', 'cancelled'],
-  running: ['succeeded', 'failed', 'cancelled'],
+  running: ['queued', 'succeeded', 'failed', 'cancelled'],
   succeeded: [],
   failed: [],
   cancelled: [],

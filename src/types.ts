@@ -70,7 +70,8 @@ export type LedgerOp =
   | 'reopen'
   | 'cancel'
   | 'define'
-  | 'decompose';
+  | 'decompose'
+  | 'handoff';
 
 export interface LedgerEntry {
   ts: string;
@@ -215,6 +216,9 @@ export interface DispatchRun {
   adapter: string;
   objective: string;
   status: RunStatus;
+  leaseExpires?: string;
+  leaseDurationMinutes?: number;
+  heartbeats?: string[];
   idempotencyKey?: string;
   context?: Record<string, unknown>;
   output?: string;
