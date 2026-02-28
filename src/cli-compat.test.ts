@@ -36,6 +36,16 @@ describe('CLI compatibility smoke', () => {
       const createdThreadPath = ((create.data as { thread: { path: string } }).thread.path);
       const createdThreadEtag = String((create.data as { thread: { fields: { etag: string } } }).thread.fields.etag);
 
+      const primitiveUpdate = runCli([
+        'primitive', 'update', createdThreadPath,
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--set', 'priority=high',
+        '--etag', createdThreadEtag,
+        '--json',
+      ]);
+      expect(primitiveUpdate.ok).toBe(true);
+
       const list = runCli(['thread', 'list', '-w', workspacePath, '--json']);
       expect(list.ok).toBe(true);
 
@@ -66,16 +76,6 @@ describe('CLI compatibility smoke', () => {
         '--json',
       ]);
       expect(commandCenter.ok).toBe(true);
-
-      const primitiveUpdate = runCli([
-        'primitive', 'update', createdThreadPath,
-        '-w', workspacePath,
-        '--actor', 'agent-compat',
-        '--set', 'priority=high',
-        '--etag', createdThreadEtag,
-        '--json',
-      ]);
-      expect(primitiveUpdate.ok).toBe(true);
 
       const dispatchCreate = runCli([
         'dispatch', 'create', 'Compatibility dispatch objective',
