@@ -1,0 +1,21 @@
+name: Notify on PR
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify via webhook
+        run: |
+          curl -s -X POST "${{ secrets.OPENCLAW_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "event": "pr_ready",
+              "repo": "${{ github.repository }}",
+              "pr_number": ${{ github.event.pull_request.number }},
+              "title": "${{ github.event.pull_request.title }}",
+              "branch": "${{ github.event.pull_request.head.ref }}",
+              "url": "${{ github.event.pull_request.html_url }}"
+            }' || true
