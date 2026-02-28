@@ -414,7 +414,6 @@ export function reapStaleClaims(
     });
   }
 
-  touchAgentLastSeen(workspacePath, actor);
   return {
     actor,
     scanned: selected.length,
