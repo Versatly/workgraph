@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -19,6 +19,17 @@ function runCli(args: string[]): { ok: boolean; data?: unknown; error?: string }
 }
 
 describe('CLI compatibility smoke', () => {
+  beforeAll(() => {
+    const build = spawnSync('npm', ['run', 'build', '--silent'], {
+      encoding: 'utf-8',
+    });
+    if (build.status !== 0) {
+      throw new Error(
+        `Failed to build CLI for compatibility test.\nstdout:\n${build.stdout}\nstderr:\n${build.stderr}`,
+      );
+    }
+  });
+
   it('keeps existing JSON envelope and legacy command behaviors', () => {
     const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-cli-compat-'));
     try {

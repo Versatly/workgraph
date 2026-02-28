@@ -166,13 +166,14 @@ export function buildWikiLinkGraph(workspacePath: string): WikiGraphIndex {
     for (const ref of allRefs) {
       const target = normalizeWikiRef(ref.rawRef);
       if (!target) continue;
+      const field = 'field' in ref ? ref.field : undefined;
 
       const edge: WikiGraphEdge = {
         from: node,
         to: target,
         type: ref.type,
         source: ref.source,
-        ...(ref.field ? { field: ref.field } : {}),
+        ...(field ? { field } : {}),
       };
       const edgeKey = `${edge.from}|${edge.to}|${edge.type}|${edge.source}|${edge.field ?? ''}`;
       if (edgeDedupe.has(edgeKey)) continue;
@@ -351,7 +352,10 @@ export function graphImpactAnalysis(
   const resolved = resolveNodePath(graph, nodeRef);
   const targetPath = resolved ?? normalizeWikiRef(nodeRef);
   const targetExists = graph.nodes.includes(targetPath);
-  const target = toNode(graph, targetPath, targetExists);
+  const target = {
+    ...toNode(graph, targetPath, targetExists),
+    exists: targetExists,
+  };
 
   if (!targetExists) {
     return {
