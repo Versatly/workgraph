@@ -31,6 +31,7 @@ describe('clawdapus optional integration', () => {
       },
     });
 
+    expect(result.provider).toBe('clawdapus');
     expect(result.replacedExisting).toBe(false);
     expect(result.skill.path).toBe('skills/clawdapus/SKILL.md');
     expect(result.skill.fields.distribution).toBe('clawdapus-optional-integration');

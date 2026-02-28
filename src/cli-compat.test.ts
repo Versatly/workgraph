@@ -80,6 +80,22 @@ describe('CLI compatibility smoke', () => {
         '--json',
       ]);
       expect(skillLoad.ok).toBe(true);
+
+      const integrationList = runCli([
+        'integration', 'list',
+        '-w', workspacePath,
+        '--json',
+      ]);
+      expect(integrationList.ok).toBe(true);
+
+      const integrationInstall = runCli([
+        'integration', 'install', 'clawdapus',
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--source-url', 'data:text/plain,%23%20Clawdapus%0A',
+        '--json',
+      ]);
+      expect(integrationInstall.ok).toBe(true);
     } finally {
       fs.rmSync(workspacePath, { recursive: true, force: true });
     }

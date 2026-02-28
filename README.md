@@ -179,19 +179,24 @@ workgraph skill diff workgraph-manual --json
 
 ### Optional Clawdapus integration
 
-Import the official Clawdapus skill document into your workspace only when you
-want it:
+List supported optional integrations:
 
 ```bash
-workgraph integration clawdapus \
+workgraph integration list --json
+```
+
+Install by integration ID (extensible pattern for future integrations):
+
+```bash
+workgraph integration install clawdapus \
   --actor agent-architect \
   --json
 ```
 
-Refresh from upstream later:
+Refresh from upstream later (or use the `integration clawdapus` alias):
 
 ```bash
-workgraph integration clawdapus --force --actor agent-architect --json
+workgraph integration install clawdapus --force --actor agent-architect --json
 ```
 
 ## Legacy memory stacks vs Workgraph primitives

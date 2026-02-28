@@ -722,6 +722,40 @@ const integrationCmd = program
 
 addWorkspaceOption(
   integrationCmd
+    .command('list')
+    .description('List supported optional integrations')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => ({
+      integrations: workgraph.integration.listIntegrations(),
+    }),
+    (result) => result.integrations.map((integration) =>
+      `${integration.id} (${integration.defaultTitle}) -> ${integration.defaultSourceUrl}`)
+  )
+);
+
+addWorkspaceOption(
+  integrationCmd
+    .command('install <integrationName>')
+    .description('Install an optional integration into this workspace')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--owner <name>', 'Skill owner override')
+    .option('--title <title>', 'Skill title to store in workgraph')
+    .option('--source-url <url>', 'Source URL override for integration content')
+    .option('--force', 'Overwrite an existing imported integration skill')
+    .option('--json', 'Emit structured JSON output')
+).action((integrationName, opts) =>
+  runCommand(
+    opts,
+    () => installNamedIntegration(resolveWorkspacePath(opts), integrationName, opts),
+    renderInstalledIntegrationResult,
+  )
+);
+
+addWorkspaceOption(
+  integrationCmd
     .command('clawdapus')
     .description('Import Clawdapus SKILL.md into this workspace')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
@@ -737,21 +771,8 @@ addWorkspaceOption(
 ).action((opts) =>
   runCommand(
     opts,
-    async () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.clawdapus.installClawdapusSkill(workspacePath, {
-        actor: opts.actor,
-        owner: opts.owner,
-        title: opts.title,
-        sourceUrl: opts.sourceUrl,
-        force: !!opts.force,
-      });
-    },
-    (result) => [
-      `${result.replacedExisting ? 'Updated' : 'Installed'} Clawdapus integration skill: ${result.skill.path}`,
-      `Source: ${result.sourceUrl}`,
-      `Status: ${String(result.skill.fields.status)}`,
-    ],
+    () => installNamedIntegration(resolveWorkspacePath(opts), 'clawdapus', opts),
+    renderInstalledIntegrationResult,
   )
 );
 
@@ -1740,6 +1761,36 @@ function parseSetPairs(pairs: string[]): Record<string, unknown> {
 function csv(value?: string): string[] | undefined {
   if (!value) return undefined;
   return String(value).split(',').map(s => s.trim()).filter(Boolean);
+}
+
+type IntegrationInstallCliOptions = JsonCapableOptions & {
+  actor: string;
+  owner?: string;
+  title?: string;
+  sourceUrl?: string;
+  force?: boolean;
+};
+
+function installNamedIntegration(
+  workspacePath: string,
+  integrationName: string,
+  opts: IntegrationInstallCliOptions,
+): Promise<workgraph.InstallSkillIntegrationResult> {
+  return workgraph.integration.installIntegration(workspacePath, integrationName, {
+    actor: opts.actor,
+    owner: opts.owner,
+    title: opts.title,
+    sourceUrl: opts.sourceUrl,
+    force: !!opts.force,
+  });
+}
+
+function renderInstalledIntegrationResult(result: workgraph.InstallSkillIntegrationResult): string[] {
+  return [
+    `${result.replacedExisting ? 'Updated' : 'Installed'} ${result.provider} integration skill: ${result.skill.path}`,
+    `Source: ${result.sourceUrl}`,
+    `Status: ${String(result.skill.fields.status)}`,
+  ];
 }
 
 function parseScalar(value: string): unknown {
