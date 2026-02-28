@@ -13,6 +13,7 @@ export * as bases from './bases.js';
 export * as skill from './skill.js';
 export * as query from './query.js';
 export * as orientation from './orientation.js';
+export * as lens from './lens.js';
 export * as graph from './graph.js';
 export * as board from './board.js';
 export * as policy from './policy.js';

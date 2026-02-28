@@ -1,6 +1,6 @@
 {
   "name": "@versatly/workgraph",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Agent-first workgraph workspace for multi-agent coordination with dynamic primitives, append-only ledger, and markdown-native storage.",
   "workspaces": [
     "packages/*"

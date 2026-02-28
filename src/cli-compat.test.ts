@@ -163,6 +163,21 @@ describe('CLI compatibility smoke', () => {
         '--json',
       ]);
       expect(agentList.ok).toBe(true);
+      const lensList = runCli([
+        'lens', 'list',
+        '-w', workspacePath,
+        '--json',
+      ]);
+      expect(lensList.ok).toBe(true);
+
+      const lensShow = runCli([
+        'lens', 'show', 'my-work',
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--output', 'ops/lenses/my-work.md',
+        '--json',
+      ]);
+      expect(lensShow.ok).toBe(true);
 
       const skillWrite = runCli([
         'skill', 'write', 'compat-skill',
