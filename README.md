@@ -15,6 +15,7 @@ Agent-first workgraph workspace for multi-agent collaboration.
 - Native skill primitive lifecycle (`workgraph skill write/load/propose/promote`)
 - Primitive-registry manifest + auto-generated `.base` files
 - Orientation loop commands (`workgraph status/brief/checkpoint/intake`)
+- Deterministic context lenses (`workgraph lens list/show`) for real-time situational awareness
 - Multi-filter primitive query (`workgraph query ...`)
 - Core + QMD-compatible keyword search (`workgraph search ...`)
 - Obsidian Kanban board generation/sync (`workgraph board generate|sync`)
@@ -61,6 +62,8 @@ workgraph thread create "Ship command center" \
 workgraph thread next --claim --actor agent-worker --json
 workgraph status --json
 workgraph brief --actor agent-worker --json
+workgraph lens list --json
+workgraph lens show my-work --actor agent-worker --json
 workgraph query --type thread --status open --limit 10 --json
 workgraph search "auth" --mode auto --json
 workgraph checkpoint "Completed API layer" --next "implement tests" --actor agent-worker --json

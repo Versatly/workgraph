@@ -186,6 +186,63 @@ export interface WorkgraphBrief {
   recentActivity: LedgerEntry[];
 }
 
+export type WorkgraphLensId =
+  | 'my-work'
+  | 'team-risk'
+  | 'customer-health'
+  | 'exec-brief';
+
+export interface WorkgraphLensDescriptor {
+  id: WorkgraphLensId;
+  description: string;
+}
+
+export interface WorkgraphLensOptions {
+  actor?: string;
+  lookbackHours?: number;
+  staleHours?: number;
+  limit?: number;
+}
+
+export interface WorkgraphLensItem {
+  title: string;
+  path?: string;
+  status?: string;
+  priority?: string;
+  owner?: string;
+  detail?: string;
+  ageHours?: number;
+}
+
+export interface WorkgraphLensSection {
+  id: string;
+  title: string;
+  items: WorkgraphLensItem[];
+}
+
+export interface WorkgraphLensResult {
+  lens: WorkgraphLensId;
+  generatedAt: string;
+  actor?: string;
+  options: {
+    lookbackHours: number;
+    staleHours: number;
+    limit: number;
+  };
+  metrics: Record<string, number>;
+  sections: WorkgraphLensSection[];
+  markdown: string;
+}
+
+export interface WorkgraphMaterializeLensOptions extends WorkgraphLensOptions {
+  outputPath: string;
+}
+
+export interface WorkgraphMaterializedLensResult extends WorkgraphLensResult {
+  outputPath: string;
+  created: boolean;
+}
+
 // ---------------------------------------------------------------------------
 // Policy and dispatch contracts
 // ---------------------------------------------------------------------------

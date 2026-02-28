@@ -1075,6 +1075,81 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// lenses
+// ============================================================================
+
+const lensCmd = program
+  .command('lens')
+  .description('Generate deterministic context lenses for situational awareness');
+
+addWorkspaceOption(
+  lensCmd
+    .command('list')
+    .description('List built-in context lenses')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => ({
+      lenses: workgraph.lens.listContextLenses(),
+    }),
+    (result) => result.lenses.map((lens) => `lens://${lens.id} - ${lens.description}`)
+  )
+);
+
+addWorkspaceOption(
+  lensCmd
+    .command('show <lensId>')
+    .description('Generate one context lens snapshot')
+    .option('-a, --actor <name>', 'Actor identity for actor-scoped lenses', DEFAULT_ACTOR)
+    .option('--lookback-hours <hours>', 'Lookback window in hours', '24')
+    .option('--stale-hours <hours>', 'Stale threshold in hours', '24')
+    .option('--limit <n>', 'Maximum items per section', '10')
+    .option('-o, --output <path>', 'Write lens markdown to workspace-relative output path')
+    .option('--json', 'Emit structured JSON output')
+).action((lensId, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const lensOptions = {
+        actor: opts.actor,
+        lookbackHours: parsePositiveNumberOption(opts.lookbackHours, 'lookback-hours'),
+        staleHours: parsePositiveNumberOption(opts.staleHours, 'stale-hours'),
+        limit: parsePositiveIntegerOption(opts.limit, 'limit'),
+      };
+      if (opts.output) {
+        return workgraph.lens.materializeContextLens(workspacePath, lensId, {
+          ...lensOptions,
+          outputPath: opts.output,
+        });
+      }
+      return workgraph.lens.generateContextLens(workspacePath, lensId, lensOptions);
+    },
+    (result) => {
+      const metricSummary = Object.entries(result.metrics)
+        .map(([metric, value]) => `${metric}=${value}`)
+        .join(' ');
+      const sectionSummary = result.sections
+        .map((section) => `${section.id}:${section.items.length}`)
+        .join(' ');
+      const lines = [
+        `Lens: ${result.lens}`,
+        `Generated: ${result.generatedAt}`,
+        ...(result.actor ? [`Actor: ${result.actor}`] : []),
+        `Metrics: ${metricSummary || 'none'}`,
+        `Sections: ${sectionSummary || 'none'}`,
+      ];
+      if (isMaterializedLensResult(result)) {
+        lines.push(`Saved markdown: ${result.outputPath}`);
+        return lines;
+      }
+      return [...lines, '', ...result.markdown.split('\n')];
+    },
+  )
+);
+
+// ============================================================================
 // query/search
 // ============================================================================
 
@@ -1812,6 +1887,28 @@ function parseScalar(value: string): unknown {
   } catch {
     return value;
   }
+}
+
+function parsePositiveNumberOption(value: unknown, optionName: string): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`Invalid --${optionName}. Expected a positive number.`);
+  }
+  return parsed;
+}
+
+function parsePositiveIntegerOption(value: unknown, optionName: string): number {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`Invalid --${optionName}. Expected a positive integer.`);
+  }
+  return parsed;
+}
+
+function isMaterializedLensResult(
+  value: workgraph.WorkgraphLensResult | workgraph.WorkgraphMaterializedLensResult,
+): value is workgraph.WorkgraphMaterializedLensResult {
+  return typeof (value as workgraph.WorkgraphMaterializedLensResult).outputPath === 'string';
 }
 
 function normalizeRunStatus(status: string): 'running' | 'succeeded' | 'failed' | 'cancelled' {
