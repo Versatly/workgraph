@@ -161,6 +161,87 @@ export function release(
   }, undefined, actor);
 }
 
+export function heartbeat(
+  workspacePath: string,
+  threadPath: string,
+  actor: string,
+  leaseMinutes: number = 15,
+): PrimitiveInstance {
+  const thread = store.read(workspacePath, threadPath);
+  if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  if (thread.fields.status !== 'active') {
+    throw new Error(`Cannot heartbeat thread in "${String(thread.fields.status)}" state. Only active threads can be heartbeated.`);
+  }
+  const owner = ledger.currentOwner(workspacePath, threadPath);
+  if (owner !== actor) {
+    throw new Error(`Thread heartbeat denied: "${threadPath}" is owned by "${owner ?? 'nobody'}", not "${actor}".`);
+  }
+
+  const safeLeaseMinutes = Number.isFinite(leaseMinutes) && leaseMinutes > 0
+    ? Math.floor(leaseMinutes)
+    : 15;
+  const now = new Date();
+  const leaseUntil = new Date(now.getTime() + safeLeaseMinutes * 60_000).toISOString();
+  ledger.append(workspacePath, actor, 'update', threadPath, 'thread', {
+    heartbeat: true,
+    lease_minutes: safeLeaseMinutes,
+    lease_until: leaseUntil,
+  });
+  return store.update(
+    workspacePath,
+    threadPath,
+    {
+      last_heartbeat_at: now.toISOString(),
+      claim_lease_until: leaseUntil,
+    },
+    undefined,
+    actor,
+  );
+}
+
+export function handoff(
+  workspacePath: string,
+  threadPath: string,
+  fromActor: string,
+  toActor: string,
+  note?: string,
+): PrimitiveInstance {
+  const normalizedToActor = toActor.trim();
+  if (!normalizedToActor) {
+    throw new Error('Handoff target actor must be a non-empty string.');
+  }
+
+  const existing = store.read(workspacePath, threadPath);
+  if (!existing) throw new Error(`Thread not found: ${threadPath}`);
+  if (existing.fields.status !== 'active') {
+    throw new Error(`Cannot handoff thread in "${String(existing.fields.status)}" state. Only active threads can be handed off.`);
+  }
+  assertOwner(workspacePath, threadPath, fromActor);
+
+  const handoffReason = note?.trim()
+    ? `handoff to ${normalizedToActor}: ${note.trim()}`
+    : `handoff to ${normalizedToActor}`;
+  release(workspacePath, threadPath, fromActor, handoffReason);
+  const claimed = claim(workspacePath, threadPath, normalizedToActor);
+  const now = new Date().toISOString();
+
+  const extraBody = note?.trim()
+    ? `${claimed.body}\n\n## Handoff\n\nTransferred from ${fromActor} to ${normalizedToActor} at ${now}.\n\n${note.trim()}\n`
+    : claimed.body;
+  return store.update(
+    workspacePath,
+    threadPath,
+    {
+      handoff_from: fromActor,
+      handoff_to: normalizedToActor,
+      last_handoff_at: now,
+      claim_lease_until: undefined,
+    },
+    extraBody,
+    fromActor,
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Status transitions
 // ---------------------------------------------------------------------------

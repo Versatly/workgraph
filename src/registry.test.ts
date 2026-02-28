@@ -25,6 +25,9 @@ describe('registry', () => {
     expect(reg.types.lesson).toBeDefined();
     expect(reg.types.fact).toBeDefined();
     expect(reg.types.agent).toBeDefined();
+    expect(reg.types.person).toBeDefined();
+    expect(reg.types.project).toBeDefined();
+    expect(reg.types.client).toBeDefined();
     expect(reg.types.skill).toBeDefined();
     expect(reg.types.onboarding).toBeDefined();
     expect(reg.types.thread.builtIn).toBe(true);

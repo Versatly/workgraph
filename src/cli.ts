@@ -1718,13 +1718,34 @@ addWorkspaceOption(
     .description('Serve stdio MCP tools/resources for this workspace')
     .option('-a, --actor <name>', 'Default actor for MCP write tools', DEFAULT_ACTOR)
     .option('--read-only', 'Disable all MCP write tools')
+    .option('--sse-port <port>', 'Optional SSE event stream port')
+    .option('--sse-host <host>', 'SSE bind host (default: 127.0.0.1)')
+    .option('--sse-path <path>', 'SSE endpoint path (default: /events)')
+    .option('--sse-poll-ms <ms>', 'Ledger poll interval for SSE stream (default: 250ms)')
+    .option('--sse-heartbeat-ms <ms>', 'SSE heartbeat interval (default: 15000ms)')
 ).action(async (opts) => {
   const workspacePath = resolveWorkspacePath(opts);
   console.error(`Starting MCP server for workspace: ${workspacePath}`);
+  const ssePort = opts.ssePort !== undefined ? Number.parseInt(String(opts.ssePort), 10) : undefined;
+  const ssePollMs = opts.ssePollMs !== undefined ? Number.parseInt(String(opts.ssePollMs), 10) : undefined;
+  const sseHeartbeatMs = opts.sseHeartbeatMs !== undefined
+    ? Number.parseInt(String(opts.sseHeartbeatMs), 10)
+    : undefined;
+  const sseEnabled = ssePort !== undefined || opts.sseHost !== undefined || opts.ssePath !== undefined;
   await workgraph.mcpServer.startWorkgraphMcpServer({
     workspacePath,
     defaultActor: opts.actor,
     readOnly: !!opts.readOnly,
+    sse: sseEnabled
+      ? {
+          enabled: true,
+          host: opts.sseHost,
+          port: ssePort,
+          path: opts.ssePath,
+          pollIntervalMs: ssePollMs,
+          heartbeatMs: sseHeartbeatMs,
+        }
+      : undefined,
   });
 });
 
