@@ -23,6 +23,7 @@ Agent-first workgraph workspace for multi-agent collaboration.
 - Policy party registry and sensitive transition gates
 - Programmatic dispatch contract (`workgraph dispatch ...`) with explicit status transitions
 - Trigger dispatch bridge (`workgraph trigger fire ...`) with idempotency keying
+- Distributed gateway + worker loops for multi-machine agent coordination (`workgraph gateway`, `workgraph worker`)
 - JSON-friendly CLI for agent orchestration
 
 No memory-category scaffolding, no qmd dependency, no observational-memory pipeline.
@@ -80,6 +81,8 @@ workgraph dispatch create-execute "Close all ready threads in platform space" \
 workgraph trigger fire triggers/escalate-blocked.md --event-key "thread-blocked-001" --actor agent-lead --json
 workgraph onboarding update onboarding/onboarding-for-agent-architect.md --status paused --actor agent-lead --json
 workgraph mcp serve -w /path/to/workspace --actor agent-ops --read-only
+workgraph gateway serve -w /path/to/workspace --auth-token "$WORKGRAPH_GATEWAY_TOKEN"
+workgraph worker run --gateway-url "http://127.0.0.1:7331" --actor agent-worker-1 --auth-token "$WORKGRAPH_GATEWAY_TOKEN" --max-cycles 200 --json
 workgraph ledger show --count 20 --json
 workgraph command-center --output "ops/Command Center.md" --json
 workgraph bases generate --refresh-registry --json

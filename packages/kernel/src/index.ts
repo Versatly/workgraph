@@ -8,6 +8,8 @@ export * as query from '../../../src/query.js';
 export * as orientation from '../../../src/orientation.js';
 export * as lens from '../../../src/lens.js';
 export * as graph from '../../../src/graph.js';
+export * as gateway from '../../../src/gateway.js';
+export * as worker from '../../../src/worker.js';
 export * as queryEngine from './query/engine.js';
 export * as queryFilters from './query/filters.js';
 export * as orientationStatus from './orientation/status.js';

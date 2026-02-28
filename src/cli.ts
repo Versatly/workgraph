@@ -1780,6 +1780,83 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// gateway / worker
+// ============================================================================
+
+const gatewayCmd = program
+  .command('gateway')
+  .description('Run multi-machine gateway for distributed agent coordination');
+
+addWorkspaceOption(
+  gatewayCmd
+    .command('serve')
+    .description('Serve HTTP API + event stream for one authoritative workspace')
+    .option('--host <host>', 'Bind host', '127.0.0.1')
+    .option('--port <port>', 'Bind port', '7331')
+    .option('--auth-token <token>', 'Require this token for API requests')
+    .option('--read-only', 'Disable all mutating endpoints')
+).action(async (opts) => {
+  const workspacePath = resolveWorkspacePath(opts);
+  const authToken = opts.authToken || process.env.WORKGRAPH_GATEWAY_TOKEN;
+  const port = parsePositiveIntegerOption(opts.port, 'port');
+  const runtime = await workgraph.gateway.startGatewayServer({
+    workspacePath,
+    host: opts.host,
+    port,
+    authToken,
+    readOnly: !!opts.readOnly,
+    defaultActor: DEFAULT_ACTOR,
+  });
+  console.error(`Workgraph gateway running at ${runtime.baseUrl}`);
+  console.error(`Workspace: ${workspacePath}`);
+  if (authToken) {
+    console.error('Auth: enabled (Authorization: Bearer <token> or X-Workgraph-Token)');
+  } else {
+    console.error('Auth: disabled');
+  }
+  // Keep process alive until interrupted.
+  await new Promise<void>(() => {});
+});
+
+const workerCmd = program
+  .command('worker')
+  .description('Run a gateway-connected autonomous worker loop');
+
+addWorkspaceOption(
+  workerCmd
+    .command('run')
+    .description('Claim and complete threads through a remote Workgraph gateway')
+    .option('-a, --actor <name>', 'Agent identity', DEFAULT_ACTOR)
+    .option('--gateway-url <url>', 'Gateway base URL', 'http://127.0.0.1:7331')
+    .option('--auth-token <token>', 'Gateway auth token')
+    .option('--poll-ms <ms>', 'Idle poll interval in milliseconds', '500')
+    .option('--max-cycles <n>', 'Stop after N cycles (omit for long-running worker)')
+    .option('--space <spaceRef>', 'Restrict claims to one space')
+    .option('--checkpoint-every <n>', 'Create checkpoint every N completions', '0')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => workgraph.worker.runGatewayWorkerLoop({
+      gatewayUrl: opts.gatewayUrl,
+      actor: opts.actor,
+      authToken: opts.authToken || process.env.WORKGRAPH_GATEWAY_TOKEN,
+      pollIntervalMs: parsePositiveIntegerOption(opts.pollMs, 'poll-ms'),
+      maxCycles: opts.maxCycles ? parsePositiveIntegerOption(opts.maxCycles, 'max-cycles') : undefined,
+      checkpointEvery: parseNonNegativeIntegerOption(opts.checkpointEvery, 'checkpoint-every'),
+      space: opts.space,
+    }),
+    (result) => [
+      `Worker: ${result.actor}`,
+      `Gateway: ${result.gatewayUrl}`,
+      `Cycles=${result.cycles} Claimed=${result.claimed} Completed=${result.completed} Idle=${result.idle}`,
+      `Checkpoints=${result.checkpoints} Errors=${result.errors}`,
+      ...(result.lastError ? [`Last error: ${result.lastError}`] : []),
+    ],
+  )
+);
+
+// ============================================================================
 // mcp
 // ============================================================================
 
@@ -1901,6 +1978,14 @@ function parsePositiveIntegerOption(value: unknown, optionName: string): number 
   const parsed = Number.parseInt(String(value), 10);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`Invalid --${optionName}. Expected a positive integer.`);
+  }
+  return parsed;
+}
+
+function parseNonNegativeIntegerOption(value: unknown, optionName: string): number {
+  const parsed = Number.parseInt(String(value), 10);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Invalid --${optionName}. Expected a non-negative integer.`);
   }
   return parsed;
 }
