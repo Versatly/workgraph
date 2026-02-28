@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -139,6 +139,54 @@ describe('trigger engine', () => {
 
     const state = triggerEngine.loadTriggerState(workspacePath);
     expect(state.triggers[cascadeTrigger.path]?.fireCount).toBe(1);
+  });
+
+  it('uses ledger offset cursors so same-timestamp events are not skipped', () => {
+    vi.useFakeTimers();
+    try {
+      const frozenNow = new Date('2026-01-01T00:00:00.000Z');
+      vi.setSystemTime(frozenNow);
+
+      const eventTrigger = store.create(workspacePath, 'trigger', {
+        title: 'Follow-up on every completed thread',
+        status: 'active',
+        condition: { type: 'event', event: 'thread-complete' },
+        action: {
+          type: 'create-thread',
+          title: 'Offset follow-up {{matched_event_latest_target}}',
+          goal: 'Verify event cursor offset handling',
+          tags: ['offset-cursor'],
+        },
+        cooldown: 0,
+      }, '# Trigger\n', 'system');
+
+      const firstThread = thread.createThread(workspacePath, 'Seed completion', 'Initial completion event', 'agent-seed');
+      thread.claim(workspacePath, firstThread.path, 'agent-seed');
+      thread.done(workspacePath, firstThread.path, 'agent-seed', 'Seed completed');
+
+      const firstCycle = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system', now: frozenNow });
+      expect(firstCycle.fired).toBe(0);
+      const firstState = triggerEngine.loadTriggerState(workspacePath);
+      const firstOffset = firstState.triggers[eventTrigger.path]?.lastEventCursorOffset;
+      expect(typeof firstOffset).toBe('number');
+      expect((firstOffset ?? 0) > 0).toBe(true);
+
+      const secondThread = thread.createThread(workspacePath, 'Same-ts completion', 'Second completion at identical timestamp', 'agent-seed');
+      thread.claim(workspacePath, secondThread.path, 'agent-seed');
+      thread.done(workspacePath, secondThread.path, 'agent-seed', 'Second completed');
+
+      const secondCycle = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system', now: frozenNow });
+      expect(secondCycle.fired).toBe(1);
+      expect(store.list(workspacePath, 'thread').some((entry) =>
+        String(entry.fields.title).startsWith('Offset follow-up'))
+      ).toBe(true);
+
+      const secondState = triggerEngine.loadTriggerState(workspacePath);
+      const secondOffset = secondState.triggers[eventTrigger.path]?.lastEventCursorOffset;
+      expect((secondOffset ?? 0) > (firstOffset ?? 0)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('auto-synthesis trigger fires when threshold of new tagged facts is met', () => {

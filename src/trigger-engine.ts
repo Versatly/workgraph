@@ -27,6 +27,8 @@ interface TriggerRuntimeState {
   state?: TriggerRuntimeStatus;
   lastResult?: Record<string, unknown>;
   lastEventCursorTs?: string;
+  lastEventCursorHash?: string;
+  lastEventCursorOffset?: number;
   lastFileScanTs?: string;
   lastCronBucket?: string;
   synthesisCursorTs?: string;
@@ -246,7 +248,15 @@ export function runTriggerEngineCycle(
   const intervalSeconds = normalizeInt(options.intervalSeconds, DEFAULT_ENGINE_INTERVAL_SECONDS, 1);
   const state = loadTriggerState(workspacePath);
   const triggers = listNormalizedTriggers(workspacePath);
-  const ledgerEntries = ledger.readAll(workspacePath);
+  const requiresLedgerRead = triggers.some((trigger) =>
+    trigger.status === 'active' && (
+      trigger.condition?.type === 'event'
+      || trigger.condition?.type === 'thread-complete'
+    )
+  );
+  const ledgerEntries = requiresLedgerRead
+    ? ledger.readAll(workspacePath)
+    : [];
 
   let fired = 0;
   let errors = 0;
@@ -890,26 +900,33 @@ function evaluateEventCondition(input: {
   ledgerEntries: ReturnType<typeof ledger.readAll>;
 }, eventTypeRaw: string): TriggerConditionDecision {
   const eventType = eventTypeRaw.toLowerCase();
-  const latestTs = input.ledgerEntries[input.ledgerEntries.length - 1]?.ts;
-  if (!input.runtime.lastEventCursorTs) {
-    input.runtime.lastEventCursorTs = latestTs ?? input.now.toISOString();
+  const totalEntries = input.ledgerEntries.length;
+  const latestEntry = input.ledgerEntries[totalEntries - 1];
+
+  if (input.runtime.lastEventCursorOffset === undefined) {
+    input.runtime.lastEventCursorOffset = deriveEventCursorOffset(input.ledgerEntries, input.runtime);
+    input.runtime.lastEventCursorTs = latestEntry?.ts ?? input.now.toISOString();
+    input.runtime.lastEventCursorHash = latestEntry?.hash;
     return {
       matched: false,
-      reason: `Initialized event cursor for ${eventType}.`,
+      reason: `Initialized event cursor for ${eventType} at offset ${input.runtime.lastEventCursorOffset}.`,
     };
   }
 
-  const cursor = input.runtime.lastEventCursorTs;
-  const newEntries = input.ledgerEntries.filter((entry) => entry.ts > cursor);
+  const cursorOffset = clampEventCursorOffset(input.runtime.lastEventCursorOffset, totalEntries);
+  const newEntries = input.ledgerEntries.slice(cursorOffset);
   if (newEntries.length === 0) {
     return {
       matched: false,
-      reason: `No new events for ${eventType} since ${cursor}.`,
+      reason: `No new events for ${eventType} since ledger offset ${cursorOffset}.`,
     };
   }
 
   const matching = newEntries.filter((entry) => ledgerEntryMatchesEventType(entry, eventType));
-  input.runtime.lastEventCursorTs = newEntries[newEntries.length - 1]!.ts;
+  const latestProcessed = newEntries[newEntries.length - 1]!;
+  input.runtime.lastEventCursorOffset = totalEntries;
+  input.runtime.lastEventCursorTs = latestProcessed.ts;
+  input.runtime.lastEventCursorHash = latestProcessed.hash;
 
   if (matching.length === 0) {
     return {
@@ -930,6 +947,53 @@ function evaluateEventCondition(input: {
       matched_event_latest_type: latest.type,
     },
   };
+}
+
+function deriveEventCursorOffset(
+  entries: ReturnType<typeof ledger.readAll>,
+  runtime: TriggerRuntimeState,
+): number {
+  if (entries.length === 0) return 0;
+  if (runtime.lastEventCursorOffset !== undefined) {
+    return clampEventCursorOffset(runtime.lastEventCursorOffset, entries.length);
+  }
+
+  const cursorTs = typeof runtime.lastEventCursorTs === 'string'
+    ? runtime.lastEventCursorTs.trim()
+    : '';
+  if (!cursorTs) return entries.length;
+
+  const cursorHash = typeof runtime.lastEventCursorHash === 'string'
+    ? runtime.lastEventCursorHash.trim()
+    : '';
+  if (cursorHash) {
+    const hashIdx = findLastEntryIndex(entries, (entry) =>
+      entry.ts === cursorTs && String(entry.hash ?? '') === cursorHash
+    );
+    if (hashIdx !== -1) return hashIdx + 1;
+  }
+
+  const sameTsIdx = findLastEntryIndex(entries, (entry) => entry.ts === cursorTs);
+  if (sameTsIdx !== -1) return sameTsIdx + 1;
+
+  const firstNewerIdx = entries.findIndex((entry) => entry.ts > cursorTs);
+  if (firstNewerIdx !== -1) return firstNewerIdx;
+  return entries.length;
+}
+
+function clampEventCursorOffset(offset: number, totalEntries: number): number {
+  if (!Number.isFinite(offset)) return totalEntries;
+  return Math.min(totalEntries, Math.max(0, Math.trunc(offset)));
+}
+
+function findLastEntryIndex(
+  entries: ReturnType<typeof ledger.readAll>,
+  predicate: (entry: ReturnType<typeof ledger.readAll>[number]) => boolean,
+): number {
+  for (let idx = entries.length - 1; idx >= 0; idx -= 1) {
+    if (predicate(entries[idx]!)) return idx;
+  }
+  return -1;
 }
 
 function evaluateFileWatchCondition(input: {
