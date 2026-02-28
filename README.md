@@ -18,7 +18,7 @@ Agent-first workgraph workspace for multi-agent collaboration.
 - Multi-filter primitive query (`workgraph query ...`)
 - Core + QMD-compatible keyword search (`workgraph search ...`)
 - Obsidian Kanban board generation/sync (`workgraph board generate|sync`)
-- Wiki-link graph indexing and hygiene reports (`workgraph graph index|hygiene`)
+- Wiki-link graph intelligence (`workgraph graph index|hygiene|neighborhood|impact|context|edges|export`)
 - Policy party registry and sensitive transition gates
 - Programmatic dispatch contract (`workgraph dispatch ...`) with explicit status transitions
 - Trigger dispatch bridge (`workgraph trigger fire ...`) with idempotency keying
@@ -66,7 +66,11 @@ workgraph search "auth" --mode auto --json
 workgraph checkpoint "Completed API layer" --next "implement tests" --actor agent-worker --json
 workgraph board generate --output "ops/Workgraph Board.md" --json
 workgraph graph hygiene --json
-workgraph graph neighbors context-nodes/context-node-1 --json
+workgraph graph neighborhood ship-feature --depth 2 --json
+workgraph graph impact ship-feature --json
+workgraph graph context ship-feature --budget 2000 --json
+workgraph graph edges ship-feature --json
+workgraph graph export ship-feature --depth 2 --format md --json
 workgraph dispatch create "Review blockers" --actor agent-lead --json
 workgraph dispatch mark run_123 --status succeeded --output "Review complete" --actor agent-lead --json
 workgraph dispatch create-execute "Close all ready threads in platform space" \
@@ -147,6 +151,28 @@ workgraph bases generate --json
 
 # Include non-canonical (agent-defined) primitives
 workgraph bases generate --all --refresh-registry --json
+```
+
+### Graph intelligence workflows
+
+```bash
+# Build/refresh graph index first (optional but useful)
+workgraph graph index --json
+
+# Multi-hop neighborhood around a primitive slug/path
+workgraph graph neighborhood ship-feature --depth 2 --json
+
+# Reverse-link blast radius (what references this primitive)
+workgraph graph impact ship-feature --json
+
+# Auto-assemble markdown context bundle within token budget (chars/4)
+workgraph graph context ship-feature --budget 2000 --json
+
+# Inspect typed relationship edges for one primitive
+workgraph graph edges ship-feature --json
+
+# Export a markdown subgraph for handoff/sharing
+workgraph graph export ship-feature --depth 2 --format md --json
 ```
 
 ### Ledger query, blame, and tamper detection
