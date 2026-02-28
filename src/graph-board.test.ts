@@ -46,7 +46,7 @@ describe('graph index and board generation', () => {
   it('indexes wiki-links and reports hygiene findings', () => {
     fs.writeFileSync(
       path.join(workspacePath, 'alpha.md'),
-      '# Alpha\n\nLinks: [[beta]] [[missing-note]]\n',
+      '# Alpha\n\nLinks: [[beta#Section]] [[missing-note|Missing Note]]\n',
       'utf-8',
     );
     fs.writeFileSync(
@@ -73,6 +73,7 @@ describe('graph index and board generation', () => {
     expect(neighborhood.exists).toBe(true);
     expect(neighborhood.outgoing).toContain('beta.md');
     expect(neighborhood.outgoing).toContain('missing-note.md');
+    expect(neighborhood.outgoing).not.toContain('beta#Section.md');
     expect(neighborhood.incoming).toContain('beta.md');
   });
 });

@@ -227,8 +227,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
       proposed_at:  { type: 'date' },
       promoted_at:  { type: 'date' },
       depends_on:   { type: 'list', default: [], description: 'Skill dependencies by slug or path' },
-      distribution: { type: 'string', default: 'tailscale-shared-vault', description: 'Distribution channel for skill usage' },
-      tailscale_path: { type: 'string', description: 'Shared vault path over Tailscale' },
+      distribution: { type: 'string', default: 'shared-vault', description: 'Distribution channel for skill usage' },
       tags:         { type: 'list', default: [] },
       created:      { type: 'date', required: true },
       updated:      { type: 'date', required: true },
@@ -479,7 +478,24 @@ function ensureBuiltIns(registry: Registry): Registry {
   for (const t of BUILT_IN_TYPES) {
     if (!registry.types[t.name]) {
       registry.types[t.name] = t;
+      continue;
     }
+    const existing = registry.types[t.name];
+    if (existing.builtIn) {
+      registry.types[t.name] = {
+        ...existing,
+        description: t.description,
+        directory: t.directory,
+        fields: {
+          ...existing.fields,
+          ...t.fields,
+        },
+      };
+    }
+  }
+  // Remove deprecated skill transport field to keep schema infrastructure-agnostic.
+  if (registry.types.skill?.builtIn && 'tailscale_path' in registry.types.skill.fields) {
+    delete registry.types.skill.fields.tailscale_path;
   }
   return registry;
 }
