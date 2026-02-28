@@ -83,6 +83,10 @@ describe('context lenses', () => {
       priority: 'high',
       tags: ['customer'],
     });
+    thread.createThread(workspacePath, 'Customer migration follow-up', 'Complete migration checklist', 'agent-lead', {
+      priority: 'medium',
+      tags: ['customer'],
+    });
     thread.claim(workspacePath, 'threads/critical-dependency-outage.md', 'agent-risk');
     thread.block(
       workspacePath,
