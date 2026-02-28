@@ -3,7 +3,7 @@
  *
  * Supported field syntax:
  * - "*" (any value)
- * - "*/n" (step)
+ * - step syntax (for example, star-slash-5 to mean every 5 units)
  * - "a,b,c" (list)
  * - "a-b" (range)
  * - "a-b/n" (range with step)
