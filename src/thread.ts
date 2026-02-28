@@ -4,6 +4,7 @@
 
 import * as ledger from './ledger.js';
 import * as store from './store.js';
+import * as triggerEngine from './trigger-engine.js';
 import type { PrimitiveInstance, ThreadStatus } from './types.js';
 import { THREAD_STATUS_TRANSITIONS } from './types.js';
 
@@ -227,9 +228,18 @@ export function done(
     ? `${thread.body}\n\n## Output\n\n${output}\n`
     : thread.body;
 
-  return store.update(workspacePath, threadPath, {
+  const updated = store.update(workspacePath, threadPath, {
     status: 'done',
   }, newBody, actor);
+
+  // Cascade trigger failures should not roll back a successful thread completion.
+  try {
+    triggerEngine.evaluateThreadCompleteCascadeTriggers(workspacePath, threadPath, actor);
+  } catch {
+    // No-op: trigger engine state captures per-trigger errors during cascade evaluation.
+  }
+
+  return updated;
 }
 
 export function cancel(

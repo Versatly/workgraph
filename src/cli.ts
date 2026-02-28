@@ -1347,6 +1347,44 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// gate
+// ============================================================================
+
+const gateCmd = program
+  .command('gate')
+  .description('Evaluate thread quality gates before claim');
+
+addWorkspaceOption(
+  gateCmd
+    .command('check <threadRef>')
+    .description('Check policy-gate status for one thread')
+    .option('--json', 'Emit structured JSON output')
+).action((threadRef, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.gate.checkThreadGates(workspacePath, threadRef);
+    },
+    (result) => {
+      const header = [`Gate check for ${result.threadPath}: ${result.allowed ? 'PASSED' : 'FAILED'}`];
+      if (result.gates.length === 0) {
+        return [...header, 'No gates configured.'];
+      }
+      const details = result.gates.map((gate) => {
+        const failingRules = gate.rules.filter((rule) => !rule.ok);
+        const gateLabel = gate.gatePath ?? gate.gateRef;
+        if (failingRules.length === 0) {
+          return `[pass] ${gateLabel}`;
+        }
+        return `[fail] ${gateLabel} :: ${failingRules.map((rule) => rule.message).join('; ')}`;
+      });
+      return [...header, ...details];
+    },
+  )
+);
+
+// ============================================================================
 // dispatch
 // ============================================================================
 
@@ -1377,6 +1415,26 @@ addWorkspaceOption(
       };
     },
     (result) => [`Run created: ${result.run.id} [${result.run.status}]`],
+  )
+);
+
+addWorkspaceOption(
+  dispatchCmd
+    .command('claim <threadRef>')
+    .description('Claim a thread after passing quality gates')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((threadRef, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.dispatch.claimThread(workspacePath, threadRef, opts.actor);
+    },
+    (result) => [
+      `Claimed thread: ${result.thread.path}`,
+      `Gates checked: ${result.gateCheck.gates.length}`,
+    ],
   )
 );
 
@@ -1614,6 +1672,97 @@ addWorkspaceOption(
     (result) => [
       `Fired trigger: ${result.triggerPath}`,
       `Run: ${result.run.id} [${result.run.status}]`,
+    ],
+  )
+);
+
+const triggerEngineCmd = triggerCmd
+  .command('engine')
+  .description('Run trigger polling engine loop');
+
+addWorkspaceOption(
+  triggerEngineCmd
+    .command('start')
+    .description('Start foreground trigger polling loop')
+    .option('-a, --actor <name>', 'Actor used for trigger actions', 'system')
+    .option('--interval <seconds>', 'Polling interval seconds', '60')
+    .option('--max-cycles <n>', 'Stop after N cycles (testing/helper mode)')
+).action(async (opts) => {
+  const workspacePath = resolveWorkspacePath(opts);
+  const interval = Number.parseInt(String(opts.interval), 10);
+  if (Number.isNaN(interval) || interval <= 0) {
+    throw new Error(`Invalid interval "${opts.interval}". Expected a positive integer (seconds).`);
+  }
+  const maxCycles = opts.maxCycles ? Number.parseInt(String(opts.maxCycles), 10) : undefined;
+  if (maxCycles !== undefined && (Number.isNaN(maxCycles) || maxCycles <= 0)) {
+    throw new Error(`Invalid max cycles "${opts.maxCycles}". Expected a positive integer.`);
+  }
+  await workgraph.triggerEngine.startTriggerEngine(workspacePath, {
+    actor: opts.actor,
+    intervalSeconds: interval,
+    maxCycles,
+  });
+});
+
+addWorkspaceOption(
+  triggerCmd
+    .command('status')
+    .description('Show trigger dashboard (last fired, next fire, counts, state)')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.triggerEngine.triggerDashboard(workspacePath);
+    },
+    (result) => {
+      if (result.triggers.length === 0) return ['No trigger primitives found.'];
+      return result.triggers.flatMap((trigger) => [
+        `${trigger.path} [${trigger.status}]`,
+        `  state=${trigger.currentState} fired=${trigger.fireCount} cooldown=${trigger.cooldownSeconds}s`,
+        `  last_fired=${trigger.lastFiredAt ?? 'never'} next_fire=${trigger.nextFireAt ?? 'n/a'}`,
+        `  condition=${trigger.condition}`,
+        `  action=${trigger.action}`,
+        ...(trigger.lastError ? [`  error=${trigger.lastError}`] : []),
+      ]);
+    },
+  )
+);
+
+addWorkspaceOption(
+  triggerCmd
+    .command('add-synthesis')
+    .description('Add built-in auto-synthesis trigger template')
+    .requiredOption('--tag <pattern>', 'Fact tag pattern (supports * wildcard)')
+    .requiredOption('--threshold <n>', 'Minimum new facts to fire synthesis')
+    .option('-a, --actor <name>', 'Actor to assign synthesis output threads', DEFAULT_ACTOR)
+    .option('--cooldown <seconds>', 'Cooldown between synthesis fires', '0')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const threshold = Number.parseInt(String(opts.threshold), 10);
+      const cooldown = Number.parseInt(String(opts.cooldown), 10);
+      if (Number.isNaN(threshold) || threshold <= 0) {
+        throw new Error(`Invalid threshold "${opts.threshold}". Expected a positive integer.`);
+      }
+      if (Number.isNaN(cooldown) || cooldown < 0) {
+        throw new Error(`Invalid cooldown "${opts.cooldown}". Expected a non-negative integer.`);
+      }
+      return workgraph.triggerEngine.addSynthesisTrigger(workspacePath, {
+        tagPattern: opts.tag,
+        threshold,
+        actor: opts.actor,
+        cooldownSeconds: cooldown,
+      });
+    },
+    (result) => [
+      `Created synthesis trigger: ${result.trigger.path}`,
+      `Status: ${String(result.trigger.fields.status)}`,
+      `Tag pattern: ${String((result.trigger.fields.synthesis as Record<string, unknown>)?.tag_pattern ?? '')}`,
     ],
   )
 );
