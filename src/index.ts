@@ -28,6 +28,8 @@ export * as triggerEngine from './trigger-engine.js';
 export * as autonomy from './autonomy.js';
 export * as gate from './gate.js';
 export * as mcpServer from './mcp-server.js';
+export * as mcpHttpServer from './mcp-http-server.js';
+export * as server from './server.js';
 export * as clawdapus from './clawdapus.js';
 export * as integration from './integration.js';
 export * from './cron.js';

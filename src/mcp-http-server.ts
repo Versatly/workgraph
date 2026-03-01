@@ -11,14 +11,26 @@ export interface WorkgraphMcpHttpServerOptions extends WorkgraphMcpServerOptions
   endpointPath?: string;
   allowedHosts?: string[];
   bearerToken?: string;
+  onApp?: (context: WorkgraphMcpHttpServerAppContext) => void;
 }
 
 export interface WorkgraphMcpHttpServerHandle {
   host: string;
   port: number;
   endpointPath: string;
+  baseUrl: string;
+  healthUrl: string;
   url: string;
   close: () => Promise<void>;
+}
+
+export type WorkgraphMcpBearerAuthMiddleware = (req: any, res: any, next: () => void) => void;
+
+export interface WorkgraphMcpHttpServerAppContext {
+  app: any;
+  endpointPath: string;
+  workspacePath: string;
+  bearerAuthMiddleware: WorkgraphMcpBearerAuthMiddleware;
 }
 
 interface SessionBinding {
@@ -37,7 +49,7 @@ export async function startWorkgraphMcpHttpServer(
     allowedHosts: options.allowedHosts,
   });
   const sessions: Record<string, SessionBinding> = {};
-  const authToken = readString(options.bearerToken);
+  const bearerAuthMiddleware = createBearerAuthMiddleware(options.bearerToken);
 
   app.get('/health', (_req: unknown, res: any) => {
     res.json({
@@ -48,25 +60,13 @@ export async function startWorkgraphMcpHttpServer(
     });
   });
 
-  app.use(endpointPath, (req: any, res: any, next: () => void) => {
-    if (!authToken) return next();
-    const authorization = readString(req.headers.authorization);
-    if (!authorization || !authorization.startsWith('Bearer ')) {
-      res.status(401).json({
-        ok: false,
-        error: 'Missing bearer token.',
-      });
-      return;
-    }
-    const providedToken = authorization.slice('Bearer '.length);
-    if (providedToken !== authToken) {
-      res.status(403).json({
-        ok: false,
-        error: 'Invalid bearer token.',
-      });
-      return;
-    }
-    next();
+  app.use(endpointPath, bearerAuthMiddleware);
+
+  options.onApp?.({
+    app,
+    endpointPath,
+    workspacePath: options.workspacePath,
+    bearerAuthMiddleware,
   });
 
   app.post(endpointPath, async (req: any, res: any) => {
@@ -170,6 +170,8 @@ export async function startWorkgraphMcpHttpServer(
     host,
     port: actualPort,
     endpointPath,
+    baseUrl,
+    healthUrl: `${baseUrl}/health`,
     url: `${baseUrl}${endpointPath}`,
     close: async () => {
       await Promise.all(
@@ -227,4 +229,28 @@ function formatHostForUrl(host: string): string {
     return `[${host}]`;
   }
   return host;
+}
+
+function createBearerAuthMiddleware(rawToken: string | undefined): WorkgraphMcpBearerAuthMiddleware {
+  const authToken = readString(rawToken);
+  return (req: any, res: any, next: () => void) => {
+    if (!authToken) return next();
+    const authorization = readString(req.headers.authorization);
+    if (!authorization || !authorization.startsWith('Bearer ')) {
+      res.status(401).json({
+        ok: false,
+        error: 'Missing bearer token.',
+      });
+      return;
+    }
+    const providedToken = authorization.slice('Bearer '.length);
+    if (providedToken !== authToken) {
+      res.status(403).json({
+        ok: false,
+        error: 'Invalid bearer token.',
+      });
+      return;
+    }
+    next();
+  };
 }
