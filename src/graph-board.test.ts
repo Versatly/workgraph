@@ -26,7 +26,7 @@ describe('graph index and board generation', () => {
     thread.claim(workspacePath, 'threads/active-item.md', 'agent-a');
     thread.createThread(workspacePath, 'Done item', 'done', 'agent-a');
     thread.claim(workspacePath, 'threads/done-item.md', 'agent-a');
-    thread.done(workspacePath, 'threads/done-item.md', 'agent-a', 'done');
+    thread.done(workspacePath, 'threads/done-item.md', 'agent-a', 'done https://github.com/versatly/workgraph/pull/23');
 
     const result = board.generateKanbanBoard(workspacePath, {
       outputPath: 'ops/Kanban.md',

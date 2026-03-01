@@ -31,7 +31,7 @@ describe('board core module', () => {
 
     thread.createThread(workspacePath, 'Done item', 'done', 'agent-a');
     thread.claim(workspacePath, 'threads/done-item.md', 'agent-a');
-    thread.done(workspacePath, 'threads/done-item.md', 'agent-a', 'finished');
+    thread.done(workspacePath, 'threads/done-item.md', 'agent-a', 'finished https://github.com/versatly/workgraph/pull/26');
 
     thread.createThread(workspacePath, 'Cancelled item', 'cancelled', 'agent-a');
     thread.cancel(workspacePath, 'threads/cancelled-item.md', 'agent-a', 'not needed');

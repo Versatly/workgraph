@@ -79,7 +79,7 @@ describe('multi-agent coordination', () => {
       .toThrow('Cannot claim');
 
     thread.done(workspacePath, dbSchema!.path, WORKER,
-      'Created users and sessions tables with indices. Schema in migrations/001_auth.sql.');
+      'Created users and sessions tables with indices. Schema in migrations/001_auth.sql. https://github.com/versatly/workgraph/pull/27');
 
     const completed = store.read(workspacePath, dbSchema!.path);
     expect(completed!.fields.status).toBe('done');
@@ -93,7 +93,7 @@ describe('multi-agent coordination', () => {
     expect(blockedThreads).toHaveLength(1);
 
     thread.unblock(workspacePath, jwtThread!.path, LEAD);
-    thread.done(workspacePath, jwtThread!.path, WORKER, 'JWT service with RS256 signing, 15min access, 7d refresh.');
+    thread.done(workspacePath, jwtThread!.path, WORKER, 'JWT service with RS256 signing, 15min access, 7d refresh. https://github.com/versatly/workgraph/pull/28');
 
     const allEntries = ledger.readAll(workspacePath);
     expect(allEntries.length).toBeGreaterThan(10);

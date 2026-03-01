@@ -69,6 +69,7 @@ export type LedgerOp =
   | 'done'
   | 'reopen'
   | 'cancel'
+  | 'rejected'
   | 'define'
   | 'decompose'
   | 'handoff';
@@ -82,6 +83,34 @@ export interface LedgerEntry {
   data?: Record<string, unknown>;
   prevHash?: string;
   hash?: string;
+}
+
+export type ThreadEvidenceType = 'url' | 'attachment' | 'thread-ref' | 'reply-ref';
+
+export interface ThreadEvidenceItem {
+  type: ThreadEvidenceType;
+  value: string;
+  valid: boolean;
+  reason?: string;
+}
+
+export type EvidencePolicy = 'strict' | 'relaxed' | 'none';
+
+export interface ThreadEvidenceValidationResult {
+  policy: EvidencePolicy;
+  evidence: ThreadEvidenceItem[];
+  validEvidence: ThreadEvidenceItem[];
+  invalidEvidence: ThreadEvidenceItem[];
+  ok: boolean;
+}
+
+export type ThreadEvidenceInput = string | {
+  type?: ThreadEvidenceType;
+  value: string;
+};
+
+export interface ThreadDoneOptions {
+  evidence?: ThreadEvidenceInput[];
 }
 
 export interface LedgerIndex {
@@ -130,6 +159,19 @@ export interface PrimitiveInstance {
   fields: Record<string, unknown>;
   /** Markdown body content. */
   body: string;
+}
+
+export interface ReconcileIssue {
+  code: string;
+  message: string;
+  target?: string;
+  details?: Record<string, unknown>;
+}
+
+export interface ReconcileReport {
+  violations: ReconcileIssue[];
+  warnings: ReconcileIssue[];
+  ok: boolean;
 }
 
 export interface WorkgraphWorkspaceConfig {

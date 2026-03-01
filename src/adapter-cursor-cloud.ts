@@ -114,6 +114,12 @@ export class CursorCloudAdapter implements DispatchAdapter {
             claimed.threadPath,
             claimed.agent,
             `Completed by ${claimed.agent} during dispatch run ${input.runId}. Goal: ${claimed.goal}`,
+            {
+              evidence: [
+                { type: 'thread-ref', value: claimed.threadPath },
+                { type: 'reply-ref', value: `thread:${input.runId}` },
+              ],
+            },
           );
           completionCount += 1;
           completedByAgent[claimed.agent] += 1;

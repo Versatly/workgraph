@@ -38,7 +38,7 @@ describe('orientation core module', () => {
 
     thread.createThread(workspacePath, 'Done task', 'Do done work', 'agent-seed');
     thread.claim(workspacePath, 'threads/done-task.md', 'agent-c');
-    thread.done(workspacePath, 'threads/done-task.md', 'agent-c', 'Completed');
+    thread.done(workspacePath, 'threads/done-task.md', 'agent-c', 'Completed https://github.com/versatly/workgraph/pull/21');
 
     thread.createThread(workspacePath, 'Cancelled task', 'No longer needed', 'agent-seed');
     thread.cancel(workspacePath, 'threads/cancelled-task.md', 'agent-seed', 'Out of scope');

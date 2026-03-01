@@ -92,7 +92,7 @@ describe('trigger engine', () => {
 
     const seededThread = thread.createThread(workspacePath, 'Implement parser', 'Ship parser MVP', 'agent-dev');
     thread.claim(workspacePath, seededThread.path, 'agent-dev');
-    thread.done(workspacePath, seededThread.path, 'agent-dev', 'Parser complete');
+    thread.done(workspacePath, seededThread.path, 'agent-dev', 'Parser complete https://github.com/versatly/workgraph/pull/11');
 
     const fireCycle = triggerEngine.runTriggerEngineCycle(workspacePath, {
       actor: 'system',
@@ -131,7 +131,7 @@ describe('trigger engine', () => {
 
     const sourceThread = thread.createThread(workspacePath, 'Source thread', 'Complete source', 'agent-owner');
     thread.claim(workspacePath, sourceThread.path, 'agent-owner');
-    thread.done(workspacePath, sourceThread.path, 'agent-owner', 'Source complete');
+    thread.done(workspacePath, sourceThread.path, 'agent-owner', 'Source complete https://github.com/versatly/workgraph/pull/12');
 
     const threads = store.list(workspacePath, 'thread');
     expect(threads).toHaveLength(2);
@@ -162,7 +162,7 @@ describe('trigger engine', () => {
 
       const firstThread = thread.createThread(workspacePath, 'Seed completion', 'Initial completion event', 'agent-seed');
       thread.claim(workspacePath, firstThread.path, 'agent-seed');
-      thread.done(workspacePath, firstThread.path, 'agent-seed', 'Seed completed');
+      thread.done(workspacePath, firstThread.path, 'agent-seed', 'Seed completed https://github.com/versatly/workgraph/pull/13');
 
       const firstCycle = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system', now: frozenNow });
       expect(firstCycle.fired).toBe(0);
@@ -173,7 +173,7 @@ describe('trigger engine', () => {
 
       const secondThread = thread.createThread(workspacePath, 'Same-ts completion', 'Second completion at identical timestamp', 'agent-seed');
       thread.claim(workspacePath, secondThread.path, 'agent-seed');
-      thread.done(workspacePath, secondThread.path, 'agent-seed', 'Second completed');
+      thread.done(workspacePath, secondThread.path, 'agent-seed', 'Second completed https://github.com/versatly/workgraph/pull/14');
 
       const secondCycle = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system', now: frozenNow });
       expect(secondCycle.fired).toBe(1);

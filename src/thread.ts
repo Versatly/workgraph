@@ -9,7 +9,9 @@ import * as ledger from './ledger.js';
 import * as store from './store.js';
 import * as claimLease from './claim-lease.js';
 import * as triggerEngine from './trigger-engine.js';
-import type { PrimitiveInstance, ThreadStatus } from './types.js';
+import * as gate from './gate.js';
+import { collectThreadEvidence, validateThreadEvidence } from './evidence.js';
+import type { PrimitiveInstance, ThreadDoneOptions, ThreadStatus } from './types.js';
 import { THREAD_STATUS_TRANSITIONS } from './types.js';
 
 const CLAIM_LOCK_STALE_MS = 5 * 60_000;
@@ -39,8 +41,10 @@ export function createThread(
     : contextRefs;
   const inferredDeps = inferThreadDependenciesFromText(goal);
   const mergedDeps = uniqueThreadRefs([...(opts.deps ?? []), ...inferredDeps]);
+  const tid = mintThreadId(title);
 
   return store.create(workspacePath, 'thread', {
+    tid,
     title,
     goal,
     status: 'open',
@@ -51,6 +55,15 @@ export function createThread(
     context_refs: mergedContextRefs,
     tags: opts.tags ?? [],
   }, `## Goal\n\n${goal}\n`, actor);
+}
+
+export function mintThreadId(title: string): string {
+  const normalized = String(title ?? '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+  return normalized || 'thread';
 }
 
 // ---------------------------------------------------------------------------
@@ -134,6 +147,7 @@ export function claim(
   return withThreadClaimLock(workspacePath, threadPath, () => {
     const thread = store.read(workspacePath, threadPath);
     if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+    assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'claim');
 
     const status = thread.fields.status as ThreadStatus;
     if (status !== 'open') {
@@ -165,6 +179,7 @@ export function release(
 ): PrimitiveInstance {
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'release');
 
   assertOwner(workspacePath, threadPath, actor);
 
@@ -187,6 +202,7 @@ export function heartbeat(
 ): PrimitiveInstance {
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'heartbeat');
   if (thread.fields.status !== 'active') {
     throw new Error(`Cannot heartbeat thread in "${String(thread.fields.status)}" state. Only active threads can be heartbeated.`);
   }
@@ -231,6 +247,7 @@ export function handoff(
 
   const existing = store.read(workspacePath, threadPath);
   if (!existing) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, existing, fromActor, 'handoff');
   if (existing.fields.status !== 'active') {
     throw new Error(`Cannot handoff thread in "${String(existing.fields.status)}" state. Only active threads can be handed off.`);
   }
@@ -273,6 +290,7 @@ export function block(
 ): PrimitiveInstance {
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'block');
 
   assertTransition(thread.fields.status as ThreadStatus, 'blocked');
 
@@ -300,6 +318,7 @@ export function unblock(
 ): PrimitiveInstance {
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'unblock');
 
   assertTransition(thread.fields.status as ThreadStatus, 'active');
 
@@ -315,15 +334,38 @@ export function done(
   threadPath: string,
   actor: string,
   output?: string,
+  options: ThreadDoneOptions = {},
 ): PrimitiveInstance {
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'done');
+
+  const descendantCheck = gate.checkRequiredDescendants(workspacePath, threadPath);
+  if (!descendantCheck.ok) {
+    throw new Error(`Cannot mark ${threadPath} done. ${descendantCheck.message}`);
+  }
 
   assertTransition(thread.fields.status as ThreadStatus, 'done');
   assertOwner(workspacePath, threadPath, actor);
 
+  const evidencePolicy = gate.resolveThreadEvidencePolicy(workspacePath, thread);
+  const evidence = collectThreadEvidence(output, options.evidence ?? []);
+  const evidenceResult = validateThreadEvidence(evidence, evidencePolicy);
+  if (!evidenceResult.ok) {
+    throw new Error(renderEvidenceError(threadPath, evidenceResult));
+  }
+
   ledger.append(workspacePath, actor, 'done', threadPath, 'thread',
-    output ? { output } : undefined);
+    {
+      ...(output ? { output } : {}),
+      evidence_policy: evidencePolicy,
+      evidence: evidenceResult.evidence.map((entry) => ({
+        type: entry.type,
+        value: entry.value,
+        valid: entry.valid,
+        ...(entry.reason ? { reason: entry.reason } : {}),
+      })),
+    });
 
   const newBody = output
     ? `${thread.body}\n\n## Output\n\n${output}\n`
@@ -352,6 +394,7 @@ export function cancel(
 ): PrimitiveInstance {
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'cancel');
 
   assertTransition(thread.fields.status as ThreadStatus, 'cancelled');
 
@@ -377,6 +420,9 @@ export function reopen(
   const status = String(thread.fields.status ?? '') as ThreadStatus;
   if (status !== 'done' && status !== 'cancelled') {
     throw new Error(`Cannot reopen thread in "${status}" state. Only done/cancelled threads can be reopened.`);
+  }
+  if (status === 'done' && !String(reason ?? '').trim()) {
+    throw new Error('Reopen requires a reason when reopening a done thread.');
   }
 
   ledger.append(workspacePath, actor, 'reopen', threadPath, 'thread', reason ? { reason } : undefined);
@@ -556,6 +602,25 @@ export function decompose(
 // Helpers
 // ---------------------------------------------------------------------------
 
+function assertThreadNotTerminallyLocked(
+  workspacePath: string,
+  thread: PrimitiveInstance,
+  actor: string,
+  attemptedOp: 'claim' | 'release' | 'heartbeat' | 'handoff' | 'block' | 'unblock' | 'done' | 'cancel',
+): void {
+  const status = String(thread.fields.status ?? '');
+  const terminalLock = asBoolean(thread.fields.terminalLock, true);
+  if (status !== 'done' || !terminalLock) return;
+
+  const reason = `Thread "${thread.path}" is terminally locked after done. Use reopen with a reason to continue changes.`;
+  ledger.append(workspacePath, actor, 'rejected', thread.path, 'thread', {
+    attempted_op: attemptedOp,
+    reason,
+    locked_status: status,
+  });
+  throw new Error(reason);
+}
+
 function assertTransition(from: ThreadStatus, to: ThreadStatus): void {
   const allowed = THREAD_STATUS_TRANSITIONS[from];
   if (!allowed?.includes(to)) {
@@ -568,6 +633,20 @@ function assertOwner(workspacePath: string, threadPath: string, actor: string): 
   if (owner && owner !== actor) {
     throw new Error(`Thread is owned by "${owner}", not "${actor}". Only the owner can perform this action.`);
   }
+}
+
+function renderEvidenceError(
+  threadPath: string,
+  result: ReturnType<typeof validateThreadEvidence>,
+): string {
+  if (result.policy === 'none') {
+    return '';
+  }
+  if (result.validEvidence.length === 0) {
+    return `Cannot mark ${threadPath} done: at least one valid evidence item is required (policy=${result.policy}).`;
+  }
+  const reasons = result.invalidEvidence.map((entry) => `${entry.type}:${entry.value} (${entry.reason ?? 'invalid'})`);
+  return `Cannot mark ${threadPath} done: invalid evidence detected (${reasons.join('; ')}).`;
 }
 
 function compareThreadPriority(a: PrimitiveInstance, b: PrimitiveInstance): number {
@@ -637,6 +716,17 @@ function uniqueThreadRefs(values: string[]): string[] {
     seen.add(normalized);
   }
   return [...seen];
+}
+
+function asBoolean(value: unknown, fallback: boolean = false): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'number') return value !== 0;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
+    if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  }
+  return fallback;
 }
 
 function withThreadClaimLock<T>(

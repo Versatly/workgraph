@@ -96,7 +96,7 @@ describe('context lenses', () => {
       'Provider outage',
     );
     thread.claim(workspacePath, 'threads/finish-auth-rollout.md', 'agent-risk');
-    thread.done(workspacePath, 'threads/finish-auth-rollout.md', 'agent-risk', 'Auth shipped');
+    thread.done(workspacePath, 'threads/finish-auth-rollout.md', 'agent-risk', 'Auth shipped https://github.com/versatly/workgraph/pull/22');
 
     const failedRun = dispatch.createRun(workspacePath, {
       actor: 'agent-ops',

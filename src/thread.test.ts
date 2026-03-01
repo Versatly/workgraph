@@ -114,7 +114,7 @@ describe('thread lifecycle', () => {
   it('done marks thread complete and appends output', () => {
     createThread(workspacePath, 'Completable', 'test', 'agent-a');
     claim(workspacePath, 'threads/completable.md', 'agent-a');
-    const completed = done(workspacePath, 'threads/completable.md', 'agent-a', 'Auth system shipped');
+    const completed = done(workspacePath, 'threads/completable.md', 'agent-a', 'Auth system shipped https://github.com/versatly/workgraph/pull/1');
 
     expect(completed.fields.status).toBe('done');
     expect(completed.body).toContain('Auth system shipped');
@@ -124,7 +124,7 @@ describe('thread lifecycle', () => {
   it('reopen creates compensating ledger op and returns thread to open', () => {
     createThread(workspacePath, 'Reopenable', 'test', 'agent-a');
     claim(workspacePath, 'threads/reopenable.md', 'agent-a');
-    done(workspacePath, 'threads/reopenable.md', 'agent-a', 'done');
+    done(workspacePath, 'threads/reopenable.md', 'agent-a', 'done https://github.com/versatly/workgraph/pull/2');
 
     const reopened = reopen(workspacePath, 'threads/reopenable.md', 'agent-a', 'needs follow-up');
     expect(reopened.fields.status).toBe('open');
@@ -200,7 +200,7 @@ describe('thread lifecycle', () => {
     claim(workspacePath, 'threads/full-cycle.md', 'agent-b');
     block(workspacePath, 'threads/full-cycle.md', 'agent-b', 'threads/dep.md');
     unblock(workspacePath, 'threads/full-cycle.md', 'agent-b');
-    done(workspacePath, 'threads/full-cycle.md', 'agent-b', 'All done');
+    done(workspacePath, 'threads/full-cycle.md', 'agent-b', 'All done https://github.com/versatly/workgraph/pull/3');
 
     const t = store.read(workspacePath, 'threads/full-cycle.md');
     expect(t!.fields.status).toBe('done');
@@ -259,10 +259,10 @@ describe('thread lifecycle', () => {
   it('invalid state transitions are rejected', () => {
     createThread(workspacePath, 'Bad Transition', 'test', 'agent-a');
     claim(workspacePath, 'threads/bad-transition.md', 'agent-a');
-    done(workspacePath, 'threads/bad-transition.md', 'agent-a');
+    done(workspacePath, 'threads/bad-transition.md', 'agent-a', 'done https://github.com/versatly/workgraph/pull/4');
 
     expect(() => claim(workspacePath, 'threads/bad-transition.md', 'agent-b'))
-      .toThrow('Cannot claim thread in "done" state');
+      .toThrow('terminally locked');
   });
 
   it('infers dependency refs from text payloads', () => {
@@ -298,7 +298,7 @@ describe('thread scheduling helpers', () => {
   it('marks thread with completed deps as ready', () => {
     createThread(workspacePath, 'Dependency', 'Complete dependency', 'agent-a');
     claim(workspacePath, 'threads/dependency.md', 'agent-a');
-    done(workspacePath, 'threads/dependency.md', 'agent-a', 'done');
+    done(workspacePath, 'threads/dependency.md', 'agent-a', 'done https://github.com/versatly/workgraph/pull/5');
     createThread(workspacePath, 'Blocked task', 'Waits on dep', 'agent-a', {
       deps: ['threads/dependency.md'],
     });

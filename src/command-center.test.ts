@@ -31,7 +31,7 @@ describe('command-center', () => {
 
     createThread(workspacePath, 'Done task', 'done', 'agent-lead');
     claim(workspacePath, 'threads/done-task.md', 'agent-worker');
-    done(workspacePath, 'threads/done-task.md', 'agent-worker', 'complete');
+    done(workspacePath, 'threads/done-task.md', 'agent-worker', 'complete https://github.com/versatly/workgraph/pull/25');
 
     const result = generateCommandCenter(workspacePath, {
       actor: 'agent-observer',

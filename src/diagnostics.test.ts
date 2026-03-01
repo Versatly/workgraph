@@ -94,7 +94,7 @@ describe('diagnostics tooling', () => {
     const alpha = thread.createThread(workspacePath, 'Alpha Thread', 'goal alpha', 'agent-a');
     const beta = thread.createThread(workspacePath, 'Beta Thread', 'goal beta', 'agent-a');
     thread.claim(workspacePath, alpha.path, 'agent-a');
-    thread.done(workspacePath, alpha.path, 'agent-a', 'done');
+    thread.done(workspacePath, alpha.path, 'agent-a', 'done https://github.com/versatly/workgraph/pull/24');
     store.update(
       workspacePath,
       beta.path,

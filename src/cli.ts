@@ -268,13 +268,18 @@ addWorkspaceOption(
     .description('Mark a thread done')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
     .option('-o, --output <text>', 'Output/result summary')
+    .option('--evidence <items>', 'Comma-separated evidence values (url/path/reply/thread refs)')
     .option('--json', 'Emit structured JSON output')
 ).action((threadPath, opts) =>
   runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
-      return { thread: workgraph.thread.done(workspacePath, threadPath, opts.actor, opts.output) };
+      return {
+        thread: workgraph.thread.done(workspacePath, threadPath, opts.actor, opts.output, {
+          evidence: csv(opts.evidence),
+        }),
+      };
     },
     (result) => [`Done: ${result.thread.path}`]
   )

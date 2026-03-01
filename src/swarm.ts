@@ -386,7 +386,9 @@ export function workerComplete(
     result,
   );
 
-  return thread.done(workspacePath, threadPath, agent, updatedBody);
+  return thread.done(workspacePath, threadPath, agent, updatedBody, {
+    evidence: [{ type: 'thread-ref', value: threadPath }],
+  });
 }
 
 /**

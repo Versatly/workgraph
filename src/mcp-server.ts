@@ -412,6 +412,7 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
         threadPath: z.string().min(1),
         actor: z.string().optional(),
         output: z.string().optional(),
+        evidence: z.array(z.string()).optional(),
       },
       annotations: {
         destructiveHint: true,
@@ -423,7 +424,9 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
         const actor = resolveActor(args.actor, options.defaultActor);
         const gate = checkWriteGate(options, actor, ['thread:done', 'mcp:write']);
         if (!gate.allowed) return errorResult(gate.reason);
-        const updated = thread.done(options.workspacePath, args.threadPath, actor, args.output);
+        const updated = thread.done(options.workspacePath, args.threadPath, actor, args.output, {
+          evidence: args.evidence,
+        });
         return okResult({ thread: updated }, `Marked ${updated.path} done as ${actor}.`);
       } catch (error) {
         return errorResult(error);

@@ -125,7 +125,7 @@ describe('workgraph mcp server', () => {
         arguments: {
           threadPath: coordinationThread.path,
           actor: 'agent-mcp',
-          output: 'Completed from MCP write tool.',
+          output: 'Completed from MCP write tool. https://github.com/versatly/workgraph/pull/72',
         },
       });
       expect(isToolError(done)).toBe(false);

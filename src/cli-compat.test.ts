@@ -86,7 +86,7 @@ describe('CLI compatibility smoke', () => {
         'thread', 'done', 'threads/compatibility-thread.md',
         '-w', workspacePath,
         '--actor', 'agent-compat',
-        '--output', 'Completed in compatibility test',
+        '--output', 'Completed in compatibility test https://github.com/versatly/workgraph/pull/71',
         '--json',
       ]);
       expect(done.ok).toBe(true);

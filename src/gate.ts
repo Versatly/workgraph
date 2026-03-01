@@ -4,13 +4,14 @@
 
 import * as store from './store.js';
 import * as registry from './registry.js';
-import type { PrimitiveInstance } from './types.js';
+import { normalizeEvidencePolicy } from './evidence.js';
+import type { EvidencePolicy, PrimitiveInstance } from './types.js';
 
 const POLICY_GATE_TYPE = 'policy-gate';
 const ACTIVE_GATE_STATUSES = new Set(['active', 'approved']);
 
 export interface GateRuleResult {
-  rule: 'required-facts' | 'required-approvals' | 'min-age-seconds' | 'gate-status' | 'gate-exists';
+  rule: 'required-facts' | 'required-approvals' | 'min-age-seconds' | 'gate-status' | 'gate-exists' | 'required-descendants';
   ok: boolean;
   message: string;
 }
@@ -28,6 +29,13 @@ export interface ThreadGateCheckResult {
   threadPath: string;
   allowed: boolean;
   gates: GateEvaluation[];
+}
+
+export interface DescendantGateResult {
+  ok: boolean;
+  threadPath: string;
+  unresolvedDescendants: string[];
+  message: string;
 }
 
 export function checkThreadGates(
@@ -80,6 +88,64 @@ export function summarizeGateFailures(result: ThreadGateCheckResult): string {
     return `${label}: ${failingRules.join('; ')}`;
   });
   return `Quality gates blocked claim for ${result.threadPath}: ${fragments.join(' | ')}`;
+}
+
+export function resolveThreadEvidencePolicy(
+  workspacePath: string,
+  threadRefOrInstance: string | PrimitiveInstance,
+): EvidencePolicy {
+  const threadPath = typeof threadRefOrInstance === 'string'
+    ? resolveThreadRef(threadRefOrInstance)
+    : threadRefOrInstance.path;
+  const thread = typeof threadRefOrInstance === 'string'
+    ? store.read(workspacePath, threadPath)
+    : threadRefOrInstance;
+  if (!thread) {
+    throw new Error(`Thread not found: ${threadPath}`);
+  }
+
+  const policies = asStringList(thread.fields.gates)
+    .map((gateRef) => resolveGateRef(workspacePath, gateRef))
+    .map((gatePath) => store.read(workspacePath, gatePath))
+    .filter((gate): gate is PrimitiveInstance => !!gate)
+    .map((gate) => normalizeEvidencePolicy(gate.fields.evidencePolicy ?? gate.fields.evidence_policy));
+
+  if (policies.includes('strict')) return 'strict';
+  if (policies.includes('relaxed')) return 'relaxed';
+  if (policies.includes('none')) return 'none';
+  return 'strict';
+}
+
+export function checkRequiredDescendants(
+  workspacePath: string,
+  threadRef: string,
+): DescendantGateResult {
+  const threadPath = resolveThreadRef(threadRef);
+  const thread = store.read(workspacePath, threadPath);
+  if (!thread) {
+    throw new Error(`Thread not found: ${threadPath}`);
+  }
+
+  const descendants = listDescendants(workspacePath, thread.path);
+  const unresolvedDescendants = descendants
+    .filter((candidate) => !['done', 'cancelled'].includes(String(candidate.fields.status ?? '')))
+    .map((candidate) => candidate.path);
+
+  if (unresolvedDescendants.length === 0) {
+    return {
+      ok: true,
+      threadPath,
+      unresolvedDescendants: [],
+      message: 'All descendants are done/cancelled.',
+    };
+  }
+
+  return {
+    ok: false,
+    threadPath,
+    unresolvedDescendants,
+    message: `Unresolved descendants: ${unresolvedDescendants.join(', ')}`,
+  };
 }
 
 function evaluateOneGate(
@@ -153,6 +219,22 @@ function evaluateOneGate(
   const minAgeSeconds = asNumber(gate.fields.min_age_seconds) ?? 0;
   const minAgeRule = evaluateMinAgeRule(thread, minAgeSeconds, now);
   rules.push(minAgeRule);
+
+  const requiredDescendants = asBoolean(gate.fields.requiredDescendants) || asBoolean(gate.fields.required_descendants);
+  if (requiredDescendants) {
+    const descendantsRule = checkRequiredDescendants(workspacePath, thread.path);
+    rules.push({
+      rule: 'required-descendants',
+      ok: descendantsRule.ok,
+      message: descendantsRule.message,
+    });
+  } else {
+    rules.push({
+      rule: 'required-descendants',
+      ok: true,
+      message: 'Descendant completion rule is not enabled.',
+    });
+  }
 
   return {
     gateRef,
@@ -287,4 +369,41 @@ function asDate(value: unknown): Date | null {
   const timestamp = Date.parse(value);
   if (Number.isNaN(timestamp)) return null;
   return new Date(timestamp);
+}
+
+function asBoolean(value: unknown): boolean {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    return normalized === 'true' || normalized === '1' || normalized === 'yes';
+  }
+  if (typeof value === 'number') return value !== 0;
+  return false;
+}
+
+function listDescendants(workspacePath: string, rootThreadPath: string): PrimitiveInstance[] {
+  const allThreads = store.list(workspacePath, 'thread');
+  const childrenByParent = new Map<string, PrimitiveInstance[]>();
+  for (const candidate of allThreads) {
+    const parent = String(candidate.fields.parent ?? '').trim();
+    if (!parent) continue;
+    const existing = childrenByParent.get(parent) ?? [];
+    existing.push(candidate);
+    childrenByParent.set(parent, existing);
+  }
+
+  const visited = new Set<string>();
+  const stack = [rootThreadPath];
+  const descendants: PrimitiveInstance[] = [];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    const children = childrenByParent.get(current) ?? [];
+    for (const child of children) {
+      if (visited.has(child.path)) continue;
+      visited.add(child.path);
+      descendants.push(child);
+      stack.push(child.path);
+    }
+  }
+  return descendants;
 }
