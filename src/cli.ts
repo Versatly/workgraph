@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { Command } from 'commander';
 import * as workgraph from './index.js';
+import { startWorkgraphServer, waitForShutdown } from './server.js';
 
 type JsonCapableOptions = {
   json?: boolean;
@@ -2650,6 +2651,43 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// serve (http server)
+// ============================================================================
+
+addWorkspaceOption(
+  program
+    .command('serve')
+    .description('Serve Workgraph HTTP MCP server + REST API')
+    .option('--port <port>', 'HTTP port (default: 8787)')
+    .option('--host <host>', 'Bind host (default: 0.0.0.0)')
+    .option('--token <token>', 'Optional bearer token for MCP + REST auth')
+    .option('-a, --actor <name>', 'Default actor for thread mutations', DEFAULT_ACTOR),
+).action(async (opts) => {
+  const workspacePath = resolveWorkspacePath(opts);
+  const port = opts.port !== undefined ? parsePortOption(opts.port) : 8787;
+  const host = opts.host ? String(opts.host) : '0.0.0.0';
+  const handle = await startWorkgraphServer({
+    workspacePath,
+    host,
+    port,
+    bearerToken: opts.token ? String(opts.token) : undefined,
+    defaultActor: opts.actor,
+  });
+  console.log(`Server URL: ${handle.baseUrl}`);
+  console.log(`MCP endpoint: ${handle.url}`);
+  console.log(`Health: ${handle.healthUrl}`);
+  console.log(`Status API: ${handle.baseUrl}/api/status`);
+  await waitForShutdown(handle, {
+    onSignal: (signal) => {
+      console.error(`Received ${signal}; shutting down...`);
+    },
+    onClosed: () => {
+      console.error('Server stopped.');
+    },
+  });
+});
+
+// ============================================================================
 // mcp
 // ============================================================================
 
@@ -2930,6 +2968,14 @@ function parsePositiveIntOption(value: unknown, name: string): number {
   const parsed = Number.parseInt(String(value ?? ''), 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`Invalid --${name} value "${String(value)}". Expected a positive integer.`);
+  }
+  return parsed;
+}
+
+function parsePortOption(value: unknown): number {
+  const parsed = Number.parseInt(String(value ?? ''), 10);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 65535) {
+    throw new Error(`Invalid --port value "${String(value)}". Expected 0..65535.`);
   }
   return parsed;
 }
