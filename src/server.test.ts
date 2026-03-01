@@ -281,7 +281,7 @@ describe('workgraph server REST API', () => {
         body: JSON.stringify({
           status: 'done',
           actor: 'api-worker',
-          output: 'Done from REST',
+          output: 'Done from REST https://github.com/Versatly/workgraph/pull/1',
         }),
       });
       const doneBody = await doneResponse.json() as { ok: boolean; thread: { fields: { status: string } } };
