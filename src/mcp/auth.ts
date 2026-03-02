@@ -1,5 +1,5 @@
 import * as policy from '../policy.js';
-import type { WorkgraphMcpServerOptions } from '../mcp-server.js';
+import type { WorkgraphMcpServerOptions } from './types.js';
 
 export function resolveActor(actor: string | undefined, defaultActor: string | undefined): string {
   const resolved = actor ?? defaultActor ?? 'anonymous';
