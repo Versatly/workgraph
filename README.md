@@ -110,7 +110,9 @@ Key workspace packages:
 - `packages/sdk`
 - `packages/control-api`
 - `packages/runtime-adapter-core`
+- `packages/adapter-claude-code`
 - `packages/adapter-cursor-cloud`
+- `packages/mcp-server`
 - `packages/policy`
 - `packages/testkit`
 - `packages/search-qmd-adapter`

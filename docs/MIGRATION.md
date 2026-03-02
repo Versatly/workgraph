@@ -14,6 +14,10 @@ existing `@versatly/workgraph` npm consumers.
 ## What changed
 
 - Internal code is split into workspace packages under `packages/*`.
+- Active adapter/integration workspace packages now include both runtime adapters:
+  - `packages/adapter-claude-code`
+  - `packages/adapter-cursor-cloud`
+  - `packages/mcp-server`
 - Versioned contracts now live under `schemas/`.
 - New commands added for PRD gap closure:
   - `status`, `brief`, `query`, `search`, `checkpoint`, `intake`

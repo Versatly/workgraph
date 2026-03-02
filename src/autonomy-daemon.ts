@@ -19,7 +19,6 @@ export interface AutonomyDaemonStartInput {
   maxSteps?: number;
   stepDelayMs?: number;
   space?: string;
-  staleClaimMinutes?: number;
   executeTriggers?: boolean;
   executeReadyThreads?: boolean;
   logPath?: string;
@@ -195,8 +194,6 @@ function buildAutonomyDaemonArgs(
     String(clampInt(input.maxSteps, 200, 1, 5000)),
     '--step-delay-ms',
     String(clampInt(input.stepDelayMs, 25, 0, 5000)),
-    '--stale-claim-minutes',
-    String(clampInt(input.staleClaimMinutes, 30, 1, 24 * 60)),
     '--heartbeat-file',
     heartbeatPath,
     '--json',

@@ -15,7 +15,6 @@ export interface AutonomyLoopOptions {
   maxIdleCycles?: number;
   maxSteps?: number;
   stepDelayMs?: number;
-  staleClaimMinutes?: number;
   executeTriggers?: boolean;
   executeReadyThreads?: boolean;
   heartbeatFile?: string;
