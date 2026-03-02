@@ -60,16 +60,16 @@ describe('dispatch core module', () => {
     expect(queuedRuns.some((entry) => entry.id === first.id)).toBe(true);
   });
 
-  it('moves queued runs to running on followup and blocks followup after stop', () => {
+  it('records followup without implicitly starting queued runs and blocks followup after stop', () => {
     const created = createRun(workspacePath, {
       actor: 'agent-op',
       objective: 'Prepare deployment',
     });
 
     const followed = followup(workspacePath, created.id, 'agent-op', 'Start execution');
-    expect(followed.status).toBe('running');
+    expect(followed.status).toBe('queued');
     expect(followed.followups).toHaveLength(1);
-    expect(followed.leaseExpires).toBeDefined();
+    expect(followed.leaseExpires).toBeUndefined();
 
     const stopped = stop(workspacePath, created.id, 'agent-op');
     expect(stopped.status).toBe('cancelled');

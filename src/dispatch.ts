@@ -128,11 +128,11 @@ export function followup(workspacePath: string, runId: string, actor: string, in
   const now = new Date().toISOString();
   run.followups.push({ ts: now, actor, input });
   run.updatedAt = now;
-  run.logs.push({ ts: now, level: 'info', message: `Follow-up from ${actor}: ${input}` });
-  if (run.status === 'queued') {
-    run.status = 'running';
-    applyLease(run, now);
-  }
+  run.logs.push({
+    ts: now,
+    level: 'info',
+    message: `Follow-up from ${actor}: ${input}`,
+  });
   saveRuns(workspacePath, state);
   ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
     followup: true,

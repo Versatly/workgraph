@@ -34,7 +34,6 @@ describe('autonomy loop', () => {
       pollMs: 1,
       maxSteps: 100,
       stepDelayMs: 0,
-      staleClaimMinutes: 30,
       executeTriggers: true,
       executeReadyThreads: true,
     });

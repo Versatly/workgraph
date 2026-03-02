@@ -603,11 +603,6 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
       description: 'Process trigger events from ledger with idempotent cursor tracking.',
       inputSchema: {
         actor: z.string().optional(),
-        executeRuns: z.boolean().optional(),
-        agents: z.array(z.string()).optional(),
-        maxSteps: z.number().int().min(1).max(5000).optional(),
-        stepDelayMs: z.number().int().min(0).max(5000).optional(),
-        staleClaimMinutes: z.number().int().min(1).max(24 * 60).optional(),
       },
       annotations: {
         destructiveHint: true,
@@ -647,7 +642,6 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
         watch: z.boolean().optional(),
         maxSteps: z.number().int().min(1).max(5000).optional(),
         stepDelayMs: z.number().int().min(0).max(5000).optional(),
-        staleClaimMinutes: z.number().int().min(1).max(24 * 60).optional(),
         executeTriggers: z.boolean().optional(),
         executeReadyThreads: z.boolean().optional(),
       },
@@ -671,7 +665,6 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
           watch: args.watch,
           maxSteps: args.maxSteps,
           stepDelayMs: args.stepDelayMs,
-          staleClaimMinutes: args.staleClaimMinutes,
           executeTriggers: args.executeTriggers,
           executeReadyThreads: args.executeReadyThreads,
         });

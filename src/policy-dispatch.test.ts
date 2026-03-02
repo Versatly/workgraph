@@ -91,7 +91,7 @@ describe('policy gates and dispatch contract', () => {
     expect(duplicate.id).toBe(created.id);
 
     const followed = dispatch.followup(workspacePath, created.id, 'agent-runner', 'Begin phase 1');
-    expect(followed.status).toBe('running');
+    expect(followed.status).toBe('queued');
     expect(followed.followups).toHaveLength(1);
 
     const stopped = dispatch.stop(workspacePath, created.id, 'agent-operator');

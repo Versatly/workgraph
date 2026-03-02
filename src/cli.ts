@@ -2368,18 +2368,8 @@ const triggerEngineCmd = triggerCmd
 addWorkspaceOption(
   triggerEngineCmd
     .command('run')
-    .description('Process trigger events once or continuously')
+    .description('Process one trigger-engine cycle')
     .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
-    .option('--watch', 'Continuously process new events')
-    .option('--poll-ms <ms>', 'Poll interval in watch mode', '2000')
-    .option('--max-cycles <n>', 'Maximum cycles before exiting')
-    .option('--entry-limit <n>', 'Maximum ledger entries per cycle')
-    .option('--agents <actors>', 'Comma-separated agents used when executing runs')
-    .option('--max-steps <n>', 'Maximum adapter scheduler steps', '200')
-    .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
-    .option('--space <spaceRef>', 'Restrict run execution to one space')
-    .option('--stale-claim-minutes <m>', 'Drift warning threshold for stale claims', '30')
-    .option('--no-execute-runs', 'Do not execute dispatched runs')
     .option('--json', 'Emit structured JSON output')
 ).action((opts) =>
   runCommand(
@@ -2509,7 +2499,6 @@ addWorkspaceOption(
     .option('--max-steps <n>', 'Maximum adapter scheduler steps', '200')
     .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
     .option('--space <spaceRef>', 'Restrict autonomy to one space')
-    .option('--stale-claim-minutes <m>', 'Drift warning threshold', '30')
     .option('--heartbeat-file <path>', 'Write daemon heartbeat JSON to this path')
     .option('--no-execute-triggers', 'Disable trigger engine actions')
     .option('--no-execute-ready-threads', 'Disable ready-thread dispatch execution')
@@ -2530,7 +2519,6 @@ addWorkspaceOption(
         maxSteps: Number.parseInt(String(opts.maxSteps), 10),
         stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
         space: opts.space,
-        staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
         heartbeatFile: opts.heartbeatFile,
         executeTriggers: opts.executeTriggers,
         executeReadyThreads: opts.executeReadyThreads,
@@ -2563,7 +2551,6 @@ addWorkspaceOption(
     .option('--max-steps <n>', 'Maximum adapter scheduler steps', '200')
     .option('--step-delay-ms <ms>', 'Adapter scheduler delay', '25')
     .option('--space <spaceRef>', 'Restrict autonomy to one space')
-    .option('--stale-claim-minutes <m>', 'Drift warning threshold', '30')
     .option('--log-path <path>', 'Daemon log file path (workspace-relative)')
     .option('--heartbeat-path <path>', 'Heartbeat file path (workspace-relative)')
     .option('--no-execute-triggers', 'Disable trigger engine actions')
@@ -2584,7 +2571,6 @@ addWorkspaceOption(
         maxSteps: Number.parseInt(String(opts.maxSteps), 10),
         stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
         space: opts.space,
-        staleClaimMinutes: Number.parseInt(String(opts.staleClaimMinutes), 10),
         logPath: opts.logPath,
         heartbeatPath: opts.heartbeatPath,
         executeTriggers: opts.executeTriggers,
@@ -2701,20 +2687,9 @@ addWorkspaceOption(
     .description('Serve stdio MCP tools/resources for this workspace')
     .option('-a, --actor <name>', 'Default actor for MCP write tools', DEFAULT_ACTOR)
     .option('--read-only', 'Disable all MCP write tools')
-    .option('--sse-port <port>', 'Optional SSE event stream port')
-    .option('--sse-host <host>', 'SSE bind host (default: 127.0.0.1)')
-    .option('--sse-path <path>', 'SSE endpoint path (default: /events)')
-    .option('--sse-poll-ms <ms>', 'Ledger poll interval for SSE stream (default: 250ms)')
-    .option('--sse-heartbeat-ms <ms>', 'SSE heartbeat interval (default: 15000ms)')
 ).action(async (opts) => {
   const workspacePath = resolveWorkspacePath(opts);
   console.error(`Starting MCP server for workspace: ${workspacePath}`);
-  const ssePort = opts.ssePort !== undefined ? Number.parseInt(String(opts.ssePort), 10) : undefined;
-  const ssePollMs = opts.ssePollMs !== undefined ? Number.parseInt(String(opts.ssePollMs), 10) : undefined;
-  const sseHeartbeatMs = opts.sseHeartbeatMs !== undefined
-    ? Number.parseInt(String(opts.sseHeartbeatMs), 10)
-    : undefined;
-  const sseEnabled = ssePort !== undefined || opts.sseHost !== undefined || opts.ssePath !== undefined;
   await workgraph.mcpServer.startWorkgraphMcpServer({
     workspacePath,
     defaultActor: opts.actor,
