@@ -5,8 +5,9 @@ import * as autonomy from './autonomy.js';
 import * as dispatch from './dispatch.js';
 import * as graph from './graph.js';
 import * as ledger from './ledger.js';
+import { checkWriteGate, resolveActor } from './mcp/auth.js';
+import { errorResult, okResult, renderStatusSummary, toPrettyJson } from './mcp/result.js';
 import * as orientation from './orientation.js';
-import * as policy from './policy.js';
 import * as query from './query.js';
 import * as registry from './registry.js';
 import * as store from './store.js';
@@ -679,79 +680,3 @@ function registerTools(server: McpServer, options: WorkgraphMcpServerOptions): v
   );
 }
 
-function resolveActor(actor: string | undefined, defaultActor: string | undefined): string {
-  const resolved = actor ?? defaultActor ?? 'anonymous';
-  return String(resolved);
-}
-
-function checkWriteGate(
-  options: WorkgraphMcpServerOptions,
-  actor: string,
-  requiredCapabilities: string[],
-): { allowed: true } | { allowed: false; reason: string } {
-  if (options.readOnly) {
-    return {
-      allowed: false,
-      reason: 'MCP server is configured read-only; write tool is disabled.',
-    };
-  }
-
-  if (actor === 'system') {
-    return { allowed: true };
-  }
-
-  const party = policy.getParty(options.workspacePath, actor);
-  if (!party) {
-    return {
-      allowed: false,
-      reason: `Policy gate blocked MCP write: actor "${actor}" is not a registered party.`,
-    };
-  }
-
-  const hasCapability = requiredCapabilities.some((capability) => party.capabilities.includes(capability));
-  if (!hasCapability) {
-    return {
-      allowed: false,
-      reason: `Policy gate blocked MCP write: actor "${actor}" lacks capabilities [${requiredCapabilities.join(', ')}].`,
-    };
-  }
-
-  return { allowed: true };
-}
-
-function okResult(data: unknown, summary: string) {
-  return {
-    content: [
-      {
-        type: 'text' as const,
-        text: `${summary}\n\n${toPrettyJson(data)}`,
-      },
-    ],
-    structuredContent: data as Record<string, unknown>,
-  };
-}
-
-function errorResult(error: unknown) {
-  const text = error instanceof Error ? error.message : String(error);
-  return {
-    isError: true,
-    content: [
-      {
-        type: 'text' as const,
-        text,
-      },
-    ],
-  };
-}
-
-function toPrettyJson(value: unknown): string {
-  return JSON.stringify(value, null, 2);
-}
-
-function renderStatusSummary(snapshot: ReturnType<typeof orientation.statusSnapshot>): string {
-  return [
-    `threads(total=${snapshot.threads.total}, open=${snapshot.threads.open}, active=${snapshot.threads.active}, blocked=${snapshot.threads.blocked}, done=${snapshot.threads.done})`,
-    `claims(active=${snapshot.claims.active})`,
-    `primitives(total=${snapshot.primitives.total})`,
-  ].join(' ');
-}
