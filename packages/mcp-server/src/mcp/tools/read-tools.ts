@@ -9,7 +9,7 @@ import {
   store as storeModule,
   thread as threadModule,
   threadAudit as threadAuditModule,
-} from '../../../../kernel/src/index.js';
+} from '@versatly/workgraph-kernel';
 import { resolveActor } from '../auth.js';
 import { errorResult, okResult, renderStatusSummary } from '../result.js';
 import { type WorkgraphMcpServerOptions } from '../types.js';

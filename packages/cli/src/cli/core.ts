@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { Command } from 'commander';
-import * as workgraph from '../../../kernel/src/index.js';
+import * as workgraph from '@versatly/workgraph-kernel';
 
 export type JsonCapableOptions = {
   json?: boolean;

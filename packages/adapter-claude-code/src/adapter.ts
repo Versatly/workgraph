@@ -1,6 +1,6 @@
 import {
   ShellWorkerAdapter,
-} from '@versatly/workgraph-kernel/src/adapter-shell-worker.js';
+} from '@versatly/workgraph-kernel';
 import type {
   DispatchAdapter,
   DispatchAdapterCreateInput,
@@ -8,7 +8,7 @@ import type {
   DispatchAdapterExecutionResult,
   DispatchAdapterLogEntry,
   DispatchAdapterRunStatus,
-} from '@versatly/workgraph-kernel/src/runtime-adapter-contracts.js';
+} from '@versatly/workgraph-kernel';
 
 /**
  * Claude Code adapter backed by the shell worker transport.

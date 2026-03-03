@@ -1,4 +1,4 @@
-import * as policy from '../../../policy/src/index.js';
+import * as policy from '@versatly/workgraph-policy';
 import { type WorkgraphMcpServerOptions } from './types.js';
 
 export function resolveActor(actor: string | undefined, defaultActor: string | undefined): string {

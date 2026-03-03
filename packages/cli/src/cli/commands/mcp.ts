@@ -1,5 +1,5 @@
 import { Command } from 'commander';
-import { startWorkgraphMcpServer } from '../../../../mcp-server/src/mcp-server.js';
+import { startWorkgraphMcpServer } from '@versatly/workgraph-mcp-server';
 import {
   addWorkspaceOption,
   resolveWorkspacePath,

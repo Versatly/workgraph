@@ -6,8 +6,8 @@ import {
   store as storeModule,
   thread as threadModule,
   workspace as workspaceModule,
-} from '../../kernel/src/index.js';
-import { startWorkgraphMcpHttpServer } from '../../mcp-server/src/mcp-http-server.js';
+} from '@versatly/workgraph-kernel';
+import { startWorkgraphMcpHttpServer } from '@versatly/workgraph-mcp-server';
 
 const ledger = ledgerModule;
 const orientation = orientationModule;

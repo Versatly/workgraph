@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { Command } from 'commander';
-import * as workgraph from '../../../../kernel/src/index.js';
+import * as workgraph from '@versatly/workgraph-kernel';
 import {
   addWorkspaceOption,
   csv,

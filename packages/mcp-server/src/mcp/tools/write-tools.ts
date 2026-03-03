@@ -6,7 +6,7 @@ import {
   orientation as orientationModule,
   thread as threadModule,
   triggerEngine as triggerEngineModule,
-} from '../../../../kernel/src/index.js';
+} from '@versatly/workgraph-kernel';
 import { checkWriteGate, resolveActor } from '../auth.js';
 import { errorResult, okResult } from '../result.js';
 import { type WorkgraphMcpServerOptions } from '../types.js';

@@ -1,5 +1,5 @@
 import { ResourceTemplate, type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
-import { orientation as orientationModule } from '../../../kernel/src/index.js';
+import { orientation as orientationModule } from '@versatly/workgraph-kernel';
 import { toPrettyJson } from './result.js';
 import { type WorkgraphMcpServerOptions } from './types.js';
 

@@ -1,4 +1,4 @@
-import { orientation as orientationModule } from '../../../kernel/src/index.js';
+import { orientation as orientationModule } from '@versatly/workgraph-kernel';
 
 export function okResult(data: unknown, summary: string) {
   return {

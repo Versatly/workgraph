@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
-import * as workgraph from '../../kernel/src/index.js';
-import { startWorkgraphServer, waitForShutdown } from '../../control-api/src/server.js';
+import * as workgraph from '@versatly/workgraph-kernel';
+import { startWorkgraphServer, waitForShutdown } from '@versatly/workgraph-control-api';
 import { registerAutonomyCommands } from './cli/commands/autonomy.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
