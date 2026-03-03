@@ -124,6 +124,7 @@ Key workspace packages:
 
 Migration notes: see `docs/MIGRATION.md`.
 Live workspace repair runbook: see `docs/INVARIANT_REPAIR_PLAYBOOK.md`.
+Realtime control-api SSE contract: see `docs/SSE_EVENTS.md`.
 
 ### Development workflow (contributors)
 

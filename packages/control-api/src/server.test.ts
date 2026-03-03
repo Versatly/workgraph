@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {
   agent as agentModule,
+  ledger as ledgerModule,
   store as storeModule,
   thread as threadModule,
   workspace as workspaceModule,
@@ -11,6 +12,7 @@ import {
 import { startWorkgraphServer } from './server.js';
 
 const agent = agentModule;
+const ledger = ledgerModule;
 const store = storeModule;
 const thread = threadModule;
 const workspace = workspaceModule;
@@ -24,6 +26,137 @@ beforeEach(() => {
 afterEach(() => {
   fs.rmSync(workspacePath, { recursive: true, force: true });
 });
+
+interface SseEnvelope {
+  id: string;
+  type: string;
+  path: string;
+  actor: string;
+  fields: Record<string, unknown>;
+  ts: string;
+}
+
+interface ParsedSseEvent {
+  id: string;
+  event: string;
+  data: SseEnvelope;
+}
+
+interface SseReader {
+  nextEvent: (timeoutMs?: number) => Promise<ParsedSseEvent>;
+  close: () => Promise<void>;
+}
+
+async function openSseStream(url: string, init?: RequestInit): Promise<SseReader> {
+  const response = await fetch(url, init);
+  expect(response.status).toBe(200);
+  expect(response.body).toBeDefined();
+  return createSseReader(response.body!);
+}
+
+function createSseReader(stream: ReadableStream<Uint8Array>): SseReader {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let ended = false;
+
+  const nextEvent = async (timeoutMs: number = 4_000): Promise<ParsedSseEvent> => {
+    const deadline = Date.now() + timeoutMs;
+    while (true) {
+      const parsed = tryParseFromBuffer();
+      if (parsed) return parsed;
+      if (ended) {
+        throw new Error('SSE stream ended before next event.');
+      }
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) {
+        throw new Error('Timed out waiting for SSE event.');
+      }
+      const chunk = await withTimeout(reader.read(), remainingMs, 'Timed out waiting for SSE chunk.');
+      if (chunk.done) {
+        ended = true;
+        buffer += decoder.decode();
+        continue;
+      }
+      buffer += decoder.decode(chunk.value, { stream: true });
+    }
+  };
+
+  const close = async () => {
+    ended = true;
+    try {
+      await reader.cancel();
+    } catch {
+      // no-op
+    }
+  };
+
+  const tryParseFromBuffer = (): ParsedSseEvent | null => {
+    while (true) {
+      const boundaryIndex = buffer.indexOf('\n\n');
+      if (boundaryIndex < 0) return null;
+      const block = buffer.slice(0, boundaryIndex);
+      buffer = buffer.slice(boundaryIndex + 2);
+      const parsed = parseSseBlock(block);
+      if (parsed) return parsed;
+    }
+  };
+
+  return {
+    nextEvent,
+    close,
+  };
+}
+
+function parseSseBlock(block: string): ParsedSseEvent | null {
+  const lines = block.split('\n').map((line) => line.replace(/\r$/, ''));
+  let id = '';
+  let event = '';
+  const dataLines: string[] = [];
+  for (const line of lines) {
+    if (!line || line.startsWith(':')) continue;
+    const separator = line.indexOf(':');
+    if (separator < 0) continue;
+    const key = line.slice(0, separator).trim();
+    const value = line.slice(separator + 1).trimStart();
+    if (key === 'id') {
+      id = value;
+      continue;
+    }
+    if (key === 'event') {
+      event = value;
+      continue;
+    }
+    if (key === 'data') {
+      dataLines.push(value);
+    }
+  }
+  if (dataLines.length === 0) return null;
+  const data = JSON.parse(dataLines.join('\n')) as SseEnvelope;
+  return {
+    id: id || data.id,
+    event: event || data.type,
+    data,
+  };
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, message: string): Promise<T> {
+  return await new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(message));
+    }, timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 describe('workgraph server REST API', () => {
   it('serves /health endpoint', async () => {
@@ -340,6 +473,151 @@ describe('workgraph server REST API', () => {
       expect(body.ok).toBe(true);
       expect(body.count).toBe(2);
       expect(body.entries.length).toBe(2);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('replays missed thread events from Last-Event-ID with stable ordering and ids', async () => {
+    const handle = await startWorkgraphServer({
+      workspacePath,
+      host: '127.0.0.1',
+      port: 0,
+    });
+    const streams: SseReader[] = [];
+    try {
+      const createdThread = thread.createThread(workspacePath, 'SSE replay', 'Replay goal', 'seed');
+      const streamUrl = `${handle.baseUrl}/api/events`
+        + `?thread=${encodeURIComponent(createdThread.path)}`
+        + '&event=thread.created&event=thread.claimed&event=thread.done';
+
+      const initialStream = await openSseStream(streamUrl);
+      streams.push(initialStream);
+      const createdEvent = await initialStream.nextEvent();
+      expect(createdEvent.event).toBe('thread.created');
+      expect(createdEvent.data.id).toBe(createdEvent.id);
+      expect(Object.keys(createdEvent.data)).toEqual(['id', 'type', 'path', 'actor', 'fields', 'ts']);
+      await initialStream.close();
+
+      thread.claim(workspacePath, createdThread.path, 'worker-a');
+      thread.done(
+        workspacePath,
+        createdThread.path,
+        'worker-a',
+        'Completed in SSE replay test https://github.com/Versatly/workgraph/pull/1',
+      );
+
+      const replayStream = await openSseStream(streamUrl, {
+        headers: {
+          'last-event-id': createdEvent.id,
+        },
+      });
+      streams.push(replayStream);
+      const firstMissed = await replayStream.nextEvent();
+      const secondMissed = await replayStream.nextEvent();
+      expect(firstMissed.event).toBe('thread.claimed');
+      expect(secondMissed.event).toBe('thread.done');
+      expect(firstMissed.id).not.toBe(secondMissed.id);
+      await replayStream.close();
+
+      const deterministicReplay = await openSseStream(streamUrl, {
+        headers: {
+          'last-event-id': createdEvent.id,
+        },
+      });
+      streams.push(deterministicReplay);
+      const replayAgainFirst = await deterministicReplay.nextEvent();
+      const replayAgainSecond = await deterministicReplay.nextEvent();
+      expect([replayAgainFirst.id, replayAgainSecond.id]).toEqual([firstMissed.id, secondMissed.id]);
+      expect([replayAgainFirst.event, replayAgainSecond.event]).toEqual(['thread.claimed', 'thread.done']);
+      await deterministicReplay.close();
+    } finally {
+      for (const stream of streams) {
+        await stream.close();
+      }
+      await handle.close();
+    }
+  });
+
+  it('supports primitive filters for conversation, plan-step, and run updates', async () => {
+    const handle = await startWorkgraphServer({
+      workspacePath,
+      host: '127.0.0.1',
+      port: 0,
+    });
+    const streams: SseReader[] = [];
+    try {
+      ledger.append(workspacePath, 'seed', 'update', 'conversations/sse.md', 'conversation', {
+        status: 'active',
+      });
+      ledger.append(workspacePath, 'seed', 'update', 'plan-steps/sse.md', 'plan-step', {
+        status: 'active',
+      });
+      ledger.append(workspacePath, 'seed', 'update', '.workgraph/runs/run_sse', 'run', {
+        status: 'running',
+      });
+
+      const conversationStream = await openSseStream(
+        `${handle.baseUrl}/api/events?primitive=conversation&event=conversation.updated`,
+      );
+      streams.push(conversationStream);
+      const conversationEvent = await conversationStream.nextEvent();
+      expect(conversationEvent.event).toBe('conversation.updated');
+      expect(conversationEvent.data.path).toBe('conversations/sse.md');
+      await conversationStream.close();
+
+      const stepStream = await openSseStream(
+        `${handle.baseUrl}/api/events?primitive=plan-step&event=plan-step.updated`,
+      );
+      streams.push(stepStream);
+      const stepEvent = await stepStream.nextEvent();
+      expect(stepEvent.event).toBe('plan-step.updated');
+      expect(stepEvent.data.path).toBe('plan-steps/sse.md');
+      await stepStream.close();
+
+      const runStream = await openSseStream(
+        `${handle.baseUrl}/api/events?primitive=run&event=run.updated`,
+      );
+      streams.push(runStream);
+      const runEvent = await runStream.nextEvent();
+      expect(runEvent.event).toBe('run.updated');
+      expect(runEvent.data.path).toBe('.workgraph/runs/run_sse');
+      await runStream.close();
+    } finally {
+      for (const stream of streams) {
+        await stream.close();
+      }
+      await handle.close();
+    }
+  });
+
+  it('sends keepalive heartbeat comments for idle SSE streams', async () => {
+    const handle = await startWorkgraphServer({
+      workspacePath,
+      host: '127.0.0.1',
+      port: 0,
+      sseKeepaliveMs: 100,
+    });
+    try {
+      const response = await fetch(`${handle.baseUrl}/api/events?event=thread.done`);
+      expect(response.status).toBe(200);
+      expect(response.body).toBeDefined();
+      const reader = response.body!.getReader();
+      const decoder = new TextDecoder();
+      let output = '';
+      const deadline = Date.now() + 1_500;
+      while (Date.now() < deadline && !output.includes(':keepalive')) {
+        const remaining = deadline - Date.now();
+        const chunk = await withTimeout(
+          reader.read(),
+          remaining,
+          'Timed out waiting for SSE keepalive comment.',
+        );
+        if (chunk.done) break;
+        output += decoder.decode(chunk.value, { stream: true });
+      }
+      expect(output.includes(':keepalive')).toBe(true);
+      await reader.cancel();
     } finally {
       await handle.close();
     }
