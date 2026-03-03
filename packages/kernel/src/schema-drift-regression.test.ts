@@ -33,6 +33,9 @@ describe('schema drift regression', () => {
       mcpServe: extractOptionSignatures(runCliHelp(['mcp', 'serve'])),
       dispatchExecute: extractOptionSignatures(runCliHelp(['dispatch', 'execute', 'run_123'])),
       triggerFire: extractOptionSignatures(runCliHelp(['trigger', 'fire', 'triggers/example.md'])),
+      query: extractOptionSignatures(runCliHelp(['query'])),
+      lensList: extractOptionSignatures(runCliHelp(['lens', 'list'])),
+      lensShow: extractOptionSignatures(runCliHelp(['lens', 'show', 'my-work'])),
       serverServe: extractOptionSignatures(runCliHelp(['serve'])),
     };
 
