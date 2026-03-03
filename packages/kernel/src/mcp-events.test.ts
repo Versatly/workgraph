@@ -87,6 +87,52 @@ describe('mcp-events core module', () => {
     ]);
   });
 
+  it('maps collaboration ask/reply and heartbeat events', () => {
+    const ask = mapLedgerEntryToSseEvents(entry({
+      op: 'update',
+      target: 'conversations/coordination.md',
+      type: 'conversation',
+      data: {
+        conversation_event: {
+          event_type: 'ask',
+          correlation_id: 'corr-1',
+          message: 'Need update',
+        },
+      },
+    }));
+    expect(ask.some((event) => event.type === 'collaboration.ask')).toBe(true);
+    expect(ask.some((event) => event.type === 'primitive.updated')).toBe(true);
+
+    const reply = mapLedgerEntryToSseEvents(entry({
+      op: 'update',
+      target: 'conversations/coordination.md',
+      type: 'conversation',
+      data: {
+        conversation_event: {
+          event_type: 'reply',
+          reply_to: 'corr-1',
+          message: 'Shipped',
+        },
+      },
+    }));
+    expect(reply.some((event) => event.type === 'collaboration.reply')).toBe(true);
+    expect(reply.some((event) => event.type === 'primitive.updated')).toBe(true);
+
+    const threadHeartbeat = mapLedgerEntryToSseEvents(entry({
+      op: 'heartbeat',
+      target: 'threads/coordination.md',
+      type: 'thread',
+      data: {
+        ttl_minutes: 15,
+      },
+    }));
+    expect(threadHeartbeat).toEqual([
+      expect.objectContaining({
+        type: 'collaboration.heartbeat',
+      }),
+    ]);
+  });
+
   it('suppresses primitive CRUD events for ledger internals and untyped entries', () => {
     const ledgerInternal = mapLedgerEntryToSseEvents(entry({
       op: 'create',

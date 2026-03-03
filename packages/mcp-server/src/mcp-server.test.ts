@@ -206,6 +206,10 @@ describe('workgraph mcp server', () => {
         'workgraph_dispatch_stop',
         'workgraph_trigger_engine_cycle',
         'workgraph_autonomy_run',
+        'wg_post_message',
+        'wg_ask',
+        'wg_spawn_thread',
+        'wg_heartbeat',
       ];
       for (const name of expectedTools) {
         expect(toolNames.has(name)).toBe(true);
@@ -213,6 +217,237 @@ describe('workgraph mcp server', () => {
 
       // Verify status tool works end-to-end
       expect(toolNames.size).toBeGreaterThan(10);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('supports deterministic v2 collaboration tools with schema/auth/idempotency handling', async () => {
+    const parent = thread.createThread(
+      workspacePath,
+      'Parent coordination',
+      'Coordinate collaboration flow',
+      'seed-agent',
+    );
+    const server = createWorkgraphMcpServer({
+      workspacePath,
+      defaultActor: 'agent-v2',
+    });
+    const client = new Client({
+      name: 'workgraph-mcp-test-client-v2',
+      version: '1.0.0',
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    try {
+      let schemaRejected = false;
+      try {
+        const schemaResult = await client.callTool({
+          name: 'wg_post_message',
+          arguments: {
+            threadPath: parent.path,
+            body: 'should fail schema',
+            messageType: 'invalid-message-type',
+          },
+        });
+        schemaRejected = isToolError(schemaResult);
+      } catch {
+        schemaRejected = true;
+      }
+      expect(schemaRejected).toBe(true);
+
+      const denied = await client.callTool({
+        name: 'wg_post_message',
+        arguments: {
+          threadPath: parent.path,
+          body: 'Auth denied message',
+          idempotencyKey: 'post-denied-key',
+        },
+      });
+      expect(isToolError(denied)).toBe(true);
+      const deniedPayload = getStructured<{ ok: boolean; error: { code: string } }>(denied);
+      expect(deniedPayload.ok).toBe(false);
+      expect(deniedPayload.error.code).toBe('POLICY_DENIED');
+
+      policy.upsertParty(workspacePath, 'agent-v2', {
+        roles: ['operator'],
+        capabilities: ['mcp:write', 'thread:update', 'thread:create', 'agent:heartbeat'],
+      });
+
+      const posted = await client.callTool({
+        name: 'wg_post_message',
+        arguments: {
+          threadPath: parent.path,
+          body: 'Coordination message',
+          messageType: 'message',
+          idempotencyKey: 'post-idem-key',
+          evidence: [
+            {
+              kind: 'link',
+              url: 'https://github.com/versatly/workgraph/pull/999',
+              title: 'PR evidence',
+            },
+          ],
+          metadata: {
+            source: 'test',
+            attempt: 1,
+          },
+        },
+      });
+      expect(isToolError(posted)).toBe(false);
+      const postedPayload = getStructured<{
+        ok: boolean;
+        data: { operation: string; event: { id: string } };
+      }>(posted);
+      expect(postedPayload.ok).toBe(true);
+      expect(postedPayload.data.operation).toBe('created');
+
+      const postReplay = await client.callTool({
+        name: 'wg_post_message',
+        arguments: {
+          threadPath: parent.path,
+          body: 'Coordination message',
+          messageType: 'message',
+          idempotencyKey: 'post-idem-key',
+          evidence: [
+            {
+              kind: 'link',
+              url: 'https://github.com/versatly/workgraph/pull/999',
+              title: 'PR evidence',
+            },
+          ],
+          metadata: {
+            source: 'test',
+            attempt: 1,
+          },
+        },
+      });
+      expect(isToolError(postReplay)).toBe(false);
+      const replayPayload = getStructured<{
+        data: { operation: string; event: { id: string } };
+      }>(postReplay);
+      expect(replayPayload.data.operation).toBe('replayed');
+      expect(replayPayload.data.event.id).toBe(postedPayload.data.event.id);
+
+      const postConflict = await client.callTool({
+        name: 'wg_post_message',
+        arguments: {
+          threadPath: parent.path,
+          body: 'Changed body should conflict',
+          messageType: 'message',
+          idempotencyKey: 'post-idem-key',
+        },
+      });
+      expect(isToolError(postConflict)).toBe(true);
+      const conflictPayload = getStructured<{ ok: boolean; error: { code: string } }>(postConflict);
+      expect(conflictPayload.ok).toBe(false);
+      expect(conflictPayload.error.code).toBe('IDEMPOTENCY_CONFLICT');
+
+      const asked = await client.callTool({
+        name: 'wg_ask',
+        arguments: {
+          threadPath: parent.path,
+          question: 'Can you provide a status update?',
+          idempotencyKey: 'ask-idem-key',
+          awaitReply: false,
+        },
+      });
+      expect(isToolError(asked)).toBe(false);
+      const askPayload = getStructured<{
+        data: {
+          operation: string;
+          status: string;
+          correlation_id: string;
+          ask: { id: string };
+        };
+      }>(asked);
+      expect(askPayload.data.operation).toBe('created');
+      expect(askPayload.data.status).toBe('pending');
+
+      const askReplay = await client.callTool({
+        name: 'wg_ask',
+        arguments: {
+          threadPath: parent.path,
+          question: 'Can you provide a status update?',
+          idempotencyKey: 'ask-idem-key',
+          awaitReply: false,
+        },
+      });
+      expect(isToolError(askReplay)).toBe(false);
+      const askReplayPayload = getStructured<{
+        data: {
+          operation: string;
+          correlation_id: string;
+          ask: { id: string };
+        };
+      }>(askReplay);
+      expect(askReplayPayload.data.operation).toBe('replayed');
+      expect(askReplayPayload.data.correlation_id).toBe(askPayload.data.correlation_id);
+      expect(askReplayPayload.data.ask.id).toBe(askPayload.data.ask.id);
+
+      const spawned = await client.callTool({
+        name: 'wg_spawn_thread',
+        arguments: {
+          parentThreadPath: parent.path,
+          title: 'Child coordination task',
+          goal: 'Implement child flow',
+          idempotencyKey: 'spawn-idem-key',
+          tags: ['coordination'],
+          contextRefs: ['spaces/platform.md'],
+        },
+      });
+      expect(isToolError(spawned)).toBe(false);
+      const spawnedPayload = getStructured<{
+        data: { operation: string; thread: { path: string } };
+      }>(spawned);
+      expect(spawnedPayload.data.operation).toBe('created');
+
+      const spawnReplay = await client.callTool({
+        name: 'wg_spawn_thread',
+        arguments: {
+          parentThreadPath: parent.path,
+          title: 'Child coordination task',
+          goal: 'Implement child flow',
+          idempotencyKey: 'spawn-idem-key',
+          tags: ['coordination'],
+          contextRefs: ['spaces/platform.md'],
+        },
+      });
+      expect(isToolError(spawnReplay)).toBe(false);
+      const spawnReplayPayload = getStructured<{
+        data: { operation: string; thread: { path: string } };
+      }>(spawnReplay);
+      expect(spawnReplayPayload.data.operation).toBe('replayed');
+      expect(spawnReplayPayload.data.thread.path).toBe(spawnedPayload.data.thread.path);
+
+      const heartbeatResult = await client.callTool({
+        name: 'wg_heartbeat',
+        arguments: {
+          actor: 'agent-v2',
+          status: 'busy',
+          currentWork: parent.path,
+          threadPath: parent.path,
+          threadLeaseMinutes: 20,
+        },
+      });
+      expect(isToolError(heartbeatResult)).toBe(false);
+      const heartbeatPayload = getStructured<{
+        data: {
+          operation: string;
+          presence: { status: string };
+          threads: { touched: unknown[]; skipped: unknown[] };
+        };
+      }>(heartbeatResult);
+      expect(heartbeatPayload.data.operation).toBe('updated');
+      expect(heartbeatPayload.data.presence.status).toBe('busy');
+      expect(Array.isArray(heartbeatPayload.data.threads.touched)).toBe(true);
+      expect(Array.isArray(heartbeatPayload.data.threads.skipped)).toBe(true);
     } finally {
       await client.close();
       await server.close();
@@ -235,68 +470,4 @@ function isToolError(result: unknown): boolean {
   if (!result || typeof result !== 'object') return false;
   if (!('isError' in result)) return false;
   return (result as { isError?: boolean }).isError === true;
-}
-
-async function readSseEvents(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  minEvents: number,
-  timeoutMs: number,
-): Promise<Array<{ type: string; data: unknown }>> {
-  const decoder = new TextDecoder();
-  let buffer = '';
-  const events: Array<{ type: string; data: unknown }> = [];
-  const deadline = Date.now() + timeoutMs;
-
-  while (events.length < minEvents && Date.now() < deadline) {
-    const remaining = deadline - Date.now();
-    const nextChunk = await Promise.race([
-      reader.read(),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('Timed out waiting for SSE events.')), remaining)),
-    ]);
-    if (nextChunk.done) break;
-    buffer += decoder.decode(nextChunk.value, { stream: true });
-
-    let separatorIndex = buffer.indexOf('\n\n');
-    while (separatorIndex !== -1) {
-      const rawEvent = buffer.slice(0, separatorIndex);
-      buffer = buffer.slice(separatorIndex + 2);
-      const parsed = parseSseEvent(rawEvent);
-      if (parsed) events.push(parsed);
-      separatorIndex = buffer.indexOf('\n\n');
-    }
-  }
-
-  if (events.length < minEvents) {
-    throw new Error(`Expected at least ${minEvents} SSE events, received ${events.length}.`);
-  }
-
-  return events;
-}
-
-function parseSseEvent(rawEvent: string): { type: string; data: unknown } | null {
-  const lines = rawEvent
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0 && !line.startsWith(':'));
-  if (lines.length === 0) return null;
-
-  let type = 'message';
-  let dataLine = '';
-  for (const line of lines) {
-    if (line.startsWith('event:')) {
-      type = line.slice('event:'.length).trim();
-    } else if (line.startsWith('data:')) {
-      dataLine += line.slice('data:'.length).trim();
-    }
-  }
-  if (!dataLine) return null;
-  try {
-    return {
-      type,
-      data: JSON.parse(dataLine),
-    };
-  } catch {
-    return null;
-  }
 }

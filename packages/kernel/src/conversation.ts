@@ -2,6 +2,8 @@
  * Conversation + plan-step coordination primitives.
  */
 
+import { createHash } from 'node:crypto';
+import * as ledger from './ledger.js';
 import * as store from './store.js';
 import type {
   ConversationStateSummary,
@@ -14,14 +16,33 @@ import {
   PLAN_STEP_STATUS_TRANSITIONS,
 } from './types.js';
 
-export type ConversationEventKind = 'message' | 'note' | 'decision' | 'system';
+export type ConversationEventKind = 'message' | 'note' | 'decision' | 'system' | 'ask' | 'reply';
+
+export type ConversationEvidenceKind = 'link' | 'file';
+
+export interface ConversationEvidenceAttachment {
+  kind: ConversationEvidenceKind;
+  url?: string;
+  path?: string;
+  title?: string;
+  mime_type?: string;
+  size_bytes?: number;
+  sha256?: string;
+}
 
 export interface ConversationEventRecord {
+  id?: string;
   ts: string;
   actor: string;
   kind: ConversationEventKind;
+  event_type?: string;
   message: string;
   thread_ref?: string;
+  correlation_id?: string;
+  reply_to?: string;
+  idempotency_key?: string;
+  evidence?: ConversationEvidenceAttachment[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface CreateConversationOptions {
@@ -33,7 +54,14 @@ export interface CreateConversationOptions {
 
 export interface AppendConversationMessageOptions {
   kind?: ConversationEventKind;
+  eventType?: string;
+  eventId?: string;
   threadRef?: string;
+  correlationId?: string;
+  replyTo?: string;
+  idempotencyKey?: string;
+  evidence?: ConversationEvidenceAttachment[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface CreatePlanStepOptions {
@@ -134,6 +162,11 @@ export function getConversation(workspacePath: string, conversationRef: string):
   };
 }
 
+export function listConversationEvents(workspacePath: string, conversationRef: string): ConversationEventRecord[] {
+  const conversation = readConversationOrThrow(workspacePath, conversationRef);
+  return coerceEventRecords(conversation.fields.events);
+}
+
 export function appendConversationMessage(
   workspacePath: string,
   conversationRef: string,
@@ -146,12 +179,34 @@ export function appendConversationMessage(
   if (!trimmedMessage) {
     throw new Error('Conversation message text cannot be empty.');
   }
+  const kind = normalizeConversationEventKind(options.kind) ?? 'message';
+  const eventType = asOptionalString(options.eventType) ?? kind;
+  const correlationId = asOptionalString(options.correlationId);
+  const replyTo = asOptionalString(options.replyTo);
+  const idempotencyKey = asOptionalString(options.idempotencyKey);
+  const metadata = coerceMetadataRecord(options.metadata);
+  const evidence = coerceEvidenceAttachments(options.evidence);
   const event: ConversationEventRecord = {
+    id: asOptionalString(options.eventId) ?? mintConversationEventId({
+      conversationPath: conversation.path,
+      actor,
+      kind,
+      message: trimmedMessage,
+      eventType,
+      correlationId,
+      idempotencyKey,
+    }),
     ts: new Date().toISOString(),
     actor,
-    kind: options.kind ?? 'message',
+    kind,
+    event_type: eventType,
     message: trimmedMessage,
     ...(options.threadRef ? { thread_ref: normalizeThreadRef(options.threadRef) } : {}),
+    ...(correlationId ? { correlation_id: correlationId } : {}),
+    ...(replyTo ? { reply_to: replyTo } : {}),
+    ...(idempotencyKey ? { idempotency_key: idempotencyKey } : {}),
+    ...(evidence.length > 0 ? { evidence } : {}),
+    ...(metadata ? { metadata } : {}),
   };
   if (event.thread_ref) {
     assertThreadExists(workspacePath, event.thread_ref);
@@ -175,6 +230,22 @@ export function appendConversationMessage(
     }),
     actor,
   );
+  ledger.append(workspacePath, actor, 'update', updated.path, 'conversation', {
+    conversation_event: {
+      id: event.id,
+      ts: event.ts,
+      actor: event.actor,
+      kind: event.kind,
+      event_type: event.event_type,
+      message: event.message,
+      thread_ref: event.thread_ref,
+      correlation_id: event.correlation_id,
+      reply_to: event.reply_to,
+      idempotency_key: event.idempotency_key,
+      evidence: event.evidence,
+      metadata: event.metadata,
+    },
+  });
   const synced = syncConversationState(workspacePath, updated.path, actor);
   return {
     conversation: synced,
@@ -679,6 +750,22 @@ function normalizePlanStepStatus(value: unknown): PlanStepStatus {
   return 'open';
 }
 
+function normalizeConversationEventKind(value: unknown): ConversationEventKind | undefined {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (!normalized) return undefined;
+  if (
+    normalized === 'message' ||
+    normalized === 'note' ||
+    normalized === 'decision' ||
+    normalized === 'system' ||
+    normalized === 'ask' ||
+    normalized === 'reply'
+  ) {
+    return normalized;
+  }
+  return undefined;
+}
+
 function comparePlanSteps(left: PrimitiveInstance, right: PrimitiveInstance): number {
   const byOrder = toFiniteNumber(left.fields.order, Number.MAX_SAFE_INTEGER) - toFiniteNumber(right.fields.order, Number.MAX_SAFE_INTEGER);
   if (byOrder !== 0) return byOrder;
@@ -717,21 +804,90 @@ function coerceEventRecords(value: unknown): ConversationEventRecord[] {
   for (const item of value) {
     if (!item || typeof item !== 'object') continue;
     const record = item as Record<string, unknown>;
+    const id = asOptionalString(record.id);
     const ts = asOptionalString(record.ts);
     const actor = asOptionalString(record.actor);
-    const kind = asOptionalString(record.kind) as ConversationEventKind | undefined;
+    const kind = normalizeConversationEventKind(record.kind);
+    const eventType = asOptionalString(record.event_type);
     const message = asOptionalString(record.message);
     if (!ts || !actor || !message) continue;
-    if (kind !== 'message' && kind !== 'note' && kind !== 'decision' && kind !== 'system') continue;
+    if (!kind) continue;
+    const metadata = coerceMetadataRecord(record.metadata);
+    const evidence = coerceEvidenceAttachments(record.evidence);
     records.push({
+      ...(id ? { id } : {}),
       ts,
       actor,
       kind,
+      ...(eventType ? { event_type: eventType } : {}),
       message,
       ...(asOptionalString(record.thread_ref) ? { thread_ref: normalizeThreadRef(record.thread_ref) } : {}),
+      ...(asOptionalString(record.correlation_id) ? { correlation_id: asOptionalString(record.correlation_id) } : {}),
+      ...(asOptionalString(record.reply_to) ? { reply_to: asOptionalString(record.reply_to) } : {}),
+      ...(asOptionalString(record.idempotency_key) ? { idempotency_key: asOptionalString(record.idempotency_key) } : {}),
+      ...(evidence.length > 0 ? { evidence } : {}),
+      ...(metadata ? { metadata } : {}),
     });
   }
   return records;
+}
+
+function coerceEvidenceAttachments(value: unknown): ConversationEvidenceAttachment[] {
+  if (!Array.isArray(value)) return [];
+  const output: ConversationEvidenceAttachment[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const record = item as Record<string, unknown>;
+    const kind = normalizeEvidenceKind(record.kind);
+    if (!kind) continue;
+    const url = asOptionalString(record.url);
+    const filePath = asOptionalString(record.path);
+    if (!url && !filePath) continue;
+    const sizeBytes = toFiniteNumber(record.size_bytes, -1);
+    output.push({
+      kind,
+      ...(url ? { url } : {}),
+      ...(filePath ? { path: filePath } : {}),
+      ...(asOptionalString(record.title) ? { title: asOptionalString(record.title) } : {}),
+      ...(asOptionalString(record.mime_type) ? { mime_type: asOptionalString(record.mime_type) } : {}),
+      ...(sizeBytes >= 0 ? { size_bytes: Math.round(sizeBytes) } : {}),
+      ...(asOptionalString(record.sha256) ? { sha256: asOptionalString(record.sha256) } : {}),
+    });
+  }
+  return output;
+}
+
+function normalizeEvidenceKind(value: unknown): ConversationEvidenceKind | undefined {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (normalized === 'link' || normalized === 'file') return normalized;
+  return undefined;
+}
+
+function coerceMetadataRecord(value: unknown): Record<string, unknown> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const normalized = Object.fromEntries(
+    Object.entries(value)
+      .filter(([key]) => key.trim().length > 0)
+      .map(([key, item]) => [key, normalizeMetadataValue(item)]),
+  );
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
+}
+
+function normalizeMetadataValue(value: unknown): unknown {
+  if (value === null) return null;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => normalizeMetadataValue(item));
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return Object.fromEntries(
+      Object.entries(record).map(([key, item]) => [key, normalizeMetadataValue(item)]),
+    );
+  }
+  return String(value);
 }
 
 function uniqueRefs(values: string[]): string[] {
@@ -810,11 +966,40 @@ function renderConversationBody(input: {
     lines.push('- none');
   } else {
     for (const event of recentEvents) {
-      lines.push(`- ${event.ts} [${event.kind}] ${event.actor}${event.thread_ref ? ` thread=${event.thread_ref}` : ''}: ${event.message}`);
+      const marker = event.event_type ?? event.kind;
+      const details = [
+        event.thread_ref ? `thread=${event.thread_ref}` : '',
+        event.correlation_id ? `correlation=${event.correlation_id}` : '',
+        event.reply_to ? `reply_to=${event.reply_to}` : '',
+        event.evidence && event.evidence.length > 0 ? `evidence=${event.evidence.length}` : '',
+      ].filter((entry) => entry.length > 0);
+      lines.push(`- ${event.ts} [${marker}] ${event.actor}${details.length > 0 ? ` (${details.join(', ')})` : ''}: ${event.message}`);
     }
   }
   lines.push('');
   return lines.join('\n');
+}
+
+function mintConversationEventId(input: {
+  conversationPath: string;
+  actor: string;
+  kind: ConversationEventKind;
+  eventType: string;
+  message: string;
+  correlationId?: string;
+  idempotencyKey?: string;
+}): string {
+  const seed = stableStringify({
+    conversation: input.conversationPath,
+    actor: input.actor,
+    kind: input.kind,
+    eventType: input.eventType,
+    message: input.message,
+    correlationId: input.correlationId,
+    idempotencyKey: input.idempotencyKey,
+    now: new Date().toISOString(),
+  });
+  return `evt_${createHash('sha1').update(seed).digest('hex').slice(0, 16)}`;
 }
 
 function renderPlanStepBody(input: {

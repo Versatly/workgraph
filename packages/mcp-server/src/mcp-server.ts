@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { registerCollaborationTools } from './mcp/tools/collaboration-tools.js';
 import { registerResources } from './mcp/resources.js';
 import { registerReadTools } from './mcp/tools/read-tools.js';
 import { registerWriteTools } from './mcp/tools/write-tools.js';
@@ -24,6 +25,7 @@ export function createWorkgraphMcpServer(options: WorkgraphMcpServerOptions): Mc
   registerResources(server, options);
   registerReadTools(server, options);
   registerWriteTools(server, options);
+  registerCollaborationTools(server, options);
   return server;
 }
 
