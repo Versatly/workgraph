@@ -1,1 +1,1 @@
-export { generateKanbanBoard } from '../../../../src/board.js';
+export { generateKanbanBoard } from '../board.js';

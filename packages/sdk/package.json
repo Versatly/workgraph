@@ -4,8 +4,20 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "main": "src/index.ts",
-  "types": "src/index.ts"
+  "types": "src/index.ts",
+  "dependencies": {
+    "@versatly/workgraph-adapter-claude-code": "workspace:*",
+    "@versatly/workgraph-adapter-cursor-cloud": "workspace:*",
+    "@versatly/workgraph-control-api": "workspace:*",
+    "@versatly/workgraph-kernel": "workspace:*",
+    "@versatly/workgraph-mcp-server": "workspace:*",
+    "@versatly/workgraph-obsidian-integration": "workspace:*",
+    "@versatly/workgraph-policy": "workspace:*",
+    "@versatly/workgraph-runtime-adapter-core": "workspace:*",
+    "@versatly/workgraph-search-qmd-adapter": "workspace:*",
+    "@versatly/workgraph-skills": "workspace:*"
+  }
 }

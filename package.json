@@ -45,7 +45,7 @@
     "SKILL.md"
   ],
   "scripts": {
-    "build": "tsup src/index.ts src/cli.ts src/mcp-server.ts src/mcp-http-server.ts src/server.ts src/server-entry.ts --format esm --dts --clean --splitting false",
+    "build": "tsup src/index.ts src/cli.ts src/mcp-server.ts src/mcp-http-server.ts src/server.ts src/server-entry.ts --format esm --clean --splitting false",
     "build:packages": "npm run build --workspaces --if-present",
     "typecheck": "tsc --noEmit",
     "typecheck:packages": "npm run typecheck --workspaces --if-present",
@@ -79,6 +79,17 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
+    "@versatly/workgraph-adapter-claude-code": "workspace:*",
+    "@versatly/workgraph-adapter-cursor-cloud": "workspace:*",
+    "@versatly/workgraph-cli": "workspace:*",
+    "@versatly/workgraph-control-api": "workspace:*",
+    "@versatly/workgraph-kernel": "workspace:*",
+    "@versatly/workgraph-mcp-server": "workspace:*",
+    "@versatly/workgraph-obsidian-integration": "workspace:*",
+    "@versatly/workgraph-policy": "workspace:*",
+    "@versatly/workgraph-runtime-adapter-core": "workspace:*",
+    "@versatly/workgraph-search-qmd-adapter": "workspace:*",
+    "@versatly/workgraph-skills": "workspace:*",
     "commander": "^12.0.0",
     "gray-matter": "^4.0.3",
     "yaml": "^2.8.1",

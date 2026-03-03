@@ -1,1 +1,1 @@
-export { statusSnapshot } from '../../../../src/orientation.js';
+export { statusSnapshot } from '../orientation.js';

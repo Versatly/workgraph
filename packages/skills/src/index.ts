@@ -1,1 +1,1 @@
-export * from '../../../src/skill.js';
+export * from '@versatly/workgraph-kernel/src/skill.js';

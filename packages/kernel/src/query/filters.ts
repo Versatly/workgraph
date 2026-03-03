@@ -1,1 +1,1 @@
-export type { PrimitiveQueryFilters } from '../../../../src/types.js';
+export type { PrimitiveQueryFilters } from '../types.js';
