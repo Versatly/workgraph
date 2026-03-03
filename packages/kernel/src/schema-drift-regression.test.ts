@@ -5,7 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createWorkgraphMcpServer } from './mcp-server.js';
+import { createWorkgraphMcpServer } from '@versatly/workgraph-mcp-server';
 import { loadRegistry, saveRegistry } from './registry.js';
 
 let workspacePath: string;
@@ -77,12 +77,21 @@ describe('schema drift regression', () => {
 
 function ensureBuiltCli(): void {
   if (cliBuilt) return;
-  const result = spawnSync('pnpm', ['run', 'build', '--silent'], {
-    encoding: 'utf-8',
-  });
+  const npmExecPath = process.env.npm_execpath;
+  const result = npmExecPath
+    ? spawnSync(process.execPath, [npmExecPath, 'run', 'build', '--silent'], {
+        encoding: 'utf-8',
+      })
+    : process.platform === 'win32'
+      ? spawnSync('cmd.exe', ['/d', '/s', '/c', 'pnpm run build --silent'], {
+          encoding: 'utf-8',
+        })
+      : spawnSync('pnpm', ['run', 'build', '--silent'], {
+          encoding: 'utf-8',
+        });
   if (result.status !== 0) {
     throw new Error(
-      `Failed to build CLI for schema drift tests.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}`,
+      `Failed to build CLI for schema drift tests.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}\nspawnError:\n${result.error?.message ?? 'none'}`,
     );
   }
   cliBuilt = true;
