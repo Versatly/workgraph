@@ -20,6 +20,9 @@ const LEDGER_CHAIN_FILE = '.workgraph/ledger-chain.json';
 const LEDGER_INDEX_VERSION = 1;
 const LEDGER_CHAIN_VERSION = 1;
 const LEDGER_GENESIS_HASH = 'GENESIS';
+const LEDGER_APPEND_SUBSCRIBERS = new Map<string, Set<LedgerAppendSubscriber>>();
+
+export type LedgerAppendSubscriber = (entry: LedgerEntry) => void;
 
 // ---------------------------------------------------------------------------
 // Core operations
@@ -66,7 +69,27 @@ export function append(
   fs.appendFileSync(lPath, JSON.stringify(entry) + '\n', 'utf-8');
   updateIndexWithEntry(workspacePath, entry);
   updateChainStateWithEntry(workspacePath, entry);
+  notifyAppendSubscribers(workspacePath, entry);
   return entry;
+}
+
+export function subscribe(
+  workspacePath: string,
+  subscriber: LedgerAppendSubscriber,
+): () => void {
+  const key = normalizeWorkspaceKey(workspacePath);
+  const listeners = LEDGER_APPEND_SUBSCRIBERS.get(key) ?? new Set<LedgerAppendSubscriber>();
+  listeners.add(subscriber);
+  LEDGER_APPEND_SUBSCRIBERS.set(key, listeners);
+
+  return () => {
+    const existing = LEDGER_APPEND_SUBSCRIBERS.get(key);
+    if (!existing) return;
+    existing.delete(subscriber);
+    if (existing.size === 0) {
+      LEDGER_APPEND_SUBSCRIBERS.delete(key);
+    }
+  };
 }
 
 export function readAll(workspacePath: string): LedgerEntry[] {
@@ -417,4 +440,20 @@ function stableStringify(value: unknown): string {
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj).sort();
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(',')}}`;
+}
+
+function notifyAppendSubscribers(workspacePath: string, entry: LedgerEntry): void {
+  const listeners = LEDGER_APPEND_SUBSCRIBERS.get(normalizeWorkspaceKey(workspacePath));
+  if (!listeners || listeners.size === 0) return;
+  for (const listener of listeners) {
+    try {
+      listener(entry);
+    } catch {
+      // Subscriber failures should never break ledger append semantics.
+    }
+  }
+}
+
+function normalizeWorkspaceKey(workspacePath: string): string {
+  return path.resolve(workspacePath);
 }
