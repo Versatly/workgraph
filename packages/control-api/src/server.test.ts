@@ -2,8 +2,11 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import {
   agent as agentModule,
+  policy as policyModule,
   store as storeModule,
   thread as threadModule,
   workspace as workspaceModule,
@@ -11,6 +14,7 @@ import {
 import { startWorkgraphServer } from './server.js';
 
 const agent = agentModule;
+const policy = policyModule;
 const store = storeModule;
 const thread = threadModule;
 const workspace = workspaceModule;
@@ -345,6 +349,120 @@ describe('workgraph server REST API', () => {
     }
   });
 
+  it('replays collaboration ask/reply events across SSE reconnects', async () => {
+    const handle = await startWorkgraphServer({
+      workspacePath,
+      host: '127.0.0.1',
+      port: 0,
+    });
+    const client = new Client({
+      name: 'workgraph-collaboration-reconnect-client',
+      version: '1.0.0',
+    });
+    const transport = new StreamableHTTPClientTransport(new URL(handle.url));
+    await client.connect(transport);
+    const streamOne = await openSseStream(`${handle.baseUrl}/api/events`);
+    try {
+      policy.upsertParty(workspacePath, 'collab-agent', {
+        roles: ['operator'],
+        capabilities: ['mcp:write', 'thread:update', 'thread:create', 'agent:heartbeat'],
+      });
+      const parent = thread.createThread(
+        workspacePath,
+        'SSE reconnect parent',
+        'Validate collaboration replay across reconnect',
+        'seed',
+      );
+      const correlationId = 'corr-reconnect-test';
+      const askResult = await client.callTool({
+        name: 'wg_ask',
+        arguments: {
+          actor: 'collab-agent',
+          threadPath: parent.path,
+          question: 'Can you confirm deployment status?',
+          correlationId,
+          idempotencyKey: 'ask-reconnect-idem',
+          awaitReply: false,
+        },
+      });
+      expect(isToolError(askResult)).toBe(false);
+      const askPayload = getStructured<{
+        ok: boolean;
+        data: { status: string; correlation_id: string };
+      }>(askResult);
+      expect(askPayload.ok).toBe(true);
+      expect(askPayload.data.status).toBe('pending');
+      expect(askPayload.data.correlation_id).toBe(correlationId);
+
+      const askEvent = await waitForSseEvent(
+        streamOne.reader,
+        (event) => event.type === 'collaboration.ask',
+        4_000,
+      );
+      expect(askEvent.id).toBeTruthy();
+      await streamOne.close();
+
+      const replyResult = await client.callTool({
+        name: 'wg_post_message',
+        arguments: {
+          actor: 'collab-agent',
+          threadPath: parent.path,
+          body: 'Deployment confirmed healthy.',
+          messageType: 'reply',
+          replyToCorrelationId: correlationId,
+          idempotencyKey: 'reply-reconnect-idem',
+        },
+      });
+      expect(isToolError(replyResult)).toBe(false);
+
+      const streamTwo = await openSseStream(`${handle.baseUrl}/api/events`, askEvent.id);
+      try {
+        const replayedReply = await waitForSseEvent(
+          streamTwo.reader,
+          (event) => event.type === 'collaboration.reply',
+          4_000,
+        );
+        expect(replayedReply.id).toBeTruthy();
+        const replyData = toRecord(replayedReply.data);
+        const replyFields = toRecord(replyData?.fields);
+        expect(replyFields?.reply_to).toBe(correlationId);
+      } finally {
+        await streamTwo.close();
+      }
+
+      const polledAsk = await client.callTool({
+        name: 'wg_ask',
+        arguments: {
+          actor: 'collab-agent',
+          threadPath: parent.path,
+          question: 'Can you confirm deployment status?',
+          correlationId,
+          idempotencyKey: 'ask-reconnect-idem',
+          awaitReply: true,
+          timeoutMs: 1_000,
+          pollIntervalMs: 50,
+        },
+      });
+      expect(isToolError(polledAsk)).toBe(false);
+      const polledPayload = getStructured<{
+        ok: boolean;
+        data: {
+          operation: string;
+          status: string;
+          reply: { id: string } | null;
+        };
+      }>(polledAsk);
+      expect(polledPayload.ok).toBe(true);
+      expect(polledPayload.data.operation).toBe('replayed');
+      expect(polledPayload.data.status).toBe('answered');
+      expect(polledPayload.data.reply?.id).toBeTruthy();
+    } finally {
+      await streamOne.close();
+      await client.close();
+      await handle.close();
+    }
+  });
+
   it('enforces strict credential identity for mutating REST endpoints', async () => {
     const init = workspace.initWorkspace(workspacePath, { createReadme: false, createBases: false });
     const registration = agent.registerAgent(workspacePath, 'api-admin', {
@@ -414,3 +532,116 @@ describe('workgraph server REST API', () => {
     }
   });
 });
+
+function getStructured<T>(result: unknown): T {
+  if (!result || typeof result !== 'object' || !('structuredContent' in result)) {
+    throw new Error('Expected structuredContent in MCP result.');
+  }
+  return (result as { structuredContent: T }).structuredContent;
+}
+
+function isToolError(result: unknown): boolean {
+  if (!result || typeof result !== 'object') return false;
+  if (!('isError' in result)) return false;
+  return (result as { isError?: boolean }).isError === true;
+}
+
+async function openSseStream(
+  url: string,
+  lastEventId?: string,
+): Promise<{
+  reader: ReadableStreamDefaultReader<Uint8Array>;
+  close: () => Promise<void>;
+}> {
+  const response = await fetch(url, {
+    headers: {
+      ...(lastEventId ? { 'last-event-id': lastEventId } : {}),
+    },
+  });
+  if (response.status !== 200) {
+    throw new Error(`Unexpected SSE status: ${response.status}`);
+  }
+  if (!response.body) {
+    throw new Error('Expected SSE response body stream.');
+  }
+  const reader = response.body.getReader();
+  return {
+    reader,
+    close: async () => {
+      try {
+        await reader.cancel();
+      } catch {
+        // no-op
+      }
+    },
+  };
+}
+
+async function waitForSseEvent(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  predicate: (event: { id?: string; type: string; data: unknown }) => boolean,
+  timeoutMs: number,
+): Promise<{ id?: string; type: string; data: unknown }> {
+  const deadline = Date.now() + timeoutMs;
+  const decoder = new TextDecoder();
+  let buffer = '';
+  while (Date.now() < deadline) {
+    const remaining = Math.max(1, deadline - Date.now());
+    const chunk = await Promise.race([
+      reader.read(),
+      new Promise<never>((_, reject) => {
+        setTimeout(() => reject(new Error('Timed out waiting for SSE event.')), remaining);
+      }),
+    ]);
+    if (chunk.done) {
+      break;
+    }
+    buffer += decoder.decode(chunk.value, { stream: true });
+    let separator = buffer.indexOf('\n\n');
+    while (separator !== -1) {
+      const rawEvent = buffer.slice(0, separator);
+      buffer = buffer.slice(separator + 2);
+      const parsed = parseSseEvent(rawEvent);
+      if (parsed && predicate(parsed)) {
+        return parsed;
+      }
+      separator = buffer.indexOf('\n\n');
+    }
+  }
+  throw new Error('Timed out waiting for matching SSE event.');
+}
+
+function parseSseEvent(rawEvent: string): { id?: string; type: string; data: unknown } | null {
+  const lines = rawEvent
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0 && !line.startsWith(':'));
+  if (lines.length === 0) return null;
+  let id: string | undefined;
+  let type = 'message';
+  let dataLine = '';
+  for (const line of lines) {
+    if (line.startsWith('id:')) {
+      id = line.slice('id:'.length).trim();
+    } else if (line.startsWith('event:')) {
+      type = line.slice('event:'.length).trim();
+    } else if (line.startsWith('data:')) {
+      dataLine += line.slice('data:'.length).trim();
+    }
+  }
+  if (!dataLine) return null;
+  try {
+    return {
+      ...(id ? { id } : {}),
+      type,
+      data: JSON.parse(dataLine),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}

@@ -9,6 +9,10 @@ export type DashboardEventType =
   | 'thread.done'
   | 'thread.blocked'
   | 'thread.released'
+  | 'collaboration.message'
+  | 'collaboration.ask'
+  | 'collaboration.reply'
+  | 'collaboration.heartbeat'
   | 'ledger.appended'
   | 'primitive.changed';
 
@@ -22,9 +26,8 @@ export interface DashboardEvent {
 }
 
 export function mapLedgerEntryToDashboardEvents(entry: LedgerEntry): DashboardEvent[] {
-  const id = readEventId(entry);
+  const nextEventId = createEventIdFactory(entry);
   const base = {
-    id,
     path: entry.target,
     actor: entry.actor,
     ts: entry.ts,
@@ -35,6 +38,7 @@ export function mapLedgerEntryToDashboardEvents(entry: LedgerEntry): DashboardEv
     const threadEventType = toThreadEventType(entry.op);
     if (threadEventType) {
       events.push({
+        id: nextEventId(),
         ...base,
         type: threadEventType,
         fields: deriveEventFields(entry),
@@ -42,8 +46,19 @@ export function mapLedgerEntryToDashboardEvents(entry: LedgerEntry): DashboardEv
     }
   }
 
+  const collaborationEvent = toCollaborationEvent(entry);
+  if (collaborationEvent) {
+    events.push({
+      id: nextEventId(),
+      ...base,
+      type: collaborationEvent.type,
+      fields: collaborationEvent.fields,
+    });
+  }
+
   if (shouldEmitPrimitiveChanged(entry)) {
     events.push({
+      id: nextEventId(),
       ...base,
       type: 'primitive.changed',
       fields: {
@@ -55,6 +70,7 @@ export function mapLedgerEntryToDashboardEvents(entry: LedgerEntry): DashboardEv
   }
 
   events.push({
+    id: nextEventId(),
     ...base,
     type: 'ledger.appended',
     fields: {
@@ -71,11 +87,10 @@ export function listDashboardEventsSince(
   workspacePath: string,
   lastEventId: string | undefined,
 ): DashboardEvent[] {
-  const entries = ledger.readAll(workspacePath);
-  const startIdx = resolveReplayStartIndex(entries, lastEventId);
-  return entries
-    .slice(startIdx)
+  const events = ledger.readAll(workspacePath)
     .flatMap((entry) => mapLedgerEntryToDashboardEvents(entry));
+  const startIdx = resolveReplayStartIndex(events, lastEventId);
+  return events.slice(startIdx);
 }
 
 export function subscribeToDashboardEvents(
@@ -188,11 +203,82 @@ function readEventId(entry: LedgerEntry): string {
   return `${entry.ts}:${entry.actor}:${entry.op}:${entry.target}`;
 }
 
-function resolveReplayStartIndex(entries: LedgerEntry[], lastEventId: string | undefined): number {
+function createEventIdFactory(entry: LedgerEntry): () => string {
+  const baseId = readEventId(entry);
+  let offset = 0;
+  return () => `${baseId}:${offset++}`;
+}
+
+function resolveReplayStartIndex(events: DashboardEvent[], lastEventId: string | undefined): number {
   if (!lastEventId) return 0;
-  const idx = entries.findIndex((entry) => entry.hash === lastEventId);
-  if (idx < 0) return 0;
-  return idx + 1;
+  const exact = events.findIndex((event) => event.id === lastEventId);
+  if (exact >= 0) return exact + 1;
+  // Backward-compat: clients may still send bare ledger hash ids.
+  const entryPrefix = `${lastEventId}:`;
+  let lastMatch = -1;
+  for (let idx = 0; idx < events.length; idx += 1) {
+    if (events[idx].id.startsWith(entryPrefix)) {
+      lastMatch = idx;
+    }
+  }
+  return lastMatch >= 0 ? lastMatch + 1 : 0;
+}
+
+function toCollaborationEvent(
+  entry: LedgerEntry,
+): { type: DashboardEventType; fields: Record<string, unknown> } | null {
+  if (entry.type === 'conversation' && entry.op === 'update') {
+    const raw = toRecord(entry.data?.conversation_event);
+    if (raw) {
+      const rawKind = String(raw.event_type ?? raw.kind ?? 'message').trim().toLowerCase();
+      const type: DashboardEventType = rawKind === 'ask'
+        ? 'collaboration.ask'
+        : rawKind === 'reply'
+          ? 'collaboration.reply'
+          : 'collaboration.message';
+      return {
+        type,
+        fields: sanitizeData({
+          conversation_path: entry.target,
+          ...raw,
+        }),
+      };
+    }
+  }
+
+  if (entry.type === 'thread' && entry.op === 'heartbeat') {
+    return {
+      type: 'collaboration.heartbeat',
+      fields: sanitizeData({
+        target_type: 'thread',
+        thread_path: entry.target,
+        ...entry.data,
+      }),
+    };
+  }
+
+  if (entry.type === 'presence' && entry.op === 'update' && isPresenceHeartbeat(entry)) {
+    return {
+      type: 'collaboration.heartbeat',
+      fields: sanitizeData({
+        target_type: 'presence',
+        presence_path: entry.target,
+        ...entry.data,
+      }),
+    };
+  }
+  return null;
+}
+
+function isPresenceHeartbeat(entry: LedgerEntry): boolean {
+  const changed = entry.data?.changed;
+  if (!Array.isArray(changed)) return false;
+  return changed.some((field) => String(field).trim() === 'last_seen');
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 function sanitizeData(data: Record<string, unknown> | undefined): Record<string, unknown> {

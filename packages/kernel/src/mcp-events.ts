@@ -17,7 +17,17 @@ export interface WorkgraphEventStreamOptions {
 }
 
 export interface WorkgraphSseEvent {
-  type: 'primitive.created' | 'primitive.updated' | 'primitive.deleted' | 'thread.claimed' | 'thread.completed' | 'trigger.fired';
+  type:
+    | 'primitive.created'
+    | 'primitive.updated'
+    | 'primitive.deleted'
+    | 'thread.claimed'
+    | 'thread.completed'
+    | 'trigger.fired'
+    | 'collaboration.message'
+    | 'collaboration.ask'
+    | 'collaboration.reply'
+    | 'collaboration.heartbeat';
   primitive: string;
   timestamp: string;
   actor: string;
@@ -189,6 +199,28 @@ export function mapLedgerEntryToSseEvents(entry: LedgerEntry): WorkgraphSseEvent
     events.push({ ...base, type: 'trigger.fired' });
   }
 
+  if (entry.type === 'conversation' && entry.op === 'update') {
+    const conversationEvent = toRecord(entry.data?.conversation_event);
+    if (conversationEvent) {
+      const eventKind = String(conversationEvent.event_type ?? conversationEvent.kind ?? 'message').trim().toLowerCase();
+      events.push({
+        ...base,
+        type: eventKind === 'ask'
+          ? 'collaboration.ask'
+          : eventKind === 'reply'
+            ? 'collaboration.reply'
+            : 'collaboration.message',
+      });
+    }
+  }
+
+  if (
+    (entry.type === 'thread' && entry.op === 'heartbeat') ||
+    (entry.type === 'presence' && entry.op === 'update' && isPresenceHeartbeat(entry))
+  ) {
+    events.push({ ...base, type: 'collaboration.heartbeat' });
+  }
+
   return events;
 }
 
@@ -203,6 +235,17 @@ function primitiveSlugFromTarget(target: string): string {
   const basename = normalized.split('/').pop() ?? normalized;
   if (!basename) return normalized;
   return basename.endsWith('.md') ? basename.slice(0, -3) : basename;
+}
+
+function isPresenceHeartbeat(entry: LedgerEntry): boolean {
+  const changed = entry.data?.changed;
+  if (!Array.isArray(changed)) return false;
+  return changed.some((field) => String(field).trim() === 'last_seen');
+}
+
+function toRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 function normalizeSsePath(pathValue: string | undefined): string {
