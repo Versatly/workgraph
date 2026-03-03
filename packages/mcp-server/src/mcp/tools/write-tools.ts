@@ -34,8 +34,11 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
-        const gate = checkWriteGate(options, actor, ['thread:claim', 'mcp:write']);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['thread:claim', 'mcp:write'], {
+          action: 'mcp.thread.claim',
+          target: args.threadPath,
+        });
         if (!gate.allowed) return errorResult(gate.reason);
         const updated = thread.claim(options.workspacePath, args.threadPath, actor);
         return okResult({ thread: updated }, `Claimed ${updated.path} as ${actor}.`);
@@ -63,8 +66,11 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
-        const gate = checkWriteGate(options, actor, ['thread:done', 'mcp:write']);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['thread:done', 'mcp:write'], {
+          action: 'mcp.thread.done',
+          target: args.threadPath,
+        });
         if (!gate.allowed) return errorResult(gate.reason);
         const updated = thread.done(options.workspacePath, args.threadPath, actor, args.output, {
           evidence: args.evidence,
@@ -95,8 +101,11 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
-        const gate = checkWriteGate(options, actor, ['checkpoint:create', 'mcp:write']);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['checkpoint:create', 'mcp:write'], {
+          action: 'mcp.checkpoint.create',
+          target: 'checkpoints',
+        });
         if (!gate.allowed) return errorResult(gate.reason);
         const checkpoint = orientation.checkpoint(options.workspacePath, actor, args.summary, {
           next: args.next,
@@ -128,8 +137,11 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
-        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write'], {
+          action: 'mcp.dispatch.create',
+          target: '.workgraph/dispatch-runs',
+        });
         if (!gate.allowed) return errorResult(gate.reason);
         const run = dispatch.createRun(options.workspacePath, {
           actor,
@@ -165,8 +177,11 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
-        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write'], {
+          action: 'mcp.dispatch.execute',
+          target: `.workgraph/runs/${args.runId}`,
+        });
         if (!gate.allowed) return errorResult(gate.reason);
         const run = await dispatch.executeRun(options.workspacePath, args.runId, {
           actor,
@@ -200,8 +215,11 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
-        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write'], {
+          action: 'mcp.dispatch.followup',
+          target: `.workgraph/runs/${args.runId}`,
+        });
         if (!gate.allowed) return errorResult(gate.reason);
         const run = dispatch.followup(options.workspacePath, args.runId, actor, args.input);
         return okResult({ run }, `Follow-up recorded for ${run.id}.`);
@@ -227,8 +245,11 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
-        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write'], {
+          action: 'mcp.dispatch.stop',
+          target: `.workgraph/runs/${args.runId}`,
+        });
         if (!gate.allowed) return errorResult(gate.reason);
         const run = dispatch.stop(options.workspacePath, args.runId, actor);
         return okResult({ run }, `Stopped run ${run.id}.`);
@@ -253,8 +274,11 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
-        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write'], {
+          action: 'mcp.trigger.cycle',
+          target: '.workgraph/trigger-state.json',
+        });
         if (!gate.allowed) return errorResult(gate.reason);
         const result = triggerEngine.runTriggerEngineCycle(options.workspacePath, {
           actor,
@@ -294,8 +318,11 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
-        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write']);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write'], {
+          action: 'mcp.autonomy.run',
+          target: '.workgraph/autonomy',
+        });
         if (!gate.allowed) return errorResult(gate.reason);
         const result = await autonomy.runAutonomyLoop(options.workspacePath, {
           actor,

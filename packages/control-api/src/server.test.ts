@@ -2,11 +2,18 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { store as storeModule, thread as threadModule } from '@versatly/workgraph-kernel';
+import {
+  agent as agentModule,
+  store as storeModule,
+  thread as threadModule,
+  workspace as workspaceModule,
+} from '@versatly/workgraph-kernel';
 import { startWorkgraphServer } from './server.js';
 
+const agent = agentModule;
 const store = storeModule;
 const thread = threadModule;
+const workspace = workspaceModule;
 
 let workspacePath: string;
 
@@ -333,6 +340,75 @@ describe('workgraph server REST API', () => {
       expect(body.ok).toBe(true);
       expect(body.count).toBe(2);
       expect(body.entries.length).toBe(2);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('enforces strict credential identity for mutating REST endpoints', async () => {
+    const init = workspace.initWorkspace(workspacePath, { createReadme: false, createBases: false });
+    const registration = agent.registerAgent(workspacePath, 'api-admin', {
+      token: init.bootstrapTrustToken,
+      capabilities: ['thread:create', 'thread:update', 'thread:complete'],
+    });
+    expect(registration.apiKey).toBeDefined();
+
+    const serverConfigPath = path.join(workspacePath, '.workgraph', 'server.json');
+    const serverConfig = JSON.parse(fs.readFileSync(serverConfigPath, 'utf-8')) as Record<string, unknown>;
+    serverConfig.auth = {
+      mode: 'strict',
+      allowUnauthenticatedFallback: false,
+    };
+    fs.writeFileSync(serverConfigPath, `${JSON.stringify(serverConfig, null, 2)}\n`, 'utf-8');
+
+    const handle = await startWorkgraphServer({
+      workspacePath,
+      host: '127.0.0.1',
+      port: 0,
+      defaultActor: 'system',
+    });
+    try {
+      const unauthorized = await fetch(`${handle.baseUrl}/api/threads`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          title: 'Strict denied',
+          goal: 'Missing credential should fail',
+        }),
+      });
+      expect(unauthorized.status).toBe(403);
+
+      const spoofed = await fetch(`${handle.baseUrl}/api/threads`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${registration.apiKey}`,
+        },
+        body: JSON.stringify({
+          title: 'Strict spoofed',
+          goal: 'Credential actor mismatch should fail',
+          actor: 'spoofed-actor',
+        }),
+      });
+      expect(spoofed.status).toBe(403);
+
+      const authorized = await fetch(`${handle.baseUrl}/api/threads`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${registration.apiKey}`,
+        },
+        body: JSON.stringify({
+          title: 'Strict allowed',
+          goal: 'Valid credential actor should pass',
+        }),
+      });
+      expect(authorized.status).toBe(201);
+      const body = await authorized.json() as { ok: boolean; thread: { path: string } };
+      expect(body.ok).toBe(true);
+      expect(body.thread.path).toBe('threads/strict-allowed.md');
     } finally {
       await handle.close();
     }

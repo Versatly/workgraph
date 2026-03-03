@@ -1,15 +1,32 @@
-import * as policy from '@versatly/workgraph-policy';
+import { auth as kernelAuth } from '@versatly/workgraph-kernel';
 import { type WorkgraphMcpServerOptions } from './types.js';
 
-export function resolveActor(actor: string | undefined, defaultActor: string | undefined): string {
-  const resolved = actor ?? defaultActor ?? 'anonymous';
-  return String(resolved);
+export function resolveActor(
+  workspacePath: string,
+  actor: string | undefined,
+  defaultActor: string | undefined,
+): string {
+  if (actor) return String(actor);
+  const contextToken = kernelAuth.getAuthContext()?.credentialToken;
+  if (contextToken) {
+    const verification = kernelAuth.verifyAgentCredential(workspacePath, contextToken, {
+      touchLastUsed: false,
+    });
+    if (verification.valid && verification.credential) {
+      return verification.credential.actor;
+    }
+  }
+  return String(defaultActor ?? 'anonymous');
 }
 
 export function checkWriteGate(
   options: WorkgraphMcpServerOptions,
   actor: string,
   requiredCapabilities: string[],
+  context: {
+    action: string;
+    target?: string;
+  },
 ): { allowed: true } | { allowed: false; reason: string } {
   if (options.readOnly) {
     return {
@@ -17,26 +34,22 @@ export function checkWriteGate(
       reason: 'MCP server is configured read-only; write tool is disabled.',
     };
   }
-
-  if (actor === 'system') {
-    return { allowed: true };
-  }
-
-  const party = policy.getParty(options.workspacePath, actor);
-  if (!party) {
+  const decision = kernelAuth.authorizeMutation(options.workspacePath, {
+    actor,
+    action: context.action,
+    target: context.target,
+    requiredCapabilities,
+    requiredScopes: requiredCapabilities,
+    allowUnauthenticatedFallback: false,
+    metadata: {
+      surface: 'mcp',
+    },
+  });
+  if (!decision.allowed) {
     return {
       allowed: false,
-      reason: `Policy gate blocked MCP write: actor "${actor}" is not a registered party.`,
+      reason: decision.reason ?? 'Policy gate blocked MCP write.',
     };
   }
-
-  const hasCapability = requiredCapabilities.some((capability) => party.capabilities.includes(capability));
-  if (!hasCapability) {
-    return {
-      allowed: false,
-      reason: `Policy gate blocked MCP write: actor "${actor}" lacks capabilities [${requiredCapabilities.join(', ')}].`,
-    };
-  }
-
   return { allowed: true };
 }

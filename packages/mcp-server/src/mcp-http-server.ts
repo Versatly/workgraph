@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { createMcpExpressApp } from '@modelcontextprotocol/sdk/server/express.js';
 import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { auth as kernelAuth } from '@versatly/workgraph-kernel';
 import { createWorkgraphMcpServer } from './mcp-server.js';
 
 export interface WorkgraphMcpHttpServerOptions {
@@ -41,6 +42,7 @@ export interface WorkgraphMcpHttpServerAppContext {
 interface SessionBinding {
   transport: StreamableHTTPServerTransport;
   server: McpServer;
+  authContext: kernelAuth.WorkgraphAuthContext;
 }
 
 export async function startWorkgraphMcpHttpServer(
@@ -54,7 +56,7 @@ export async function startWorkgraphMcpHttpServer(
     allowedHosts: options.allowedHosts,
   });
   const sessions: Record<string, SessionBinding> = {};
-  const bearerAuthMiddleware = createBearerAuthMiddleware(options.bearerToken);
+  const bearerAuthMiddleware = createBearerAuthMiddleware(options.workspacePath, options.bearerToken);
 
   app.get('/health', (_req: unknown, res: any) => {
     res.json({
@@ -77,17 +79,20 @@ export async function startWorkgraphMcpHttpServer(
   app.post(endpointPath, async (req: any, res: any) => {
     const sessionId = readSessionId(req.headers['mcp-session-id']);
     try {
+      const requestAuthContext = buildRequestAuthContext(req, 'mcp');
       let binding: SessionBinding | undefined;
       if (sessionId && sessions[sessionId]) {
         binding = sessions[sessionId];
       } else if (!sessionId && isInitializeRequest(req.body)) {
         let transport: StreamableHTTPServerTransport;
+        const sessionAuthContext = requestAuthContext;
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
           onsessioninitialized: (generatedSessionId) => {
             sessions[generatedSessionId] = {
               transport,
               server: binding!.server,
+              authContext: sessionAuthContext,
             };
           },
         });
@@ -98,7 +103,7 @@ export async function startWorkgraphMcpHttpServer(
           name: options.name,
           version: options.version,
         });
-        binding = { transport, server };
+        binding = { transport, server, authContext: sessionAuthContext };
         transport.onclose = () => {
           const sid = transport.sessionId;
           if (sid && sessions[sid]) {
@@ -118,7 +123,12 @@ export async function startWorkgraphMcpHttpServer(
         return;
       }
 
-      await binding.transport.handleRequest(req, res, req.body);
+      const effectiveContext = requestAuthContext.credentialToken
+        ? requestAuthContext
+        : binding.authContext;
+      await kernelAuth.runWithAuthContext(effectiveContext, async () => {
+        await binding!.transport.handleRequest(req, res, req.body);
+      });
     } catch (error) {
       if (!res.headersSent) {
         res.status(500).json({
@@ -139,7 +149,13 @@ export async function startWorkgraphMcpHttpServer(
       res.status(400).send('Invalid or missing MCP session ID.');
       return;
     }
-    await sessions[sessionId].transport.handleRequest(req, res);
+    const requestAuthContext = buildRequestAuthContext(req, 'mcp');
+    const effectiveContext = requestAuthContext.credentialToken
+      ? requestAuthContext
+      : sessions[sessionId].authContext;
+    await kernelAuth.runWithAuthContext(effectiveContext, async () => {
+      await sessions[sessionId].transport.handleRequest(req, res);
+    });
   });
 
   app.delete(endpointPath, async (req: any, res: any) => {
@@ -148,7 +164,13 @@ export async function startWorkgraphMcpHttpServer(
       res.status(400).send('Invalid or missing MCP session ID.');
       return;
     }
-    await sessions[sessionId].transport.handleRequest(req, res);
+    const requestAuthContext = buildRequestAuthContext(req, 'mcp');
+    const effectiveContext = requestAuthContext.credentialToken
+      ? requestAuthContext
+      : sessions[sessionId].authContext;
+    await kernelAuth.runWithAuthContext(effectiveContext, async () => {
+      await sessions[sessionId].transport.handleRequest(req, res);
+    });
     const binding = sessions[sessionId];
     delete sessions[sessionId];
     await binding.server.close();
@@ -236,20 +258,29 @@ function formatHostForUrl(host: string): string {
   return host;
 }
 
-function createBearerAuthMiddleware(rawToken: string | undefined): WorkgraphMcpBearerAuthMiddleware {
+function createBearerAuthMiddleware(
+  workspacePath: string,
+  rawToken: string | undefined,
+): WorkgraphMcpBearerAuthMiddleware {
   const authToken = readString(rawToken);
   return (req: any, res: any, next: () => void) => {
+    const providedToken = readBearerToken(req.headers.authorization);
     if (!authToken) return next();
-    const authorization = readString(req.headers.authorization);
-    if (!authorization || !authorization.startsWith('Bearer ')) {
+    if (!providedToken) {
       res.status(401).json({
         ok: false,
         error: 'Missing bearer token.',
       });
       return;
     }
-    const providedToken = authorization.slice('Bearer '.length);
-    if (providedToken !== authToken) {
+    if (providedToken === authToken) {
+      next();
+      return;
+    }
+    const verified = kernelAuth.verifyAgentCredential(workspacePath, providedToken, {
+      touchLastUsed: false,
+    });
+    if (!verified.valid) {
       res.status(403).json({
         ok: false,
         error: 'Invalid bearer token.',
@@ -257,5 +288,24 @@ function createBearerAuthMiddleware(rawToken: string | undefined): WorkgraphMcpB
       return;
     }
     next();
+  };
+}
+
+function readBearerToken(headerValue: unknown): string | undefined {
+  const authorization = readString(headerValue);
+  if (!authorization || !authorization.startsWith('Bearer ')) {
+    return undefined;
+  }
+  return readString(authorization.slice('Bearer '.length));
+}
+
+function buildRequestAuthContext(
+  req: any,
+  source: 'mcp' | 'rest',
+): kernelAuth.WorkgraphAuthContext {
+  const credentialToken = readBearerToken(req?.headers?.authorization);
+  return {
+    ...(credentialToken ? { credentialToken } : {}),
+    source,
   };
 }

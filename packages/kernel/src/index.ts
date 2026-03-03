@@ -1,6 +1,7 @@
 export * from './types.js';
 export * as registry from './registry.js';
 export * as ledger from './ledger.js';
+export * as auth from './auth.js';
 export * as store from './store.js';
 export * as thread from './thread.js';
 export * as workspace from './workspace.js';

@@ -7,10 +7,24 @@ const DEFAULT_SERVER_PORT = 8787;
 const DEFAULT_SERVER_ENDPOINT_PATH = '/mcp';
 const DEFAULT_SERVER_ACTOR = 'system';
 const DEFAULT_BOOTSTRAP_TOKEN_PATH = 'trust-tokens/bootstrap-first-agent.md';
+const DEFAULT_AUTH_MODE_EXISTING: WorkgraphAuthMode = 'legacy';
+const DEFAULT_AUTH_MODE_NEW: WorkgraphAuthMode = 'hybrid';
+const DEFAULT_REGISTRATION_MODE_EXISTING: WorkgraphServerRegistrationMode = 'legacy';
+const DEFAULT_REGISTRATION_MODE_NEW: WorkgraphServerRegistrationMode = 'approval';
+
+export type WorkgraphAuthMode = 'legacy' | 'hybrid' | 'strict';
+export type WorkgraphServerRegistrationMode = 'legacy' | 'approval';
 
 export interface WorkgraphServerRegistrationConfig {
   enabled: boolean;
+  mode: WorkgraphServerRegistrationMode;
   bootstrapTokenPath: string;
+  allowBootstrapFallback: boolean;
+}
+
+export interface WorkgraphServerAuthConfig {
+  mode: WorkgraphAuthMode;
+  allowUnauthenticatedFallback: boolean;
 }
 
 export interface WorkgraphServerConfig {
@@ -19,6 +33,7 @@ export interface WorkgraphServerConfig {
   endpointPath: string;
   defaultActor: string;
   bearerToken?: string;
+  auth: WorkgraphServerAuthConfig;
   registration: WorkgraphServerRegistrationConfig;
 }
 
@@ -43,7 +58,7 @@ export function loadServerConfig(workspacePath: string): WorkgraphServerConfig |
 
   try {
     const parsed = JSON.parse(fs.readFileSync(targetPath, 'utf-8')) as Record<string, unknown>;
-    return normalizeServerConfig(parsed);
+    return normalizeServerConfig(parsed, 'existing');
   } catch {
     return null;
   }
@@ -63,7 +78,7 @@ export function ensureServerConfig(
       registration: {
         bootstrapTokenPath: desiredBootstrapTokenPath,
       },
-    });
+    }, 'new');
     writeServerConfig(workspacePath, createdConfig);
     return {
       config: createdConfig,
@@ -108,19 +123,35 @@ function writeServerConfig(workspacePath: string, config: WorkgraphServerConfig)
   fs.writeFileSync(targetPath, `${JSON.stringify(config, null, 2)}\n`, 'utf-8');
 }
 
-function normalizeServerConfig(input: Record<string, unknown>): WorkgraphServerConfig {
+function normalizeServerConfig(
+  input: Record<string, unknown>,
+  profile: 'existing' | 'new' = 'existing',
+): WorkgraphServerConfig {
   const registrationInput = asRecord(input.registration);
+  const authInput = asRecord(input.auth);
+  const defaultAuthMode = profile === 'new'
+    ? DEFAULT_AUTH_MODE_NEW
+    : DEFAULT_AUTH_MODE_EXISTING;
+  const defaultRegistrationMode = profile === 'new'
+    ? DEFAULT_REGISTRATION_MODE_NEW
+    : DEFAULT_REGISTRATION_MODE_EXISTING;
   return {
     host: readString(input.host) ?? DEFAULT_SERVER_HOST,
     port: normalizePort(input.port),
     endpointPath: normalizeEndpointPath(readString(input.endpointPath)),
     defaultActor: readString(input.defaultActor) ?? DEFAULT_SERVER_ACTOR,
     bearerToken: readString(input.bearerToken),
+    auth: {
+      mode: readAuthMode(authInput.mode) ?? defaultAuthMode,
+      allowUnauthenticatedFallback: readBoolean(authInput.allowUnauthenticatedFallback) ?? true,
+    },
     registration: {
       enabled: readBoolean(registrationInput.enabled) ?? true,
+      mode: readRegistrationMode(registrationInput.mode) ?? defaultRegistrationMode,
       bootstrapTokenPath: normalizePathRef(
         readString(registrationInput.bootstrapTokenPath) ?? DEFAULT_BOOTSTRAP_TOKEN_PATH,
       ),
+      allowBootstrapFallback: readBoolean(registrationInput.allowBootstrapFallback) ?? true,
     },
   };
 }
@@ -171,6 +202,24 @@ function readBoolean(value: unknown): boolean | undefined {
     const normalized = value.trim().toLowerCase();
     if (normalized === 'true' || normalized === '1' || normalized === 'yes') return true;
     if (normalized === 'false' || normalized === '0' || normalized === 'no') return false;
+  }
+  return undefined;
+}
+
+function readAuthMode(value: unknown): WorkgraphAuthMode | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'legacy' || normalized === 'hybrid' || normalized === 'strict') {
+    return normalized;
+  }
+  return undefined;
+}
+
+function readRegistrationMode(value: unknown): WorkgraphServerRegistrationMode | undefined {
+  if (typeof value !== 'string') return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'legacy' || normalized === 'approval') {
+    return normalized;
   }
   return undefined;
 }

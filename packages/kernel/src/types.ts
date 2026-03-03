@@ -61,6 +61,7 @@ export type LedgerOp =
   | 'create'
   | 'update'
   | 'delete'
+  | 'authorize'
   | 'claim'
   | 'heartbeat'
   | 'release'

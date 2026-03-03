@@ -7,6 +7,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
+import * as auth from './auth.js';
 import * as claimLease from './claim-lease.js';
 import * as triggerEngine from './trigger-engine.js';
 import * as gate from './gate.js';
@@ -34,6 +35,11 @@ export function createThread(
     tags?: string[];
   } = {},
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.create', 'threads', [
+    'thread:create',
+    'thread:manage',
+    'policy:manage',
+  ]);
   const normalizedSpace = opts.space ? normalizeWorkspaceRef(opts.space) : undefined;
   const contextRefs = opts.context_refs ?? [];
   const mergedContextRefs = normalizedSpace && !contextRefs.includes(normalizedSpace)
@@ -54,7 +60,11 @@ export function createThread(
     space: normalizedSpace,
     context_refs: mergedContextRefs,
     tags: opts.tags ?? [],
-  }, `## Goal\n\n${goal}\n`, actor);
+  }, `## Goal\n\n${goal}\n`, actor, {
+    skipAuthorization: true,
+    action: 'thread.create.store',
+    requiredCapabilities: ['thread:create', 'thread:manage', 'policy:manage'],
+  });
 }
 
 export function mintThreadId(title: string): string {
@@ -144,10 +154,18 @@ export function claim(
   actor: string,
   options: { leaseTtlMinutes?: number } = {},
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.claim', threadPath, [
+    'thread:claim',
+    'thread:manage',
+  ]);
   return withThreadClaimLock(workspacePath, threadPath, () => {
     const thread = store.read(workspacePath, threadPath);
     if (!thread) throw new Error(`Thread not found: ${threadPath}`);
     assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'claim');
+    const gateCheck = gate.checkThreadGates(workspacePath, threadPath);
+    if (!gateCheck.allowed) {
+      throw new Error(gate.summarizeGateFailures(gateCheck));
+    }
 
     const status = thread.fields.status as ThreadStatus;
     if (status !== 'open') {
@@ -163,7 +181,11 @@ export function claim(
     const claimed = store.update(workspacePath, threadPath, {
       status: 'active',
       owner: actor,
-    }, undefined, actor);
+    }, undefined, actor, {
+      skipAuthorization: true,
+      action: 'thread.claim.store',
+      requiredCapabilities: ['thread:claim', 'thread:manage'],
+    });
     claimLease.setClaimLease(workspacePath, threadPath, actor, {
       ttlMinutes: options.leaseTtlMinutes,
     });
@@ -177,6 +199,10 @@ export function release(
   actor: string,
   reason?: string,
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.release', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'release');
@@ -189,7 +215,11 @@ export function release(
   const released = store.update(workspacePath, threadPath, {
     status: 'open',
     owner: null,
-  }, undefined, actor);
+  }, undefined, actor, {
+    skipAuthorization: true,
+    action: 'thread.release.store',
+    requiredCapabilities: ['thread:update', 'thread:manage'],
+  });
   claimLease.removeClaimLease(workspacePath, threadPath);
   return released;
 }
@@ -200,6 +230,10 @@ export function heartbeat(
   actor: string,
   leaseMinutes: number = 15,
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.heartbeat', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'heartbeat');
@@ -230,6 +264,11 @@ export function heartbeat(
     },
     undefined,
     actor,
+    {
+      skipAuthorization: true,
+      action: 'thread.heartbeat.store',
+      requiredCapabilities: ['thread:update', 'thread:manage'],
+    },
   );
 }
 
@@ -240,6 +279,10 @@ export function handoff(
   toActor: string,
   note?: string,
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, fromActor, 'thread.handoff', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
   const normalizedToActor = toActor.trim();
   if (!normalizedToActor) {
     throw new Error('Handoff target actor must be a non-empty string.');
@@ -274,6 +317,11 @@ export function handoff(
     },
     extraBody,
     fromActor,
+    {
+      skipAuthorization: true,
+      action: 'thread.handoff.store',
+      requiredCapabilities: ['thread:update', 'thread:manage'],
+    },
   );
 }
 
@@ -288,6 +336,10 @@ export function block(
   blockedBy: string,
   reason?: string,
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.block', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'block');
@@ -308,7 +360,11 @@ export function block(
   return store.update(workspacePath, threadPath, {
     status: 'blocked',
     deps: updatedDeps,
-  }, undefined, actor);
+  }, undefined, actor, {
+    skipAuthorization: true,
+    action: 'thread.block.store',
+    requiredCapabilities: ['thread:update', 'thread:manage'],
+  });
 }
 
 export function unblock(
@@ -316,6 +372,10 @@ export function unblock(
   threadPath: string,
   actor: string,
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.unblock', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'unblock');
@@ -326,7 +386,11 @@ export function unblock(
 
   return store.update(workspacePath, threadPath, {
     status: 'active',
-  }, undefined, actor);
+  }, undefined, actor, {
+    skipAuthorization: true,
+    action: 'thread.unblock.store',
+    requiredCapabilities: ['thread:update', 'thread:manage'],
+  });
 }
 
 export function done(
@@ -336,9 +400,17 @@ export function done(
   output?: string,
   options: ThreadDoneOptions = {},
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.done', threadPath, [
+    'thread:complete',
+    'thread:manage',
+  ]);
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'done');
+  const gateCheck = gate.checkThreadGates(workspacePath, threadPath);
+  if (!gateCheck.allowed) {
+    throw new Error(gate.summarizeGateFailures(gateCheck));
+  }
 
   const descendantCheck = gate.checkRequiredDescendants(workspacePath, threadPath);
   if (!descendantCheck.ok) {
@@ -373,7 +445,11 @@ export function done(
 
   const completed = store.update(workspacePath, threadPath, {
     status: 'done',
-  }, newBody, actor);
+  }, newBody, actor, {
+    skipAuthorization: true,
+    action: 'thread.done.store',
+    requiredCapabilities: ['thread:complete', 'thread:manage'],
+  });
   claimLease.removeClaimLease(workspacePath, threadPath);
 
   // Cascade trigger failures should not roll back a successful thread completion.
@@ -392,6 +468,10 @@ export function cancel(
   actor: string,
   reason?: string,
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.cancel', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'cancel');
@@ -404,7 +484,11 @@ export function cancel(
   const cancelled = store.update(workspacePath, threadPath, {
     status: 'cancelled',
     owner: null,
-  }, undefined, actor);
+  }, undefined, actor, {
+    skipAuthorization: true,
+    action: 'thread.cancel.store',
+    requiredCapabilities: ['thread:update', 'thread:manage'],
+  });
   claimLease.removeClaimLease(workspacePath, threadPath);
   return cancelled;
 }
@@ -415,6 +499,10 @@ export function reopen(
   actor: string,
   reason?: string,
 ): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.reopen', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   const status = String(thread.fields.status ?? '') as ThreadStatus;
@@ -430,7 +518,11 @@ export function reopen(
   return store.update(workspacePath, threadPath, {
     status: 'open',
     owner: null,
-  }, undefined, actor);
+  }, undefined, actor, {
+    skipAuthorization: true,
+    action: 'thread.reopen.store',
+    requiredCapabilities: ['thread:update', 'thread:manage'],
+  });
 }
 
 export interface ThreadHeartbeatResult {
@@ -445,6 +537,10 @@ export function heartbeatClaim(
   threadPath?: string,
   options: { ttlMinutes?: number } = {},
 ): ThreadHeartbeatResult {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.heartbeat-claim', threadPath ?? 'threads', [
+    'thread:update',
+    'thread:manage',
+  ]);
   const targets = threadPath
     ? [threadPath]
     : store.list(workspacePath, 'thread')
@@ -501,6 +597,10 @@ export function reapStaleClaims(
   actor: string,
   options: { limit?: number } = {},
 ): ReapStaleClaimsResult {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.reap-stale-claims', '.workgraph/claim-leases', [
+    'thread:manage',
+    'policy:manage',
+  ]);
   const staleLeases = claimLease
     .listClaimLeases(workspacePath)
     .filter((lease) => lease.stale)
@@ -541,7 +641,11 @@ export function reapStaleClaims(
     store.update(workspacePath, lease.target, {
       status: 'open',
       owner: null,
-    }, undefined, actor);
+    }, undefined, actor, {
+      skipAuthorization: true,
+      action: 'thread.reap-stale.store',
+      requiredCapabilities: ['thread:manage', 'policy:manage'],
+    });
     claimLease.removeClaimLease(workspacePath, lease.target);
     reaped.push({
       threadPath: lease.target,
@@ -572,6 +676,10 @@ export function decompose(
   subthreads: Array<{ title: string; goal: string; deps?: string[] }>,
   actor: string,
 ): PrimitiveInstance[] {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.decompose', parentPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
   const parent = store.read(workspacePath, parentPath);
   if (!parent) throw new Error(`Thread not found: ${parentPath}`);
 
@@ -589,7 +697,11 @@ export function decompose(
   const childRefs = created.map(c => `[[${c.path}]]`);
   const decomposeNote = `\n\n## Sub-threads\n\n${childRefs.map(r => `- ${r}`).join('\n')}\n`;
 
-  store.update(workspacePath, parentPath, {}, parent.body + decomposeNote, actor);
+  store.update(workspacePath, parentPath, {}, parent.body + decomposeNote, actor, {
+    skipAuthorization: true,
+    action: 'thread.decompose.store',
+    requiredCapabilities: ['thread:update', 'thread:manage'],
+  });
 
   ledger.append(workspacePath, actor, 'decompose', parentPath, 'thread', {
     children: created.map(c => c.path),
@@ -747,6 +859,24 @@ function withThreadClaimLock<T>(
   } finally {
     fs.rmSync(lockPath, { force: true });
   }
+}
+
+function assertThreadMutationAuthorized(
+  workspacePath: string,
+  actor: string,
+  action: string,
+  target: string,
+  requiredCapabilities: string[],
+): void {
+  auth.assertAuthorizedMutation(workspacePath, {
+    actor,
+    action,
+    target,
+    requiredCapabilities,
+    metadata: {
+      module: 'thread',
+    },
+  });
 }
 
 function tryAcquireLock(lockPath: string, target: string): boolean {

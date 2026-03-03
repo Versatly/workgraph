@@ -9,6 +9,7 @@ export type JsonCapableOptions = {
   workspace?: string;
   vault?: string;
   sharedVault?: string;
+  apiKey?: string;
   dryRun?: boolean;
   __dryRunWorkspace?: string;
   __dryRunWorkspaceRoot?: string;
@@ -20,6 +21,7 @@ export function addWorkspaceOption<T extends Command>(command: T): T {
     .option('-w, --workspace <path>', 'Workgraph workspace path')
     .option('--vault <path>', 'Alias for --workspace')
     .option('--shared-vault <path>', 'Shared vault path (e.g. mounted via Tailscale)')
+    .option('--api-key <token>', 'Agent credential API key (or WORKGRAPH_API_KEY env)')
     .option('--dry-run', 'Execute against a temporary workspace copy and discard changes');
 }
 
@@ -194,7 +196,11 @@ export async function runCommand<T>(
   renderText: (result: T) => string[],
 ): Promise<void> {
   try {
-    const result = await action();
+    const credentialToken = readCredentialToken(opts);
+    const result = await workgraph.auth.runWithAuthContext({
+      ...(credentialToken ? { credentialToken } : {}),
+      source: 'cli',
+    }, () => action());
     const dryRunMetadata = opts.dryRun
       ? {
           dryRun: true,
@@ -239,4 +245,18 @@ function cleanupDryRunSandbox(opts: JsonCapableOptions): void {
   delete opts.__dryRunWorkspaceRoot;
   delete opts.__dryRunWorkspace;
   delete opts.__dryRunOriginal;
+}
+
+function readCredentialToken(opts: JsonCapableOptions): string | undefined {
+  const fromOption = readNonEmptyString((opts as { apiKey?: unknown }).apiKey);
+  if (fromOption) return fromOption;
+  const fromEnv = readNonEmptyString(process.env.WORKGRAPH_AGENT_API_KEY)
+    ?? readNonEmptyString(process.env.WORKGRAPH_API_KEY);
+  return fromEnv;
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }
