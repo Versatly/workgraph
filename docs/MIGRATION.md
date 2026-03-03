@@ -1,6 +1,6 @@
 # WorkGraph Monorepo Migration Notes
 
-This repository now uses npm workspaces while preserving compatibility for
+This repository now uses pnpm workspaces while preserving compatibility for
 existing `@versatly/workgraph` npm consumers.
 
 ## What stayed stable
@@ -18,6 +18,7 @@ existing `@versatly/workgraph` npm consumers.
   - `packages/adapter-claude-code`
   - `packages/adapter-cursor-cloud`
   - `packages/mcp-server`
+- Legacy root `src/` wrappers were removed; package-owned modules are canonical.
 - Versioned contracts now live under `schemas/`.
 - New commands added for PRD gap closure:
   - `status`, `brief`, `query`, `search`, `checkpoint`, `intake`
@@ -27,8 +28,17 @@ existing `@versatly/workgraph` npm consumers.
 ## Developer workflow
 
 ```bash
-npm install
-npm run ci
+pnpm install
+pnpm run ci
+```
+
+## CI / automation workflow
+
+- GitHub Actions CI now runs pnpm with frozen lockfile installs.
+- Canonical validation command remains:
+
+```bash
+pnpm run ci
 ```
 
 ## Demo workspace generation
@@ -36,6 +46,6 @@ npm run ci
 You can generate the large Obsidian demo vault with:
 
 ```bash
-npm run demo:workspace
-npm run demo:obsidian-setup
+pnpm run demo:workspace
+pnpm run demo:obsidian-setup
 ```

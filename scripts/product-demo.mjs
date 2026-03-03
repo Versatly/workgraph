@@ -249,7 +249,7 @@ async function ensureBuiltArtifacts() {
   ];
   for (const file of required) {
     if (!fs.existsSync(file)) {
-      throw new Error(`Missing build artifact "${file}". Run "npm run build" first.`);
+      throw new Error(`Missing build artifact "${file}". Run "pnpm run build" first.`);
     }
   }
 }

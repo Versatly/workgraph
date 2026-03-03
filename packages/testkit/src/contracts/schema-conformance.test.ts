@@ -1,17 +1,20 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
-import Ajv2020 from 'ajv/dist/2020';
-import addFormats from 'ajv-formats';
+import { fileURLToPath } from 'node:url';
+import * as Ajv2020Module from 'ajv/dist/2020.js';
+import * as addFormatsModule from 'ajv-formats';
 
 function readJson(relativePath: string): unknown {
-  const base = path.resolve(path.dirname(new URL(import.meta.url).pathname), '../../../..');
+  const base = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../../..');
   const fullPath = path.join(base, relativePath);
   return JSON.parse(fs.readFileSync(fullPath, 'utf-8'));
 }
 
 function assertSchemaConformance(schemaPath: string, validFixturePath: string, invalidFixturePath: string): void {
-  const ajv = new Ajv2020({
+  const Ajv2020Ctor = (Ajv2020Module as unknown as { default: new (options: Record<string, unknown>) => any }).default;
+  const addFormats = (addFormatsModule as unknown as { default: (instance: any) => void }).default;
+  const ajv = new Ajv2020Ctor({
     allErrors: true,
     strict: false,
   });

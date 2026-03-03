@@ -1,14 +1,14 @@
 import { defineConfig } from 'tsup';
 
 export default defineConfig({
-  entry: [
-    'src/index.ts',
-    'src/cli.ts',
-    'src/mcp-server.ts',
-    'src/mcp-http-server.ts',
-    'src/server.ts',
-    'src/server-entry.ts',
-  ],
+  entry: {
+    index: 'packages/sdk/src/index.ts',
+    cli: 'packages/cli/src/cli.ts',
+    'mcp-server': 'packages/mcp-server/src/mcp-server.ts',
+    'mcp-http-server': 'packages/mcp-server/src/mcp-http-server.ts',
+    server: 'packages/control-api/src/server.ts',
+    'server-entry': 'packages/control-api/src/server-entry.ts',
+  },
   format: ['esm'],
   clean: true,
   splitting: false,

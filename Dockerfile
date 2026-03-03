@@ -1,9 +1,12 @@
 FROM node:22-slim AS build
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages ./packages
+COPY apps ./apps
+RUN pnpm install --frozen-lockfile
 COPY . .
-RUN npm run build
+RUN pnpm run build
 
 FROM node:22-slim AS runtime
 WORKDIR /app
@@ -11,8 +14,11 @@ ENV NODE_ENV=production
 RUN apt-get update \
   && apt-get install -y --no-install-recommends curl \
   && rm -rf /var/lib/apt/lists/*
-COPY package*.json ./
-RUN npm ci --omit=dev
+RUN corepack enable
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY packages ./packages
+COPY apps ./apps
+RUN pnpm install --prod --frozen-lockfile
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/bin ./bin
 EXPOSE 8787

@@ -3,8 +3,10 @@
   "version": "1.3.3",
   "description": "Agent-first workgraph workspace for multi-agent coordination with dynamic primitives, append-only ledger, and markdown-native storage.",
   "workspaces": [
-    "packages/*"
+    "packages/*",
+    "apps/*"
   ],
+  "packageManager": "pnpm@10.26.0",
   "type": "module",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -46,15 +48,15 @@
   ],
   "scripts": {
     "build": "tsup --config tsup.config.ts",
-    "build:packages": "npm run build --workspaces --if-present",
+    "build:packages": "pnpm -r --if-present run build",
     "typecheck": "tsc --noEmit",
-    "typecheck:packages": "npm run typecheck --workspaces --if-present",
+    "typecheck:packages": "pnpm -r --if-present run typecheck",
     "test": "vitest run --config vitest.config.ts",
-    "test:packages": "npm run test --workspaces --if-present",
-    "demo:workspace": "npm run build --silent && node scripts/generate-demo-workspace.mjs /tmp/workgraph-obsidian-demo",
-    "demo:obsidian-setup": "npm run build --silent && node scripts/setup-obsidian-demo.mjs /tmp/workgraph-obsidian-demo",
-    "ci": "npm run typecheck && npm run typecheck:packages && npm run test && npm run build",
-    "prepublishOnly": "npm run ci"
+    "test:packages": "pnpm -r --if-present run test",
+    "demo:workspace": "pnpm run --silent build && node scripts/generate-demo-workspace.mjs /tmp/workgraph-obsidian-demo",
+    "demo:obsidian-setup": "pnpm run --silent build && node scripts/setup-obsidian-demo.mjs /tmp/workgraph-obsidian-demo",
+    "ci": "pnpm run typecheck && pnpm run typecheck:packages && pnpm run test && pnpm run build",
+    "prepublishOnly": "pnpm run ci"
   },
   "keywords": [
     "workgraph",
@@ -75,7 +77,8 @@
     "url": "https://github.com/Versatly/workgraph/issues"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=18",
+    "pnpm": ">=10"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",

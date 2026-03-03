@@ -9,7 +9,7 @@ This runbook configures and launches the WorkGraph Obsidian demo vault with:
 ## 1) Generate the demo vault
 
 ```bash
-npm run demo:workspace
+pnpm run demo:workspace
 ```
 
 This creates:
@@ -19,7 +19,7 @@ This creates:
 ## 2) Install Obsidian demo plugins/config
 
 ```bash
-npm run demo:obsidian-setup
+pnpm run demo:obsidian-setup
 ```
 
 This installs:

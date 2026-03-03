@@ -98,10 +98,13 @@ All commands support `--json` and emit:
 
 This is intended for robust parsing by autonomous agents.
 
-### Monorepo layout (MVP)
+### Monorepo layout
 
-The repository is now organized as a workspaces monorepo while preserving the
-published `@versatly/workgraph` package compatibility surface.
+The repository is now fully organized as a pnpm workspaces monorepo while preserving
+the published `@versatly/workgraph` package compatibility surface.
+
+Legacy root `src/` compatibility wrappers have been removed. Package-owned modules
+under `packages/*` are the only implementation source of truth.
 
 Key workspace packages:
 
@@ -122,13 +125,20 @@ Key workspace packages:
 Migration notes: see `docs/MIGRATION.md`.
 Live workspace repair runbook: see `docs/INVARIANT_REPAIR_PLAYBOOK.md`.
 
+### Development workflow (contributors)
+
+```bash
+pnpm install
+pnpm run ci
+```
+
 ### Demo vault generator
 
 Generate the large Obsidian demo workspace used for stress-testing:
 
 ```bash
-npm run demo:workspace
-npm run demo:obsidian-setup
+pnpm run demo:workspace
+pnpm run demo:obsidian-setup
 ```
 
 Runbook: `docs/OBSIDIAN_DEMO.md`.
@@ -275,8 +285,8 @@ thread.done('/tmp/wg', t.path, 'agent-worker', 'Shipped');
 From this directory:
 
 ```bash
-npm run ci
-npm publish --access public
+pnpm run ci
+pnpm publish --access public
 ```
 
 ## Skill guide
