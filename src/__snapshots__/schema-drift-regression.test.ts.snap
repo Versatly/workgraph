@@ -1,0 +1,604 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`schema drift regression > locks CLI option signatures for critical commands 1`] = `
+{
+  "dispatchExecute": [
+    "-a, --actor <name>",
+    "--agents <actors>",
+    "--max-steps <n>",
+    "--step-delay-ms <ms>",
+    "--space <spaceRef>",
+    "--no-checkpoint",
+    "--json",
+    "-w, --workspace <path>",
+    "--vault <path>",
+    "--shared-vault <path>",
+    "--dry-run",
+    "-h, --help",
+  ],
+  "mcpServe": [
+    "-a, --actor <name>",
+    "--read-only",
+    "-w, --workspace <path>",
+    "--vault <path>",
+    "--shared-vault <path>",
+    "--dry-run",
+    "-h, --help",
+  ],
+  "onboard": [
+    "-a, --actor <name>",
+    "--spaces <list>",
+    "--no-demo-threads",
+    "--json",
+    "-w, --workspace <path>",
+    "--vault <path>",
+    "--shared-vault <path>",
+    "--dry-run",
+    "-h, --help",
+  ],
+  "onboardingUpdate": [
+    "--status <status>",
+    "-a, --actor <name>",
+    "--json",
+    "-w, --workspace <path>",
+    "--vault <path>",
+    "--shared-vault <path>",
+    "--dry-run",
+    "-h, --help",
+  ],
+  "serverServe": [
+    "--port <port>",
+    "--host <host>",
+    "--token <token>",
+    "-a, --actor <name>",
+    "-w, --workspace <path>",
+    "--vault <path>",
+    "--shared-vault <path>",
+    "--dry-run",
+    "-h, --help",
+  ],
+  "triggerFire": [
+    "-a, --actor <name>",
+    "--event-key <key>",
+    "--objective <text>",
+    "--json",
+    "-w, --workspace <path>",
+    "--vault <path>",
+    "--shared-vault <path>",
+    "--dry-run",
+    "-h, --help",
+  ],
+}
+`;
+
+exports[`schema drift regression > locks MCP tool metadata and input schemas 1`] = `
+[
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Run autonomous collaboration cycles with drift checks.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "adapter": {
+          "type": "string",
+        },
+        "agents": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "executeReadyThreads": {
+          "type": "boolean",
+        },
+        "executeTriggers": {
+          "type": "boolean",
+        },
+        "maxCycles": {
+          "maximum": 10000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "maxIdleCycles": {
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "maxSteps": {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "pollMs": {
+          "maximum": 60000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "stepDelayMs": {
+          "maximum": 5000,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "watch": {
+          "type": "boolean",
+        },
+      },
+      "type": "object",
+    },
+    "name": "workgraph_autonomy_run",
+    "title": "Autonomy Run",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return actor-centric operational brief (claims, blockers, and next work).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "nextCount": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "recentCount": {
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "type": "object",
+    },
+    "name": "workgraph_brief",
+    "title": "Workgraph Brief",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Create a checkpoint primitive for hand-off continuity (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "blocked": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "next": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "summary": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+      },
+      "required": [
+        "summary",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_checkpoint_create",
+    "title": "Checkpoint Create",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Create a dispatch run request (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "adapter": {
+          "type": "string",
+        },
+        "idempotencyKey": {
+          "type": "string",
+        },
+        "objective": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "objective",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_dispatch_create",
+    "title": "Dispatch Create",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Execute one queued/running run through its adapter (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "agents": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "createCheckpoint": {
+          "type": "boolean",
+        },
+        "maxSteps": {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "runId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "space": {
+          "type": "string",
+        },
+        "stepDelayMs": {
+          "maximum": 5000,
+          "minimum": 0,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "runId",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_dispatch_execute",
+    "title": "Dispatch Execute",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Send follow-up input to a run (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "input": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "runId": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "runId",
+        "input",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_dispatch_followup",
+    "title": "Dispatch Follow-up",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Stop/cancel a run (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "runId": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "runId",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_dispatch_stop",
+    "title": "Dispatch Stop",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Generate wiki-link graph hygiene report.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "workgraph_graph_hygiene",
+    "title": "Graph Hygiene",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Read recent ledger events.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "count": {
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer",
+        },
+      },
+      "type": "object",
+    },
+    "name": "workgraph_ledger_recent",
+    "title": "Ledger Recent",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Audit thread files against ledger claims, leases, and dependency wiring.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "workgraph_ledger_reconcile",
+    "title": "Ledger Reconcile",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return field schema and metadata for a primitive type.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "typeName": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "typeName",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_primitive_schema",
+    "title": "Primitive Schema",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Query primitives using multi-field filters.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "createdAfter": {
+          "type": "string",
+        },
+        "createdBefore": {
+          "type": "string",
+        },
+        "limit": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "offset": {
+          "maximum": 10000,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "owner": {
+          "type": "string",
+        },
+        "pathIncludes": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+        "tag": {
+          "type": "string",
+        },
+        "text": {
+          "type": "string",
+        },
+        "type": {
+          "type": "string",
+        },
+        "updatedAfter": {
+          "type": "string",
+        },
+        "updatedBefore": {
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "workgraph_query",
+    "title": "Workgraph Query",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return a compact status snapshot for the configured workspace.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "workgraph_status",
+    "title": "Workgraph Status",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Claim a thread for an actor (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "threadPath": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_claim",
+    "title": "Thread Claim",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Mark a thread as done with output summary (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "evidence": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "output": {
+          "type": "string",
+        },
+        "threadPath": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_done",
+    "title": "Thread Done",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "List workspace threads, optionally filtered by status/space/readiness.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "readyOnly": {
+          "type": "boolean",
+        },
+        "space": {
+          "type": "string",
+        },
+        "status": {
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "workgraph_thread_list",
+    "title": "Thread List",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Read one thread and its ledger history.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "threadPath": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_show",
+    "title": "Thread Show",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Process trigger events from ledger with idempotent cursor tracking.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "workgraph_trigger_engine_cycle",
+    "title": "Trigger Engine Cycle",
+  },
+]
+`;

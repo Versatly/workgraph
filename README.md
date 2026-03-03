@@ -120,6 +120,7 @@ Key workspace packages:
 - `packages/skills`
 
 Migration notes: see `docs/MIGRATION.md`.
+Live workspace repair runbook: see `docs/INVARIANT_REPAIR_PLAYBOOK.md`.
 
 ### Demo vault generator
 
