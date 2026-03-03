@@ -4,18 +4,20 @@ import type {
   WorkgraphLensId,
 } from './types.js';
 
-export const CORE_CONTEXT_GRAPH_CONTRACT_VERSION = '1.0.0';
+export const CORE_CONTEXT_GRAPH_CONTRACT_VERSION = '1.1.0';
 
 const CORE_CONTEXT_PRIMITIVE_ORDER = [
   'agent',
   'checkpoint',
   'client',
+  'conversation',
   'decision',
   'fact',
   'incident',
   'lesson',
   'onboarding',
   'person',
+  'plan-step',
   'policy',
   'project',
   'run',
@@ -78,19 +80,19 @@ export const CORE_CONTEXT_QUERY_FILTER_KEYS = [
 export const CORE_CONTEXT_LENS_CONTRACT: ReadonlyArray<CoreContextLensContract> = [
   {
     id: 'my-work',
-    primitives: ['thread'],
+    primitives: ['thread', 'conversation', 'plan-step'],
   },
   {
     id: 'team-risk',
-    primitives: ['thread', 'incident', 'run'],
+    primitives: ['thread', 'conversation', 'plan-step', 'incident', 'run'],
   },
   {
     id: 'customer-health',
-    primitives: ['thread', 'incident', 'client'],
+    primitives: ['thread', 'conversation', 'plan-step', 'incident', 'client'],
   },
   {
     id: 'exec-brief',
-    primitives: ['thread', 'decision', 'run'],
+    primitives: ['thread', 'conversation', 'plan-step', 'decision', 'run'],
   },
 ];
 
@@ -106,6 +108,10 @@ const CORE_CONTEXT_PRIMITIVES: Readonly<Record<CoreContextPrimitiveName, Omit<Co
   client: {
     directory: 'clients',
     requiredFields: ['name', 'created', 'updated'],
+  },
+  conversation: {
+    directory: 'conversations',
+    requiredFields: ['title', 'status', 'created', 'updated'],
   },
   decision: {
     directory: 'decisions',
@@ -130,6 +136,10 @@ const CORE_CONTEXT_PRIMITIVES: Readonly<Record<CoreContextPrimitiveName, Omit<Co
   person: {
     directory: 'people',
     requiredFields: ['name', 'created', 'updated'],
+  },
+  'plan-step': {
+    directory: 'plan-steps',
+    requiredFields: ['title', 'status', 'progress', 'created', 'updated'],
   },
   policy: {
     directory: 'policies',
@@ -163,6 +173,48 @@ const CORE_CONTEXT_PRIMITIVES: Readonly<Record<CoreContextPrimitiveName, Omit<Co
 
 const CORE_CONTEXT_RELATIONSHIPS: ReadonlyArray<CoreContextRelationshipContract> = [
   {
+    id: 'conversation.thread_refs',
+    from: 'conversation',
+    field: 'thread_refs',
+    cardinality: 'many',
+    expectedFieldTypes: ['list'],
+    to: ['thread'],
+  },
+  {
+    id: 'conversation.plan_step_refs',
+    from: 'conversation',
+    field: 'plan_step_refs',
+    cardinality: 'many',
+    expectedFieldTypes: ['list'],
+    to: ['plan-step'],
+  },
+  {
+    id: 'plan-step.conversation_ref',
+    from: 'plan-step',
+    field: 'conversation_ref',
+    cardinality: 'one',
+    expectedFieldTypes: ['ref'],
+    expectedRefTypes: ['conversation'],
+    to: ['conversation'],
+  },
+  {
+    id: 'plan-step.thread_ref',
+    from: 'plan-step',
+    field: 'thread_ref',
+    cardinality: 'one',
+    expectedFieldTypes: ['ref'],
+    expectedRefTypes: ['thread'],
+    to: ['thread'],
+  },
+  {
+    id: 'plan-step.depends_on',
+    from: 'plan-step',
+    field: 'depends_on',
+    cardinality: 'many',
+    expectedFieldTypes: ['list'],
+    to: ['plan-step'],
+  },
+  {
     id: 'thread.parent',
     from: 'thread',
     field: 'parent',
@@ -194,7 +246,7 @@ const CORE_CONTEXT_RELATIONSHIPS: ReadonlyArray<CoreContextRelationshipContract>
     field: 'context_refs',
     cardinality: 'many',
     expectedFieldTypes: ['list'],
-    to: ['thread', 'space', 'project', 'client', 'decision', 'lesson', 'fact', 'incident', 'policy', 'skill', 'checkpoint', 'onboarding', 'run', 'trigger'],
+    to: ['thread', 'space', 'project', 'client', 'conversation', 'plan-step', 'decision', 'lesson', 'fact', 'incident', 'policy', 'skill', 'checkpoint', 'onboarding', 'run', 'trigger'],
   },
   {
     id: 'project.client',
@@ -253,7 +305,7 @@ const CORE_CONTEXT_RELATIONSHIPS: ReadonlyArray<CoreContextRelationshipContract>
     field: 'context_refs',
     cardinality: 'many',
     expectedFieldTypes: ['list'],
-    to: ['thread', 'project', 'client', 'fact', 'lesson', 'incident', 'policy'],
+    to: ['thread', 'project', 'client', 'conversation', 'plan-step', 'fact', 'lesson', 'incident', 'policy'],
   },
   {
     id: 'lesson.context_refs',
@@ -261,7 +313,7 @@ const CORE_CONTEXT_RELATIONSHIPS: ReadonlyArray<CoreContextRelationshipContract>
     field: 'context_refs',
     cardinality: 'many',
     expectedFieldTypes: ['list'],
-    to: ['thread', 'project', 'client', 'decision', 'fact', 'incident'],
+    to: ['thread', 'project', 'client', 'conversation', 'plan-step', 'decision', 'fact', 'incident'],
   },
   {
     id: 'skill.proposal_thread',

@@ -3,7 +3,7 @@
 exports[`core context graph contract > enforces invariants for registry plus query/lens contracts 1`] = `
 {
   "ok": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "violations": [],
 }
 `;
@@ -15,12 +15,16 @@ exports[`core context graph contract > locks a versioned primitive and relations
       "id": "my-work",
       "primitives": [
         "thread",
+        "conversation",
+        "plan-step",
       ],
     },
     {
       "id": "team-risk",
       "primitives": [
         "thread",
+        "conversation",
+        "plan-step",
         "incident",
         "run",
       ],
@@ -29,6 +33,8 @@ exports[`core context graph contract > locks a versioned primitive and relations
       "id": "customer-health",
       "primitives": [
         "thread",
+        "conversation",
+        "plan-step",
         "incident",
         "client",
       ],
@@ -37,6 +43,8 @@ exports[`core context graph contract > locks a versioned primitive and relations
       "id": "exec-brief",
       "primitives": [
         "thread",
+        "conversation",
+        "plan-step",
         "decision",
         "run",
       ],
@@ -66,6 +74,16 @@ exports[`core context graph contract > locks a versioned primitive and relations
       "name": "client",
       "requiredFields": [
         "name",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "conversations",
+      "name": "conversation",
+      "requiredFields": [
+        "title",
+        "status",
         "created",
         "updated",
       ],
@@ -121,6 +139,17 @@ exports[`core context graph contract > locks a versioned primitive and relations
       "name": "person",
       "requiredFields": [
         "name",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "plan-steps",
+      "name": "plan-step",
+      "requiredFields": [
+        "title",
+        "status",
+        "progress",
         "created",
         "updated",
       ],
@@ -215,6 +244,72 @@ exports[`core context graph contract > locks a versioned primitive and relations
   },
   "relationships": [
     {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "thread_refs",
+      "from": "conversation",
+      "id": "conversation.thread_refs",
+      "to": [
+        "thread",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "plan_step_refs",
+      "from": "conversation",
+      "id": "conversation.plan_step_refs",
+      "to": [
+        "plan-step",
+      ],
+    },
+    {
+      "cardinality": "one",
+      "expectedFieldTypes": [
+        "ref",
+      ],
+      "expectedRefTypes": [
+        "conversation",
+      ],
+      "field": "conversation_ref",
+      "from": "plan-step",
+      "id": "plan-step.conversation_ref",
+      "to": [
+        "conversation",
+      ],
+    },
+    {
+      "cardinality": "one",
+      "expectedFieldTypes": [
+        "ref",
+      ],
+      "expectedRefTypes": [
+        "thread",
+      ],
+      "field": "thread_ref",
+      "from": "plan-step",
+      "id": "plan-step.thread_ref",
+      "to": [
+        "thread",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "depends_on",
+      "from": "plan-step",
+      "id": "plan-step.depends_on",
+      "to": [
+        "plan-step",
+      ],
+    },
+    {
       "cardinality": "one",
       "expectedFieldTypes": [
         "ref",
@@ -269,6 +364,8 @@ exports[`core context graph contract > locks a versioned primitive and relations
         "space",
         "project",
         "client",
+        "conversation",
+        "plan-step",
         "decision",
         "lesson",
         "fact",
@@ -375,6 +472,8 @@ exports[`core context graph contract > locks a versioned primitive and relations
         "thread",
         "project",
         "client",
+        "conversation",
+        "plan-step",
         "fact",
         "lesson",
         "incident",
@@ -393,6 +492,8 @@ exports[`core context graph contract > locks a versioned primitive and relations
         "thread",
         "project",
         "client",
+        "conversation",
+        "plan-step",
         "decision",
         "fact",
         "incident",
@@ -447,6 +548,6 @@ exports[`core context graph contract > locks a versioned primitive and relations
       ],
     },
   ],
-  "version": "1.0.0",
+  "version": "1.1.0",
 }
 `;

@@ -3,6 +3,7 @@ export * as registry from './registry.js';
 export * as ledger from './ledger.js';
 export * as store from './store.js';
 export * as thread from './thread.js';
+export * as conversation from './conversation.js';
 export * as workspace from './workspace.js';
 export * as serverConfig from './server-config.js';
 export * as starterKit from './starter-kit.js';
