@@ -6,6 +6,21 @@ import { listTypes } from './registry.js';
 import * as store from './store.js';
 import type { PrimitiveInstance, PrimitiveQueryFilters } from './types.js';
 
+export const PRIMITIVE_QUERY_FILTER_KEYS = [
+  'type',
+  'status',
+  'owner',
+  'tag',
+  'text',
+  'pathIncludes',
+  'updatedAfter',
+  'updatedBefore',
+  'createdAfter',
+  'createdBefore',
+  'limit',
+  'offset',
+] as const satisfies ReadonlyArray<keyof PrimitiveQueryFilters>;
+
 export function queryPrimitives(
   workspacePath: string,
   filters: PrimitiveQueryFilters = {},

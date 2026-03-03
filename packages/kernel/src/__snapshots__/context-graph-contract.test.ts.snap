@@ -1,0 +1,452 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`core context graph contract > enforces invariants for registry plus query/lens contracts 1`] = `
+{
+  "ok": true,
+  "version": "1.0.0",
+  "violations": [],
+}
+`;
+
+exports[`core context graph contract > locks a versioned primitive and relationship contract snapshot 1`] = `
+{
+  "lenses": [
+    {
+      "id": "my-work",
+      "primitives": [
+        "thread",
+      ],
+    },
+    {
+      "id": "team-risk",
+      "primitives": [
+        "thread",
+        "incident",
+        "run",
+      ],
+    },
+    {
+      "id": "customer-health",
+      "primitives": [
+        "thread",
+        "incident",
+        "client",
+      ],
+    },
+    {
+      "id": "exec-brief",
+      "primitives": [
+        "thread",
+        "decision",
+        "run",
+      ],
+    },
+  ],
+  "primitives": [
+    {
+      "directory": "agents",
+      "name": "agent",
+      "requiredFields": [
+        "name",
+      ],
+    },
+    {
+      "directory": "checkpoints",
+      "name": "checkpoint",
+      "requiredFields": [
+        "title",
+        "actor",
+        "summary",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "clients",
+      "name": "client",
+      "requiredFields": [
+        "name",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "decisions",
+      "name": "decision",
+      "requiredFields": [
+        "title",
+        "date",
+      ],
+    },
+    {
+      "directory": "facts",
+      "name": "fact",
+      "requiredFields": [
+        "subject",
+        "predicate",
+        "object",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "incidents",
+      "name": "incident",
+      "requiredFields": [
+        "title",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "lessons",
+      "name": "lesson",
+      "requiredFields": [
+        "title",
+        "date",
+      ],
+    },
+    {
+      "directory": "onboarding",
+      "name": "onboarding",
+      "requiredFields": [
+        "title",
+        "actor",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "people",
+      "name": "person",
+      "requiredFields": [
+        "name",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "policies",
+      "name": "policy",
+      "requiredFields": [
+        "title",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "projects",
+      "name": "project",
+      "requiredFields": [
+        "title",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "runs",
+      "name": "run",
+      "requiredFields": [
+        "title",
+        "objective",
+        "runtime",
+        "status",
+        "run_id",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "skills",
+      "name": "skill",
+      "requiredFields": [
+        "title",
+        "status",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "spaces",
+      "name": "space",
+      "requiredFields": [
+        "title",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "threads",
+      "name": "thread",
+      "requiredFields": [
+        "title",
+        "goal",
+        "status",
+        "created",
+        "updated",
+      ],
+    },
+    {
+      "directory": "triggers",
+      "name": "trigger",
+      "requiredFields": [
+        "title",
+        "action",
+        "created",
+        "updated",
+      ],
+    },
+  ],
+  "query": {
+    "filterKeys": [
+      "type",
+      "status",
+      "owner",
+      "tag",
+      "text",
+      "pathIncludes",
+      "updatedAfter",
+      "updatedBefore",
+      "createdAfter",
+      "createdBefore",
+      "limit",
+      "offset",
+    ],
+  },
+  "relationships": [
+    {
+      "cardinality": "one",
+      "expectedFieldTypes": [
+        "ref",
+      ],
+      "expectedRefTypes": [
+        "thread",
+      ],
+      "field": "parent",
+      "from": "thread",
+      "id": "thread.parent",
+      "to": [
+        "thread",
+      ],
+    },
+    {
+      "cardinality": "one",
+      "expectedFieldTypes": [
+        "ref",
+      ],
+      "expectedRefTypes": [
+        "space",
+      ],
+      "field": "space",
+      "from": "thread",
+      "id": "thread.space",
+      "to": [
+        "space",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "deps",
+      "from": "thread",
+      "id": "thread.deps",
+      "to": [
+        "thread",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "context_refs",
+      "from": "thread",
+      "id": "thread.context_refs",
+      "to": [
+        "thread",
+        "space",
+        "project",
+        "client",
+        "decision",
+        "lesson",
+        "fact",
+        "incident",
+        "policy",
+        "skill",
+        "checkpoint",
+        "onboarding",
+        "run",
+        "trigger",
+      ],
+    },
+    {
+      "cardinality": "one",
+      "expectedFieldTypes": [
+        "ref",
+      ],
+      "expectedRefTypes": [
+        "client",
+      ],
+      "field": "client",
+      "from": "project",
+      "id": "project.client",
+      "to": [
+        "client",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "member_refs",
+      "from": "project",
+      "id": "project.member_refs",
+      "to": [
+        "person",
+        "agent",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "thread_refs",
+      "from": "project",
+      "id": "project.thread_refs",
+      "to": [
+        "thread",
+      ],
+    },
+    {
+      "cardinality": "one",
+      "expectedFieldTypes": [
+        "ref",
+      ],
+      "expectedRefTypes": [
+        "client",
+      ],
+      "field": "client",
+      "from": "person",
+      "id": "person.client",
+      "to": [
+        "client",
+      ],
+    },
+    {
+      "cardinality": "one",
+      "expectedFieldTypes": [
+        "ref",
+      ],
+      "expectedRefTypes": [
+        "person",
+      ],
+      "field": "contact_ref",
+      "from": "client",
+      "id": "client.contact_ref",
+      "to": [
+        "person",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "project_refs",
+      "from": "client",
+      "id": "client.project_refs",
+      "to": [
+        "project",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "context_refs",
+      "from": "decision",
+      "id": "decision.context_refs",
+      "to": [
+        "thread",
+        "project",
+        "client",
+        "fact",
+        "lesson",
+        "incident",
+        "policy",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "context_refs",
+      "from": "lesson",
+      "id": "lesson.context_refs",
+      "to": [
+        "thread",
+        "project",
+        "client",
+        "decision",
+        "fact",
+        "incident",
+      ],
+    },
+    {
+      "cardinality": "one",
+      "expectedFieldTypes": [
+        "ref",
+      ],
+      "field": "proposal_thread",
+      "from": "skill",
+      "id": "skill.proposal_thread",
+      "to": [
+        "thread",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "depends_on",
+      "from": "skill",
+      "id": "skill.depends_on",
+      "to": [
+        "skill",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "thread_refs",
+      "from": "onboarding",
+      "id": "onboarding.thread_refs",
+      "to": [
+        "thread",
+      ],
+    },
+    {
+      "cardinality": "many",
+      "expectedFieldTypes": [
+        "list",
+      ],
+      "field": "spaces",
+      "from": "onboarding",
+      "id": "onboarding.spaces",
+      "to": [
+        "space",
+      ],
+    },
+  ],
+  "version": "1.0.0",
+}
+`;
