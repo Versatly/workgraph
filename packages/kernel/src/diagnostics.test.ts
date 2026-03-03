@@ -91,6 +91,12 @@ describe('diagnostics tooling', () => {
   });
 
   it('stats reports deterministic primitive, link, and velocity metrics', () => {
+    const baseline = computeVaultStats(workspacePath);
+    const baselineThreadCount = baseline.primitives.byType.thread ?? 0;
+    const baselineDecisionCount = baseline.primitives.byType.decision ?? 0;
+    const baselineLinkTotal = baseline.links.total;
+    const baselineOrphanCount = baseline.links.orphanCount;
+
     const alpha = thread.createThread(workspacePath, 'Alpha Thread', 'goal alpha', 'agent-a');
     const beta = thread.createThread(workspacePath, 'Beta Thread', 'goal beta', 'agent-a');
     thread.claim(workspacePath, alpha.path, 'agent-a');
@@ -108,11 +114,11 @@ describe('diagnostics tooling', () => {
     }, '', 'agent-a');
 
     const stats = computeVaultStats(workspacePath);
-    expect(stats.primitives.total).toBe(3);
-    expect(stats.primitives.byType.thread).toBe(2);
-    expect(stats.primitives.byType.decision).toBe(1);
-    expect(stats.links.total).toBe(1);
-    expect(stats.links.orphanCount).toBe(1);
+    expect(stats.primitives.total).toBe(baseline.primitives.total + 3);
+    expect(stats.primitives.byType.thread).toBe(baselineThreadCount + 2);
+    expect(stats.primitives.byType.decision).toBe(baselineDecisionCount + 1);
+    expect(stats.links.total).toBe(baselineLinkTotal + 1);
+    expect(stats.links.orphanCount).toBe(baselineOrphanCount + 1);
     expect(stats.links.mostConnectedNodes.length).toBeGreaterThan(0);
     expect(stats.frontmatter.averageCompleteness).toBeCloseTo(1, 5);
     expect(stats.ledger.totalEvents).toBeGreaterThan(0);
