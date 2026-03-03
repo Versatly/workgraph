@@ -7,9 +7,9 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createWorkgraphMcpServer } from '@versatly/workgraph-mcp-server';
 import { loadRegistry, saveRegistry } from './registry.js';
+import { ensureCliBuiltForTests } from '../../../tests/helpers/cli-build.js';
 
 let workspacePath: string;
-let cliBuilt = false;
 
 beforeEach(() => {
   workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-schema-drift-'));
@@ -22,7 +22,7 @@ afterEach(() => {
 });
 
 beforeAll(() => {
-  ensureBuiltCli();
+  ensureCliBuiltForTests();
 });
 
 describe('schema drift regression', () => {
@@ -77,28 +77,6 @@ describe('schema drift regression', () => {
     }
   });
 });
-
-function ensureBuiltCli(): void {
-  if (cliBuilt) return;
-  const npmExecPath = process.env.npm_execpath;
-  const result = npmExecPath
-    ? spawnSync(process.execPath, [npmExecPath, 'run', 'build', '--silent'], {
-        encoding: 'utf-8',
-      })
-    : process.platform === 'win32'
-      ? spawnSync('cmd.exe', ['/d', '/s', '/c', 'pnpm run build --silent'], {
-          encoding: 'utf-8',
-        })
-      : spawnSync('pnpm', ['run', 'build', '--silent'], {
-          encoding: 'utf-8',
-        });
-  if (result.status !== 0) {
-    throw new Error(
-      `Failed to build CLI for schema drift tests.\nstdout:\n${result.stdout}\nstderr:\n${result.stderr}\nspawnError:\n${result.error?.message ?? 'none'}`,
-    );
-  }
-  cliBuilt = true;
-}
 
 function runCliHelp(args: string[]): string {
   const result = spawnSync('node', [path.resolve('bin/workgraph.js'), ...args, '--help'], {

@@ -51,11 +51,11 @@ program.showHelpAfterError();
 addWorkspaceOption(
   program
     .command('init [path]')
-    .description('Initialize a pure workgraph workspace (no memory category scaffolding)')
+    .description('Initialize or repair a workgraph workspace starter kit')
     .option('-n, --name <name>', 'Workspace name')
     .option('--no-type-dirs', 'Do not pre-create built-in type directories')
     .option('--no-bases', 'Do not generate .base files from primitive registry')
-    .option('--no-readme', 'Do not create README.md')
+    .option('--no-readme', 'Do not create README.md/QUICKSTART.md')
     .option('--json', 'Emit structured JSON output')
 ).action((targetPath, opts) =>
   runCommand(
@@ -70,12 +70,27 @@ addWorkspaceOption(
       });
       return result;
     },
-    (result) => [
-      `Initialized workgraph workspace: ${result.workspacePath}`,
-      `Seeded types: ${result.seededTypes.join(', ')}`,
-      `Generated .base files: ${result.generatedBases.length}`,
-      `Config: ${result.configPath}`,
-    ]
+    (result) => {
+      const roleSeeded = result.starterKit.roles.created.length + result.starterKit.roles.existing.length;
+      const policySeeded = result.starterKit.policies.created.length + result.starterKit.policies.existing.length;
+      const gateSeeded = result.starterKit.gates.created.length + result.starterKit.gates.existing.length;
+      const spaceSeeded = result.starterKit.spaces.created.length + result.starterKit.spaces.existing.length;
+      return [
+        `${result.alreadyInitialized ? 'Updated' : 'Initialized'} workgraph workspace: ${result.workspacePath}`,
+        `Seeded types: ${result.seededTypes.join(', ')}`,
+        `Generated .base files: ${result.generatedBases.length}`,
+        `Config: ${result.configPath}`,
+        `Server config: ${result.serverConfigPath}`,
+        `Starter kit primitives: roles=${roleSeeded} policies=${policySeeded} gates=${gateSeeded} spaces=${spaceSeeded}`,
+        `Bootstrap trust token (${result.bootstrapTrustTokenPath}): ${result.bootstrapTrustToken}`,
+        ...(result.quickstartPath ? [`Quickstart: ${result.quickstartPath}`] : []),
+        '',
+        'Next steps:',
+        `1) Start server: workgraph serve -w "${result.workspacePath}"`,
+        `2) Register first agent: workgraph agent register agent-1 -w "${result.workspacePath}" --token ${result.bootstrapTrustToken}`,
+        `3) Create first thread: workgraph thread create "First coordinated task" -w "${result.workspacePath}" --goal "Validate onboarding flow" --actor agent-1`,
+      ];
+    }
   )
 );
 
@@ -491,6 +506,46 @@ addWorkspaceOption(
       `Heartbeat: ${String(result.presence.fields.name)} [${String(result.presence.fields.status)}]`,
       `Last seen: ${String(result.presence.fields.last_seen)}`,
       `Current task: ${String(result.presence.fields.current_task ?? 'none')}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  agentCmd
+    .command('register <name>')
+    .description('Register an agent using the bootstrap trust token')
+    .option('--token <token>', 'Bootstrap trust token (or WORKGRAPH_TRUST_TOKEN env)')
+    .option('--role <role>', 'Role slug/path override (default from trust token)')
+    .option('--capabilities <items>', 'Comma-separated extra capabilities')
+    .option('--status <status>', 'online | busy | offline', 'online')
+    .option('--current-task <threadRef>', 'Optional current task/thread ref')
+    .option('-a, --actor <name>', 'Actor writing registration artifacts')
+    .option('--json', 'Emit structured JSON output')
+).action((name, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const token = String(opts.token ?? process.env.WORKGRAPH_TRUST_TOKEN ?? '').trim();
+      if (!token) {
+        throw new Error('Missing trust token. Provide --token or set WORKGRAPH_TRUST_TOKEN.');
+      }
+      return workgraph.agent.registerAgent(workspacePath, name, {
+        token,
+        role: opts.role,
+        capabilities: csv(opts.capabilities),
+        status: normalizeAgentPresenceStatus(opts.status),
+        currentTask: opts.currentTask,
+        actor: opts.actor,
+      });
+    },
+    (result) => [
+      `Registered agent: ${result.agentName}`,
+      `Role: ${result.role} (${result.rolePath})`,
+      `Capabilities: ${result.capabilities.join(', ') || 'none'}`,
+      `Presence: ${result.presence.path}`,
+      `Policy party: ${result.policyParty.id}`,
+      `Bootstrap token: ${result.trustTokenPath} [${result.trustTokenStatus}]`,
     ],
   )
 );
@@ -2112,20 +2167,33 @@ addWorkspaceOption(
   program
     .command('serve')
     .description('Serve Workgraph HTTP MCP server + REST API')
-    .option('--port <port>', 'HTTP port (default: 8787)')
-    .option('--host <host>', 'Bind host (default: 0.0.0.0)')
+    .option('--port <port>', 'HTTP port (defaults to server config or 8787)')
+    .option('--host <host>', 'Bind host (defaults to server config or 0.0.0.0)')
     .option('--token <token>', 'Optional bearer token for MCP + REST auth')
-    .option('-a, --actor <name>', 'Default actor for thread mutations', DEFAULT_ACTOR),
+    .option('-a, --actor <name>', 'Default actor for thread mutations'),
 ).action(async (opts) => {
   const workspacePath = resolveWorkspacePath(opts);
-  const port = opts.port !== undefined ? parsePortOption(opts.port) : 8787;
-  const host = opts.host ? String(opts.host) : '0.0.0.0';
+  const serverConfig = workgraph.serverConfig.loadServerConfig(workspacePath);
+  const port = opts.port !== undefined
+    ? parsePortOption(opts.port)
+    : (serverConfig?.port ?? 8787);
+  const host = opts.host
+    ? String(opts.host)
+    : (serverConfig?.host ?? '0.0.0.0');
+  const defaultActor = opts.actor
+    ? String(opts.actor)
+    : (serverConfig?.defaultActor ?? DEFAULT_ACTOR);
+  const endpointPath = serverConfig?.endpointPath;
+  const bearerToken = opts.token
+    ? String(opts.token)
+    : serverConfig?.bearerToken;
   const handle = await startWorkgraphServer({
     workspacePath,
     host,
     port,
-    bearerToken: opts.token ? String(opts.token) : undefined,
-    defaultActor: opts.actor,
+    endpointPath,
+    bearerToken,
+    defaultActor,
   });
   console.log(`Server URL: ${handle.baseUrl}`);
   console.log(`MCP endpoint: ${handle.url}`);

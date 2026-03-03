@@ -4,6 +4,8 @@ export * as ledger from './ledger.js';
 export * as store from './store.js';
 export * as thread from './thread.js';
 export * as workspace from './workspace.js';
+export * as serverConfig from './server-config.js';
+export * as starterKit from './starter-kit.js';
 export * as query from './query.js';
 export * as orientation from './orientation.js';
 export * as lens from './lens.js';
