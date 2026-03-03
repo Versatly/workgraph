@@ -25,25 +25,29 @@ const MESSAGE_TYPES = ['message', 'note', 'decision', 'system', 'ask', 'reply'] 
 const PRESENCE_STATUSES = ['online', 'busy', 'offline'] as const;
 
 const evidenceAttachmentSchema = z.object({
-  kind: z.enum(['link', 'file']),
-  url: z.string().optional(),
-  path: z.string().optional(),
-  title: z.string().optional(),
-  mime_type: z.string().optional(),
-  size_bytes: z.number().int().min(0).optional(),
-  sha256: z.string().optional(),
+  kind: z.enum(['link', 'file']).describe('Evidence attachment kind.'),
+  url: z.string().optional().describe('Evidence URL for link-based artifacts.'),
+  path: z.string().optional().describe('Workspace-relative file path for file evidence.'),
+  title: z.string().optional().describe('Short human-readable evidence title.'),
+  mime_type: z.string().optional().describe('MIME type for this attachment when known.'),
+  size_bytes: z.number().int().min(0).optional().describe('Attachment size in bytes.'),
+  sha256: z.string().optional().describe('Optional sha256 digest for file integrity checks.'),
 }).refine(
   (value) => {
-    const url = typeof value.url === 'string' && value.url.trim().length > 0;
-    const filePath = typeof value.path === 'string' && value.path.trim().length > 0;
-    return url || filePath;
+    const hasUrl = typeof value.url === 'string' && value.url.trim().length > 0;
+    const hasPath = typeof value.path === 'string' && value.path.trim().length > 0;
+    if (value.kind === 'link') return hasUrl;
+    if (value.kind === 'file') return hasPath;
+    return false;
   },
   {
-    message: 'Evidence item must include url or path.',
+    message: 'Evidence item must provide url for link kind or path for file kind.',
   },
 );
 
-const metadataSchema = z.record(z.string(), z.unknown());
+const metadataSchema = z
+  .record(z.string(), z.unknown())
+  .describe('Arbitrary machine-readable metadata preserved with the event.');
 
 export function registerCollaborationTools(server: McpServer, options: WorkgraphMcpServerOptions): void {
   server.registerTool(
@@ -52,15 +56,15 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
       title: 'WorkGraph Post Message',
       description: 'Append a structured collaboration message event to a thread conversation.',
       inputSchema: {
-        threadPath: z.string().min(1),
-        actor: z.string().optional(),
-        conversationPath: z.string().optional(),
-        body: z.string().min(1),
-        messageType: z.enum(MESSAGE_TYPES).optional(),
-        correlationId: z.string().optional(),
-        replyToCorrelationId: z.string().optional(),
-        idempotencyKey: z.string().optional(),
-        evidence: z.array(evidenceAttachmentSchema).optional(),
+        threadPath: z.string().min(1).describe('Target thread path (threads/<slug>.md).'),
+        actor: z.string().optional().describe('Actor identity for write attribution.'),
+        conversationPath: z.string().optional().describe('Optional existing conversation path.'),
+        body: z.string().min(1).describe('Message body text to append.'),
+        messageType: z.enum(MESSAGE_TYPES).optional().describe('Conversation event type/kind.'),
+        correlationId: z.string().optional().describe('Correlation ID for ask/reply coordination.'),
+        replyToCorrelationId: z.string().optional().describe('Correlation ID this reply responds to.'),
+        idempotencyKey: z.string().optional().describe('Stable idempotency key for retry-safe writes.'),
+        evidence: z.array(evidenceAttachmentSchema).optional().describe('Optional evidence attachment descriptors.'),
         metadata: metadataSchema.optional(),
       },
       annotations: {
@@ -163,17 +167,17 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
       title: 'WorkGraph Ask',
       description: 'Post a correlated question and optionally await/poll for a reply.',
       inputSchema: {
-        threadPath: z.string().min(1),
-        actor: z.string().optional(),
-        conversationPath: z.string().optional(),
-        question: z.string().min(1),
-        correlationId: z.string().optional(),
-        idempotencyKey: z.string().optional(),
-        evidence: z.array(evidenceAttachmentSchema).optional(),
+        threadPath: z.string().min(1).describe('Target thread path (threads/<slug>.md).'),
+        actor: z.string().optional().describe('Actor identity for write attribution.'),
+        conversationPath: z.string().optional().describe('Optional existing conversation path.'),
+        question: z.string().min(1).describe('Question text to post.'),
+        correlationId: z.string().optional().describe('Optional correlation ID (generated when omitted).'),
+        idempotencyKey: z.string().optional().describe('Stable idempotency key for retry-safe asks.'),
+        evidence: z.array(evidenceAttachmentSchema).optional().describe('Optional evidence attachments for ask context.'),
         metadata: metadataSchema.optional(),
-        awaitReply: z.boolean().optional(),
-        timeoutMs: z.number().int().min(0).max(120_000).optional(),
-        pollIntervalMs: z.number().int().min(25).max(5_000).optional(),
+        awaitReply: z.boolean().optional().describe('Whether the tool should wait for a matching reply event.'),
+        timeoutMs: z.number().int().min(0).max(120_000).optional().describe('Reply wait timeout when awaitReply=true.'),
+        pollIntervalMs: z.number().int().min(25).max(5_000).optional().describe('Polling interval used while awaiting reply.'),
       },
       annotations: {
         destructiveHint: true,
@@ -241,17 +245,17 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
       title: 'WorkGraph Spawn Thread',
       description: 'Create a child thread with inherited context and optional idempotency key.',
       inputSchema: {
-        parentThreadPath: z.string().min(1),
-        actor: z.string().optional(),
-        title: z.string().min(1),
-        goal: z.string().min(1),
-        priority: z.string().optional(),
-        deps: z.array(z.string()).optional(),
-        tags: z.array(z.string()).optional(),
-        contextRefs: z.array(z.string()).optional(),
-        space: z.string().optional(),
-        conversationPath: z.string().optional(),
-        idempotencyKey: z.string().optional(),
+        parentThreadPath: z.string().min(1).describe('Parent thread path for child spawn operation.'),
+        actor: z.string().optional().describe('Actor identity for write attribution.'),
+        title: z.string().min(1).describe('New child thread title.'),
+        goal: z.string().min(1).describe('New child thread goal/body seed.'),
+        priority: z.string().optional().describe('Optional child priority override.'),
+        deps: z.array(z.string()).optional().describe('Optional dependency thread refs.'),
+        tags: z.array(z.string()).optional().describe('Optional child tags.'),
+        contextRefs: z.array(z.string()).optional().describe('Additional context refs inherited by child thread.'),
+        space: z.string().optional().describe('Optional space override for the spawned child thread.'),
+        conversationPath: z.string().optional().describe('Optional conversation to attach spawned child thread.'),
+        idempotencyKey: z.string().optional().describe('Stable idempotency key for retry-safe spawn.'),
       },
       annotations: {
         destructiveHint: true,
@@ -342,12 +346,12 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
       title: 'WorkGraph Heartbeat',
       description: 'Write agent liveness plus active-work claim heartbeat updates.',
       inputSchema: {
-        actor: z.string().optional(),
-        threadPath: z.string().optional(),
-        threadLeaseMinutes: z.number().int().min(1).max(240).optional(),
-        status: z.enum(PRESENCE_STATUSES).optional(),
-        currentWork: z.string().optional(),
-        capabilities: z.array(z.string()).optional(),
+        actor: z.string().optional().describe('Actor identity to heartbeat.'),
+        threadPath: z.string().optional().describe('Optional specific thread to heartbeat claim lease for.'),
+        threadLeaseMinutes: z.number().int().min(1).max(240).optional().describe('Thread lease extension window in minutes.'),
+        status: z.enum(PRESENCE_STATUSES).optional().describe('Presence status update for actor liveness.'),
+        currentWork: z.string().optional().describe('Current work/thread marker for presence state.'),
+        capabilities: z.array(z.string()).optional().describe('Optional runtime capabilities snapshot for presence.'),
       },
       annotations: {
         destructiveHint: true,
