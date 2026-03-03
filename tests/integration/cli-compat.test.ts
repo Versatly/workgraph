@@ -42,6 +42,78 @@ describe('CLI compatibility smoke', () => {
       const createdThreadPath = ((create.data as { thread: { path: string } }).thread.path);
       const createdThreadEtag = String((create.data as { thread: { fields: { etag: string } } }).thread.fields.etag);
 
+      const conversationCreate = runCli([
+        'conversation', 'create', 'Compatibility Conversation',
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--threads', createdThreadPath,
+        '--json',
+      ]);
+      expect(conversationCreate.ok).toBe(true);
+      const conversationPath = String(
+        (conversationCreate.data as { conversation: { path: string } }).conversation.path,
+      );
+
+      const planStepCreate = runCli([
+        'plan-step', 'create', conversationPath, 'Compatibility Plan Step',
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--thread', createdThreadPath,
+        '--json',
+      ]);
+      expect(planStepCreate.ok).toBe(true);
+      const planStepPath = String((planStepCreate.data as { step: { path: string } }).step.path);
+
+      const planStepProgress = runCli([
+        'plan-step', 'progress', planStepPath, '35',
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--json',
+      ]);
+      expect(planStepProgress.ok).toBe(true);
+
+      const planStepBlock = runCli([
+        'plan-step', 'block', planStepPath,
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--reason', 'waiting for compatibility signal',
+        '--json',
+      ]);
+      expect(planStepBlock.ok).toBe(true);
+
+      const planStepStart = runCli([
+        'plan-step', 'start', planStepPath,
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--json',
+      ]);
+      expect(planStepStart.ok).toBe(true);
+
+      const planStepDone = runCli([
+        'plan-step', 'done', planStepPath,
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--json',
+      ]);
+      expect(planStepDone.ok).toBe(true);
+
+      const conversationMessage = runCli([
+        'conversation', 'message', conversationPath, 'Compatibility plan-step completed',
+        '-w', workspacePath,
+        '--actor', 'agent-compat',
+        '--kind', 'note',
+        '--thread', createdThreadPath,
+        '--json',
+      ]);
+      expect(conversationMessage.ok).toBe(true);
+
+      const conversationState = runCli([
+        'conversation', 'state', conversationPath,
+        '-w', workspacePath,
+        '--json',
+      ]);
+      expect(conversationState.ok).toBe(true);
+
       const primitiveUpdate = runCli([
         'primitive', 'update', createdThreadPath,
         '-w', workspacePath,
@@ -217,5 +289,19 @@ describe('CLI compatibility smoke', () => {
     });
     expect(primitiveUpdateHelp.status).toBe(0);
     expect(primitiveUpdateHelp.stdout).toContain('--etag');
+
+    const conversationHelp = spawnSync('node', [path.resolve('bin/workgraph.js'), 'conversation', '--help'], {
+      encoding: 'utf-8',
+    });
+    expect(conversationHelp.status).toBe(0);
+    expect(conversationHelp.stdout).toContain('thread-add');
+    expect(conversationHelp.stdout).toContain('state');
+
+    const planStepHelp = spawnSync('node', [path.resolve('bin/workgraph.js'), 'plan-step', '--help'], {
+      encoding: 'utf-8',
+    });
+    expect(planStepHelp.status).toBe(0);
+    expect(planStepHelp.stdout).toContain('progress');
+    expect(planStepHelp.stdout).toContain('block');
   });
 });

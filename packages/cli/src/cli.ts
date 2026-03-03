@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import * as workgraph from '@versatly/workgraph-kernel';
 import { startWorkgraphServer, waitForShutdown } from '@versatly/workgraph-control-api';
 import { registerAutonomyCommands } from './cli/commands/autonomy.js';
+import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
 import { registerTriggerCommands } from './cli/commands/trigger.js';
@@ -2206,6 +2207,12 @@ registerDispatchCommands(program, DEFAULT_ACTOR);
 // ============================================================================
 
 registerTriggerCommands(program, DEFAULT_ACTOR);
+
+// ============================================================================
+// conversation + plan-step
+// ============================================================================
+
+registerConversationCommands(program, DEFAULT_ACTOR);
 
 // ============================================================================
 // onboarding

@@ -148,6 +148,67 @@ export const THREAD_STATUS_TRANSITIONS: Record<ThreadStatus, ThreadStatus[]> = {
 };
 
 // ---------------------------------------------------------------------------
+// Conversation + plan-step lifecycle
+// ---------------------------------------------------------------------------
+
+export type ConversationStatus =
+  | 'open'
+  | 'active'
+  | 'blocked'
+  | 'done'
+  | 'cancelled';
+
+export const CONVERSATION_STATUS_TRANSITIONS: Record<ConversationStatus, ConversationStatus[]> = {
+  open: ['active', 'blocked', 'cancelled', 'done'],
+  active: ['blocked', 'done', 'cancelled', 'open'],
+  blocked: ['active', 'cancelled', 'open'],
+  done: ['open'],
+  cancelled: ['open'],
+};
+
+export type PlanStepStatus =
+  | 'open'
+  | 'active'
+  | 'blocked'
+  | 'done'
+  | 'cancelled';
+
+export const PLAN_STEP_STATUS_TRANSITIONS: Record<PlanStepStatus, PlanStepStatus[]> = {
+  open: ['active', 'blocked', 'cancelled', 'done'],
+  active: ['blocked', 'done', 'cancelled', 'open'],
+  blocked: ['active', 'cancelled', 'open'],
+  done: ['open'],
+  cancelled: ['open'],
+};
+
+export interface ConversationStateSummary {
+  conversationPath: string;
+  status: ConversationStatus;
+  progress: number;
+  messageCount: number;
+  threadRefs: string[];
+  stepRefs: string[];
+  steps: {
+    total: number;
+    open: number;
+    active: number;
+    blocked: number;
+    done: number;
+    cancelled: number;
+  };
+  threads: {
+    total: number;
+    open: number;
+    active: number;
+    blocked: number;
+    done: number;
+    cancelled: number;
+    missing: number;
+  };
+  updatedAt: string;
+}
+
+// ---------------------------------------------------------------------------
 // Primitive instance
 // ---------------------------------------------------------------------------
 
