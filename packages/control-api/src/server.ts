@@ -7,7 +7,27 @@ import {
   thread as threadModule,
   workspace as workspaceModule,
 } from '@versatly/workgraph-kernel';
-import { startWorkgraphMcpHttpServer } from '@versatly/workgraph-mcp-server';
+import {
+  startWorkgraphMcpHttpServer,
+  type WorkgraphMcpHttpServerHandle,
+} from '@versatly/workgraph-mcp-server';
+import {
+  buildAgentsLens,
+  buildAttentionLens,
+  buildSpacesLens,
+  buildTimelineLens,
+} from './server-lenses.js';
+import {
+  listDashboardEventsSince,
+  subscribeToDashboardEvents,
+  toSsePayload,
+} from './server-events.js';
+import {
+  deleteWebhook,
+  dispatchWebhookEvent,
+  listWebhooks,
+  registerWebhook,
+} from './server-webhooks.js';
 
 const ledger = ledgerModule;
 const orientation = orientationModule;
@@ -23,6 +43,7 @@ const DEFAULT_LEDGER_LIMIT = 20;
 const DEFAULT_THREADS_LIMIT = 100;
 const MAX_LEDGER_LIMIT = 500;
 const MAX_THREADS_LIMIT = 1_000;
+const SSE_KEEPALIVE_MS = 15_000;
 
 type LogLevel = 'info' | 'warn' | 'error';
 
@@ -77,6 +98,12 @@ interface ThreadCreateRequestBody {
   tags?: unknown;
 }
 
+interface WebhookCreateRequestBody {
+  url?: unknown;
+  events?: unknown;
+  secret?: unknown;
+}
+
 export async function startWorkgraphServer(options: WorkgraphServerOptions): Promise<WorkgraphServerHandle> {
   const workspacePath = path.resolve(options.workspacePath);
   const host = readNonEmptyString(options.host) ?? DEFAULT_HOST;
@@ -85,22 +112,35 @@ export async function startWorkgraphServer(options: WorkgraphServerOptions): Pro
   const defaultActor = readNonEmptyString(options.defaultActor) ?? 'anonymous';
 
   const workspaceInitialized = ensureWorkspaceInitialized(workspacePath);
-
-  const handle = await startWorkgraphMcpHttpServer({
-    workspacePath,
-    defaultActor,
-    host,
-    port,
-    endpointPath,
-    bearerToken: options.bearerToken,
-    onApp: ({ app, bearerAuthMiddleware }) => {
-      app.use('/api', bearerAuthMiddleware);
-      registerRestRoutes(app, workspacePath, defaultActor);
-    },
+  const unsubscribeWebhookDispatch = subscribeToDashboardEvents(workspacePath, (event) => {
+    void dispatchWebhookEvent(workspacePath, event);
   });
+
+  let handle: WorkgraphMcpHttpServerHandle;
+  try {
+    handle = await startWorkgraphMcpHttpServer({
+      workspacePath,
+      defaultActor,
+      host,
+      port,
+      endpointPath,
+      bearerToken: options.bearerToken,
+      onApp: ({ app, bearerAuthMiddleware }) => {
+        app.use('/api', bearerAuthMiddleware);
+        registerRestRoutes(app, workspacePath, defaultActor);
+      },
+    });
+  } catch (error) {
+    unsubscribeWebhookDispatch();
+    throw error;
+  }
 
   return {
     ...handle,
+    close: async () => {
+      unsubscribeWebhookDispatch();
+      await handle.close();
+    },
     workspacePath,
     workspaceInitialized,
   };
@@ -185,6 +225,53 @@ export function loadServerOptionsFromEnv(env: NodeJS.ProcessEnv): WorkgraphServe
 }
 
 function registerRestRoutes(app: any, workspacePath: string, defaultActor: string): void {
+  app.get('/api/events', (req: any, res: any) => {
+    try {
+      const lastEventId = readNonEmptyString(req.headers?.['last-event-id']);
+      res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      res.setHeader('Cache-Control', 'no-cache, no-transform');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+      if (typeof res.flushHeaders === 'function') {
+        res.flushHeaders();
+      }
+      if (!safeStreamWrite(res, ':connected\n\n')) return;
+
+      const replay = listDashboardEventsSince(workspacePath, lastEventId);
+      for (const event of replay) {
+        if (!safeStreamWrite(res, toSsePayload(event))) {
+          return;
+        }
+      }
+
+      const unsubscribe = subscribeToDashboardEvents(workspacePath, (event) => {
+        safeStreamWrite(res, toSsePayload(event));
+      });
+      const keepAlive = setInterval(() => {
+        safeStreamWrite(res, ':keepalive\n\n');
+      }, SSE_KEEPALIVE_MS);
+      if (typeof keepAlive.unref === 'function') {
+        keepAlive.unref();
+      }
+
+      let cleaned = false;
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        clearInterval(keepAlive);
+        unsubscribe();
+      };
+      req.on('close', cleanup);
+      req.on('aborted', cleanup);
+      res.on('close', cleanup);
+      res.on('error', cleanup);
+    } catch (error) {
+      if (!res.headersSent) {
+        writeRouteError(res, error);
+      }
+    }
+  });
+
   app.get('/api/status', (_req: any, res: any) => {
     try {
       const snapshot = orientation.statusSnapshot(workspacePath);
@@ -293,6 +380,121 @@ function registerRestRoutes(app: any, workspacePath: string, defaultActor: strin
         ok: true,
         count: entries.length,
         entries,
+      });
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
+  app.get('/api/lens/:name', (req: any, res: any) => {
+    try {
+      const lensName = readNonEmptyString(req.params?.name)?.toLowerCase();
+      const space = readNonEmptyString(req.query?.space);
+      if (!lensName) {
+        res.status(400).json({
+          ok: false,
+          error: 'Lens name is required.',
+        });
+        return;
+      }
+
+      if (lensName === 'attention') {
+        res.json({
+          ok: true,
+          ...buildAttentionLens(workspacePath, { space }),
+        });
+        return;
+      }
+      if (lensName === 'agents') {
+        res.json({
+          ok: true,
+          ...buildAgentsLens(workspacePath, { space }),
+        });
+        return;
+      }
+      if (lensName === 'spaces') {
+        res.json({
+          ok: true,
+          ...buildSpacesLens(workspacePath, { space }),
+        });
+        return;
+      }
+      if (lensName === 'timeline') {
+        res.json({
+          ok: true,
+          ...buildTimelineLens(workspacePath, { space }),
+        });
+        return;
+      }
+
+      res.status(404).json({
+        ok: false,
+        error: `Unknown lens "${lensName}".`,
+      });
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
+  app.get('/api/webhooks', (_req: any, res: any) => {
+    try {
+      const webhooks = listWebhooks(workspacePath);
+      res.json({
+        ok: true,
+        count: webhooks.length,
+        webhooks,
+      });
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
+  app.post('/api/webhooks', (req: any, res: any) => {
+    try {
+      const payload = toRecord(req.body) as WebhookCreateRequestBody;
+      const url = readNonEmptyString(payload.url);
+      if (!url) {
+        throw new Error('Missing required field "url".');
+      }
+      const events = parseStringList(payload.events);
+      if (!events || events.length === 0) {
+        throw new Error('Missing required field "events".');
+      }
+      const webhook = registerWebhook(workspacePath, {
+        url,
+        events,
+        secret: readNonEmptyString(payload.secret),
+      });
+      res.status(201).json({
+        ok: true,
+        webhook,
+      });
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
+  app.delete('/api/webhooks/:id', (req: any, res: any) => {
+    try {
+      const webhookId = readNonEmptyString(req.params?.id);
+      if (!webhookId) {
+        res.status(400).json({
+          ok: false,
+          error: 'Webhook id is required.',
+        });
+        return;
+      }
+      const deleted = deleteWebhook(workspacePath, webhookId);
+      if (!deleted) {
+        res.status(404).json({
+          ok: false,
+          error: `Webhook not found: ${webhookId}`,
+        });
+        return;
+      }
+      res.json({
+        ok: true,
+        id: webhookId,
       });
     } catch (error) {
       writeRouteError(res, error);
@@ -548,6 +750,16 @@ function safeDecodeURIComponent(value: string): string {
     return decodeURIComponent(value);
   } catch {
     return value;
+  }
+}
+
+function safeStreamWrite(res: any, chunk: string): boolean {
+  if (res.writableEnded || res.destroyed) return false;
+  try {
+    res.write(chunk);
+    return true;
+  } catch {
+    return false;
   }
 }
 
