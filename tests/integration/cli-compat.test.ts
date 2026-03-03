@@ -2,13 +2,11 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
-import { spawnSync, type SpawnSyncReturns } from 'node:child_process';
-
-let cliBuilt = false;
-const PNPM_COMMAND = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
+import { spawnSync } from 'node:child_process';
+import { ensureCliBuiltForTests } from '../helpers/cli-build.js';
 
 function runCli(args: string[]): { ok: boolean; data?: unknown; error?: string } {
-  ensureBuiltCli();
+  ensureCliBuiltForTests();
   const result = spawnSync('node', [path.resolve('bin/workgraph.js'), ...args], {
     encoding: 'utf-8',
   });
@@ -22,25 +20,9 @@ function runCli(args: string[]): { ok: boolean; data?: unknown; error?: string }
   return parsed;
 }
 
-function ensureBuiltCli(): void {
-  if (cliBuilt) return;
-  const result = runBuild();
-  if (result.status !== 0) {
-    throw new Error(
-      `Failed to build CLI before compatibility test: ${formatBuildFailure(result)}`,
-    );
-  }
-  cliBuilt = true;
-}
-
 describe('CLI compatibility smoke', () => {
   beforeAll(() => {
-    const build = runBuild();
-    if (build.status !== 0) {
-      throw new Error(
-        `Failed to build CLI for compatibility test.\n${formatBuildFailure(build)}`,
-      );
-    }
+    ensureCliBuiltForTests();
   });
 
   it('keeps existing JSON envelope and legacy command behaviors', () => {
@@ -237,27 +219,3 @@ describe('CLI compatibility smoke', () => {
     expect(primitiveUpdateHelp.stdout).toContain('--etag');
   });
 });
-
-function runBuild(): SpawnSyncReturns<string> {
-  const npmExecPath = process.env.npm_execpath;
-  if (npmExecPath) {
-    return spawnSync(process.execPath, [npmExecPath, 'run', '--silent', 'build'], {
-      encoding: 'utf-8',
-    });
-  }
-  return spawnSync(PNPM_COMMAND, ['run', '--silent', 'build'], {
-    encoding: 'utf-8',
-  });
-}
-
-function formatBuildFailure(result: SpawnSyncReturns<string>): string {
-  const stderr = result.stderr?.trim();
-  const stdout = result.stdout?.trim();
-  const error = result.error?.message;
-  return [
-    `status=${String(result.status)} signal=${String(result.signal)}`,
-    error ? `error=${error}` : '',
-    `stdout:\n${stdout || '(empty)'}`,
-    `stderr:\n${stderr || '(empty)'}`,
-  ].filter(Boolean).join('\n');
-}
