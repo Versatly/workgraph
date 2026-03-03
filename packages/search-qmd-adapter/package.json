@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "main": "src/index.ts",
-  "types": "src/index.ts"
+  "types": "src/index.ts",
+  "dependencies": {
+    "@versatly/workgraph-kernel": "workspace:*"
+  }
 }

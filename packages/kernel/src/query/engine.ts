@@ -1,1 +1,1 @@
-export { queryPrimitives, keywordSearch } from '../../../../src/query.js';
+export { queryPrimitives, keywordSearch } from '../query.js';

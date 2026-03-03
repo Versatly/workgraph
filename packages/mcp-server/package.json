@@ -4,8 +4,14 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
-  "main": "../../dist/mcp-server.js",
-  "types": "../../dist/mcp-server.d.ts"
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.17.4",
+    "@versatly/workgraph-kernel": "workspace:*",
+    "@versatly/workgraph-policy": "workspace:*",
+    "zod": "^4.3.6"
+  }
 }

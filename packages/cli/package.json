@@ -4,11 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "bin": {
     "workgraph-monorepo": "src/index.ts"
   },
   "main": "src/index.ts",
-  "types": "src/index.ts"
+  "types": "src/index.ts",
+  "dependencies": {
+    "@versatly/workgraph-control-api": "workspace:*",
+    "@versatly/workgraph-kernel": "workspace:*",
+    "@versatly/workgraph-mcp-server": "workspace:*",
+    "commander": "^12.1.0"
+  }
 }

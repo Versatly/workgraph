@@ -4,8 +4,12 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "typecheck": "tsc --noEmit -p ../../tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "main": "src/index.ts",
-  "types": "src/index.ts"
+  "types": "src/index.ts",
+  "dependencies": {
+    "gray-matter": "^4.0.3",
+    "yaml": "^2.8.1"
+  }
 }

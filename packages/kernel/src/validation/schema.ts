@@ -1,1 +1,1 @@
-export { create, update } from '../../../../src/store.js';
+export { create, update } from '../store.js';

@@ -1,1 +1,1 @@
-export * from '../../../src/runtime-adapter-contracts.js';
+export * from '@versatly/workgraph-kernel';

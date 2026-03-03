@@ -1,1 +1,1 @@
-export { graphHygieneReport } from '../../../../src/graph.js';
+export { graphHygieneReport } from '../graph.js';

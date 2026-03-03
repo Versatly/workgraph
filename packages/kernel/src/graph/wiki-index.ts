@@ -1,1 +1,1 @@
-export { buildWikiLinkGraph, readWikiLinkGraphIndex, refreshWikiLinkGraphIndex } from '../../../../src/graph.js';
+export { buildWikiLinkGraph, readWikiLinkGraphIndex, refreshWikiLinkGraphIndex } from '../graph.js';

@@ -1,1 +1,1 @@
-export { checkpoint, intake } from '../../../../src/orientation.js';
+export { checkpoint, intake } from '../orientation.js';

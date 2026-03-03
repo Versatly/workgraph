@@ -1,1 +1,1 @@
-export { brief } from '../../../../src/orientation.js';
+export { brief } from '../orientation.js';

@@ -1,1 +1,1 @@
-export { keywordSearch } from '../../../../src/query.js';
+export { keywordSearch } from '../query.js';
