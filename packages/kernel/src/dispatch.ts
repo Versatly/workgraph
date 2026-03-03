@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
+import * as auth from './auth.js';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
@@ -62,6 +63,9 @@ export interface DispatchClaimResult {
 }
 
 export function createRun(workspacePath: string, input: DispatchCreateInput): DispatchRun {
+  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.create', '.workgraph/dispatch-runs', [
+    'dispatch:run',
+  ]);
   const state = loadRuns(workspacePath);
   if (input.idempotencyKey) {
     const existing = state.runs.find((run) => run.idempotencyKey === input.idempotencyKey);
@@ -100,6 +104,10 @@ export function createRun(workspacePath: string, input: DispatchCreateInput): Di
 }
 
 export function claimThread(workspacePath: string, threadRef: string, actor: string): DispatchClaimResult {
+  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.thread.claim', threadRef, [
+    'thread:claim',
+    'thread:manage',
+  ]);
   const threadPath = resolveThreadRef(threadRef);
   const gateCheck = gate.checkThreadGates(workspacePath, threadPath);
   if (!gateCheck.allowed) {
@@ -119,6 +127,9 @@ export function status(workspacePath: string, runId: string): DispatchRun {
 }
 
 export function followup(workspacePath: string, runId: string, actor: string, input: string): DispatchRun {
+  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.run.followup', runId, [
+    'dispatch:run',
+  ]);
   const state = loadRuns(workspacePath);
   const run = state.runs.find((entry) => entry.id === runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
@@ -153,6 +164,9 @@ export function markRun(
   nextStatus: Exclude<RunStatus, 'queued'>,
   options: { output?: string; error?: string; contextPatch?: Record<string, unknown> } = {},
 ): DispatchRun {
+  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.run.mark', runId, [
+    'dispatch:run',
+  ]);
   const run = setStatus(workspacePath, runId, actor, nextStatus, `Run moved to ${nextStatus}.`);
   if (options.output) run.output = options.output;
   if (options.error) run.error = options.error;
@@ -180,6 +194,9 @@ export function heartbeat(
   runId: string,
   input: DispatchHeartbeatInput,
 ): DispatchRun {
+  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.heartbeat', runId, [
+    'dispatch:run',
+  ]);
   const state = loadRuns(workspacePath);
   const run = state.runs.find((entry) => entry.id === runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
@@ -210,6 +227,10 @@ export function reconcileExpiredLeases(
   workspacePath: string,
   actor: string,
 ): DispatchReconcileResult {
+  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.run.reconcile', '.workgraph/dispatch-runs', [
+    'dispatch:run',
+    'policy:manage',
+  ]);
   const state = loadRuns(workspacePath);
   const nowMs = Date.now();
   const nowIso = new Date(nowMs).toISOString();
@@ -255,6 +276,9 @@ export function handoffRun(
   runId: string,
   input: DispatchHandoffInput,
 ): DispatchHandoffResult {
+  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.handoff', runId, [
+    'dispatch:run',
+  ]);
   const sourceRun = status(workspacePath, runId);
   const now = new Date().toISOString();
   const handoffContext: Record<string, unknown> = {
@@ -314,6 +338,9 @@ export async function executeRun(
   runId: string,
   input: DispatchExecuteInput,
 ): Promise<DispatchRun> {
+  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.execute', runId, [
+    'dispatch:run',
+  ]);
   const existing = status(workspacePath, runId);
   if (!['queued', 'running'].includes(existing.status)) {
     throw new Error(`Run ${runId} is in terminal status "${existing.status}" and cannot be executed.`);
@@ -376,6 +403,9 @@ function appendRunLogs(
   actor: string,
   logEntries: DispatchAdapterLogEntry[],
 ): void {
+  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.run.logs', runId, [
+    'dispatch:run',
+  ]);
   if (logEntries.length === 0) return;
   const state = loadRuns(workspacePath);
   const run = state.runs.find((entry) => entry.id === runId);
@@ -396,6 +426,9 @@ function setStatus(
   statusValue: RunStatus,
   logMessage: string,
 ): DispatchRun {
+  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.run.status', runId, [
+    'dispatch:run',
+  ]);
   const state = loadRuns(workspacePath);
   const run = state.runs.find((entry) => entry.id === runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
@@ -606,4 +639,22 @@ function resolveThreadRef(threadRef: string): string {
     return unwrapped.endsWith('.md') ? unwrapped : `${unwrapped}.md`;
   }
   return `threads/${unwrapped.endsWith('.md') ? unwrapped : `${unwrapped}.md`}`;
+}
+
+function assertDispatchMutationAuthorized(
+  workspacePath: string,
+  actor: string,
+  action: string,
+  target: string,
+  requiredCapabilities: string[],
+): void {
+  auth.assertAuthorizedMutation(workspacePath, {
+    actor,
+    action,
+    target,
+    requiredCapabilities,
+    metadata: {
+      module: 'dispatch',
+    },
+  });
 }

@@ -87,7 +87,9 @@ addWorkspaceOption(
         '',
         'Next steps:',
         `1) Start server: workgraph serve -w "${result.workspacePath}"`,
-        `2) Register first agent: workgraph agent register agent-1 -w "${result.workspacePath}" --token ${result.bootstrapTrustToken}`,
+        `2) Preferred registration flow: workgraph agent request agent-1 -w "${result.workspacePath}" --role roles/admin.md`,
+        `   Approve request: workgraph agent review agent-1 -w "${result.workspacePath}" --decision approved --actor admin-approver`,
+        `   Bootstrap fallback: workgraph agent register agent-1 -w "${result.workspacePath}" --token ${result.bootstrapTrustToken}`,
         `3) Create first thread: workgraph thread create "First coordinated task" -w "${result.workspacePath}" --goal "Validate onboarding flow" --actor agent-1`,
       ];
     }
@@ -513,7 +515,7 @@ addWorkspaceOption(
 addWorkspaceOption(
   agentCmd
     .command('register <name>')
-    .description('Register an agent using the bootstrap trust token')
+    .description('Register an agent using bootstrap token fallback (legacy/hybrid mode)')
     .option('--token <token>', 'Bootstrap trust token (or WORKGRAPH_TRUST_TOKEN env)')
     .option('--role <role>', 'Role slug/path override (default from trust token)')
     .option('--capabilities <items>', 'Comma-separated extra capabilities')
@@ -546,6 +548,144 @@ addWorkspaceOption(
       `Presence: ${result.presence.path}`,
       `Policy party: ${result.policyParty.id}`,
       `Bootstrap token: ${result.trustTokenPath} [${result.trustTokenStatus}]`,
+      ...(result.credential ? [`Credential: ${result.credential.id} [${result.credential.status}]`] : []),
+      ...(result.apiKey ? [`API key (store securely, shown once): ${result.apiKey}`] : []),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  agentCmd
+    .command('request <name>')
+    .description('Submit an approval-based agent registration request')
+    .option('--role <role>', 'Requested role slug/path (default: roles/contributor.md)')
+    .option('--capabilities <items>', 'Comma-separated requested extra capabilities')
+    .option('-a, --actor <name>', 'Actor submitting the request')
+    .option('--note <text>', 'Optional request note')
+    .option('--json', 'Emit structured JSON output')
+).action((name, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.agent.submitRegistrationRequest(workspacePath, name, {
+        role: opts.role,
+        capabilities: csv(opts.capabilities),
+        actor: opts.actor,
+        note: opts.note,
+      });
+    },
+    (result) => [
+      `Submitted registration request for ${result.agentName}`,
+      `Request: ${result.request.path}`,
+      `Requested role: ${result.requestedRolePath}`,
+      `Requested capabilities: ${result.requestedCapabilities.join(', ') || 'none'}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  agentCmd
+    .command('review <requestRef>')
+    .description('Approve or reject a pending registration request')
+    .requiredOption('--decision <decision>', 'approved | rejected')
+    .option('-a, --actor <name>', 'Reviewer actor', DEFAULT_ACTOR)
+    .option('--role <role>', 'Approved role slug/path (for approved decisions)')
+    .option('--capabilities <items>', 'Comma-separated approved extra capabilities')
+    .option('--scopes <items>', 'Comma-separated credential scopes (defaults to approved capabilities)')
+    .option('--expires-at <isoDate>', 'Optional credential expiry ISO date')
+    .option('--note <text>', 'Optional review note')
+    .option('--json', 'Emit structured JSON output')
+).action((requestRef, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const decision = String(opts.decision ?? '').trim().toLowerCase();
+      if (decision !== 'approved' && decision !== 'rejected') {
+        throw new Error('Invalid --decision value. Expected approved|rejected.');
+      }
+      return workgraph.agent.reviewRegistrationRequest(
+        workspacePath,
+        requestRef,
+        opts.actor,
+        decision,
+        {
+          role: opts.role,
+          capabilities: csv(opts.capabilities),
+          scopes: csv(opts.scopes),
+          expiresAt: opts.expiresAt,
+          note: opts.note,
+        },
+      );
+    },
+    (result) => [
+      `Reviewed request: ${result.request.path}`,
+      `Decision: ${result.decision}`,
+      `Approval record: ${result.approval.path}`,
+      ...(result.policyParty
+        ? [`Policy party: ${result.policyParty.id} (${result.policyParty.roles.join(', ')})`]
+        : []),
+      ...(result.credential ? [`Credential: ${result.credential.id} [${result.credential.status}]`] : []),
+      ...(result.apiKey ? [`API key (store securely, shown once): ${result.apiKey}`] : []),
+    ],
+  )
+);
+
+addWorkspaceOption(
+  agentCmd
+    .command('credential-list')
+    .description('List issued agent credentials')
+    .option('--actor <name>', 'Filter by actor id')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const credentials = workgraph.agent.listAgentCredentials(workspacePath, opts.actor);
+      return {
+        credentials,
+        count: credentials.length,
+      };
+    },
+    (result) => {
+      if (result.credentials.length === 0) return ['No credentials found.'];
+      return [
+        ...result.credentials.map((credential) =>
+          `${credential.id} actor=${credential.actor} status=${credential.status} scopes=${credential.scopes.join(', ') || 'none'}`
+        ),
+        `${result.count} credential(s)`,
+      ];
+    },
+  )
+);
+
+addWorkspaceOption(
+  agentCmd
+    .command('credential-revoke <credentialId>')
+    .description('Revoke an issued credential')
+    .option('-a, --actor <name>', 'Actor revoking the credential', DEFAULT_ACTOR)
+    .option('--reason <text>', 'Optional revocation reason')
+    .option('--json', 'Emit structured JSON output')
+).action((credentialId, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        credential: workgraph.agent.revokeAgentCredential(
+          workspacePath,
+          credentialId,
+          opts.actor,
+          opts.reason,
+        ),
+      };
+    },
+    (result) => [
+      `Revoked credential: ${result.credential.id}`,
+      `Actor: ${result.credential.actor}`,
+      `Status: ${result.credential.status}`,
     ],
   )
 );

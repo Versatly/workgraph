@@ -4,6 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import * as auth from './auth.js';
 import type { FieldDefinition, PrimitiveTypeDefinition, Registry } from './types.js';
 import * as ledger from './ledger.js';
 
@@ -407,6 +408,17 @@ export function defineType(
   actor: string,
   directory?: string,
 ): PrimitiveTypeDefinition {
+  auth.assertAuthorizedMutation(workspacePath, {
+    actor,
+    action: 'registry.define-type',
+    target: '.workgraph/registry.json',
+    requiredCapabilities: ['policy:manage'],
+    allowSystemActor: true,
+    metadata: {
+      module: 'registry',
+      type_name: name,
+    },
+  });
   const registry = loadRegistry(workspacePath);
   const safeName = name.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
 
@@ -455,8 +467,19 @@ export function extendType(
   workspacePath: string,
   name: string,
   newFields: Record<string, FieldDefinition>,
-  _actor: string,
+  actor: string,
 ): PrimitiveTypeDefinition {
+  auth.assertAuthorizedMutation(workspacePath, {
+    actor,
+    action: 'registry.extend-type',
+    target: '.workgraph/registry.json',
+    requiredCapabilities: ['policy:manage'],
+    allowSystemActor: true,
+    metadata: {
+      module: 'registry',
+      type_name: name,
+    },
+  });
   const registry = loadRegistry(workspacePath);
   const existing = registry.types[name];
   if (!existing) throw new Error(`Type "${name}" not found in registry.`);

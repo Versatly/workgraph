@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import {
+  auth as authModule,
   ledger as ledgerModule,
   orientation as orientationModule,
   store as storeModule,
@@ -30,6 +31,7 @@ import {
 } from './server-webhooks.js';
 
 const ledger = ledgerModule;
+const auth = authModule;
 const orientation = orientationModule;
 const store = storeModule;
 const thread = threadModule;
@@ -99,6 +101,7 @@ interface ThreadCreateRequestBody {
 }
 
 interface WebhookCreateRequestBody {
+  actor?: unknown;
   url?: unknown;
   events?: unknown;
   secret?: unknown;
@@ -127,6 +130,9 @@ export async function startWorkgraphServer(options: WorkgraphServerOptions): Pro
       bearerToken: options.bearerToken,
       onApp: ({ app, bearerAuthMiddleware }) => {
         app.use('/api', bearerAuthMiddleware);
+        app.use('/api', (req: any, _res: any, next: () => void) => {
+          auth.runWithAuthContext(buildRequestAuthContext(req), () => next());
+        });
         registerRestRoutes(app, workspacePath, defaultActor);
       },
     });
@@ -338,7 +344,8 @@ function registerRestRoutes(app: any, workspacePath: string, defaultActor: strin
   app.post('/api/threads', (req: any, res: any) => {
     try {
       const payload = toRecord(req.body);
-      const created = createThreadFromPayload(workspacePath, payload, defaultActor);
+      const actor = resolveMutationActor(req, workspacePath, payload.actor, defaultActor);
+      const created = createThreadFromPayload(workspacePath, payload, actor);
       res.status(201).json({
         ok: true,
         thread: created,
@@ -359,7 +366,8 @@ function registerRestRoutes(app: any, workspacePath: string, defaultActor: strin
         return;
       }
       const payload = toRecord(req.body);
-      const updated = updateThreadFromPayload(workspacePath, threadId, payload, defaultActor);
+      const actor = resolveMutationActor(req, workspacePath, payload.actor, defaultActor);
+      const updated = updateThreadFromPayload(workspacePath, threadId, payload, actor);
       res.json({
         ok: true,
         thread: updated,
@@ -452,6 +460,7 @@ function registerRestRoutes(app: any, workspacePath: string, defaultActor: strin
   app.post('/api/webhooks', (req: any, res: any) => {
     try {
       const payload = toRecord(req.body) as WebhookCreateRequestBody;
+      const actor = resolveMutationActor(req, workspacePath, payload.actor, defaultActor);
       const url = readNonEmptyString(payload.url);
       if (!url) {
         throw new Error('Missing required field "url".');
@@ -460,10 +469,23 @@ function registerRestRoutes(app: any, workspacePath: string, defaultActor: strin
       if (!events || events.length === 0) {
         throw new Error('Missing required field "events".');
       }
+      auth.assertAuthorizedMutation(workspacePath, {
+        actor,
+        action: 'webhook.register',
+        target: '.workgraph/webhooks.json',
+        requiredCapabilities: ['policy:manage', 'dispatch:run'],
+        metadata: {
+          module: 'control-api',
+        },
+      });
       const webhook = registerWebhook(workspacePath, {
         url,
         events,
         secret: readNonEmptyString(payload.secret),
+      });
+      ledger.append(workspacePath, actor, 'create', `.workgraph/webhooks/${webhook.id}`, 'webhook', {
+        url: webhook.url,
+        events: webhook.events,
       });
       res.status(201).json({
         ok: true,
@@ -476,6 +498,7 @@ function registerRestRoutes(app: any, workspacePath: string, defaultActor: strin
 
   app.delete('/api/webhooks/:id', (req: any, res: any) => {
     try {
+      const actor = resolveMutationActor(req, workspacePath, undefined, defaultActor);
       const webhookId = readNonEmptyString(req.params?.id);
       if (!webhookId) {
         res.status(400).json({
@@ -484,6 +507,15 @@ function registerRestRoutes(app: any, workspacePath: string, defaultActor: strin
         });
         return;
       }
+      auth.assertAuthorizedMutation(workspacePath, {
+        actor,
+        action: 'webhook.delete',
+        target: `.workgraph/webhooks.json#${webhookId}`,
+        requiredCapabilities: ['policy:manage', 'dispatch:run'],
+        metadata: {
+          module: 'control-api',
+        },
+      });
       const deleted = deleteWebhook(workspacePath, webhookId);
       if (!deleted) {
         res.status(404).json({
@@ -492,6 +524,7 @@ function registerRestRoutes(app: any, workspacePath: string, defaultActor: strin
         });
         return;
       }
+      ledger.append(workspacePath, actor, 'delete', `.workgraph/webhooks/${webhookId}`, 'webhook');
       res.json({
         ok: true,
         id: webhookId,
@@ -544,10 +577,9 @@ function listThreads(
 function createThreadFromPayload(
   workspacePath: string,
   payload: Record<string, unknown>,
-  defaultActor: string,
+  actor: string,
 ): PrimitiveInstance {
   const body = payload as ThreadCreateRequestBody;
-  const actor = readNonEmptyString(body.actor) ?? defaultActor;
   const goal = readNonEmptyString(body.goal) ?? readNonEmptyString(body.observation);
   if (!goal) {
     throw new Error('Missing required field "goal" (or "observation").');
@@ -567,7 +599,7 @@ function updateThreadFromPayload(
   workspacePath: string,
   rawThreadId: string,
   payload: Record<string, unknown>,
-  defaultActor: string,
+  actor: string,
 ): PrimitiveInstance {
   const threadInstance = resolveThreadInstance(workspacePath, rawThreadId);
   if (!threadInstance) {
@@ -575,7 +607,6 @@ function updateThreadFromPayload(
   }
 
   const body = payload as ThreadUpdateRequestBody;
-  const actor = readNonEmptyString(body.actor) ?? defaultActor;
   const status = readNonEmptyString(body.status);
   if (!isThreadStatus(status)) {
     throw new Error('Invalid or missing field "status". Expected open|active|blocked|done|cancelled.');
@@ -730,6 +761,14 @@ function inferHttpStatus(message: string): number {
   if (message.includes('not found')) return 404;
   if (message.includes('already claimed') || message.includes('owned by')) return 409;
   if (
+    message.includes('Identity verification failed') ||
+    message.includes('Policy gate blocked') ||
+    message.includes('Credential scope blocked') ||
+    message.includes('Mutation blocked')
+  ) {
+    return 403;
+  }
+  if (
     message.includes('Invalid') ||
     message.includes('Missing') ||
     message.includes('Cannot') ||
@@ -770,4 +809,42 @@ function logJson(level: LogLevel, event: string, data: Record<string, unknown>):
     event,
     ...data,
   }));
+}
+
+function buildRequestAuthContext(req: any): { credentialToken?: string; source: 'rest' } {
+  const credentialToken = readBearerToken(req?.headers?.authorization);
+  return {
+    ...(credentialToken ? { credentialToken } : {}),
+    source: 'rest',
+  };
+}
+
+function resolveMutationActor(
+  req: any,
+  workspacePath: string,
+  explicitActor: unknown,
+  defaultActor: string,
+): string {
+  const fromBody = readNonEmptyString(explicitActor);
+  if (fromBody) return fromBody;
+  const fromHeader = readNonEmptyString(req?.headers?.['x-workgraph-actor']);
+  if (fromHeader) return fromHeader;
+  const bearerToken = readBearerToken(req?.headers?.authorization);
+  if (bearerToken) {
+    const verification = auth.verifyAgentCredential(workspacePath, bearerToken, {
+      touchLastUsed: false,
+    });
+    if (verification.valid && verification.credential) {
+      return verification.credential.actor;
+    }
+  }
+  return defaultActor;
+}
+
+function readBearerToken(headerValue: unknown): string | undefined {
+  const authorization = readNonEmptyString(headerValue);
+  if (!authorization || !authorization.startsWith('Bearer ')) {
+    return undefined;
+  }
+  return readNonEmptyString(authorization.slice('Bearer '.length));
 }

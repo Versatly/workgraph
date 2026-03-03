@@ -9,6 +9,7 @@ import matter from 'gray-matter';
 import { loadRegistry, getType } from './registry.js';
 import * as ledger from './ledger.js';
 import * as graph from './graph.js';
+import * as auth from './auth.js';
 import * as policy from './policy.js';
 import type { PrimitiveInstance, PrimitiveTypeDefinition } from './types.js';
 
@@ -19,13 +20,20 @@ const TYPE_HINT_FIELD = '_wg_type';
 // Create
 // ---------------------------------------------------------------------------
 
+export interface PrimitiveCreateOptions {
+  pathOverride?: string;
+  skipAuthorization?: boolean;
+  requiredCapabilities?: string[];
+  action?: string;
+}
+
 export function create(
   workspacePath: string,
   typeName: string,
   fields: Record<string, unknown>,
   body: string,
   actor: string,
-  options: { pathOverride?: string } = {},
+  options: PrimitiveCreateOptions = {},
 ): PrimitiveInstance {
   const typeDef = getType(workspacePath, typeName);
   if (!typeDef) {
@@ -51,6 +59,18 @@ export function create(
   );
   if (!createPolicyDecision.allowed) {
     throw new Error(createPolicyDecision.reason ?? 'Policy gate blocked create transition.');
+  }
+  if (!options.skipAuthorization) {
+    auth.assertAuthorizedMutation(workspacePath, {
+      actor,
+      action: options.action ?? `store.${typeName}.create`,
+      target: options.pathOverride,
+      requiredCapabilities: options.requiredCapabilities ?? capabilitiesForStoreMutation(typeName, 'create'),
+      metadata: {
+        primitive_type: typeName,
+        mutation: 'create',
+      },
+    });
   }
   validateFields(workspacePath, typeDef, mergedWithTypeHint, 'create');
 
@@ -119,6 +139,9 @@ export function list(workspacePath: string, typeName: string): PrimitiveInstance
 export interface PrimitiveUpdateOptions {
   expectedEtag?: string;
   concurrentConflictMode?: 'warn' | 'error';
+  skipAuthorization?: boolean;
+  requiredCapabilities?: string[];
+  action?: string;
 }
 
 export function update(
@@ -174,6 +197,18 @@ export function update(
   if (!transitionDecision.allowed) {
     throw new Error(transitionDecision.reason ?? 'Policy gate blocked status transition.');
   }
+  if (!options.skipAuthorization) {
+    auth.assertAuthorizedMutation(workspacePath, {
+      actor,
+      action: options.action ?? `store.${existing.type}.update`,
+      target: existing.path,
+      requiredCapabilities: options.requiredCapabilities ?? capabilitiesForStoreMutation(existing.type, 'update'),
+      metadata: {
+        primitive_type: existing.type,
+        mutation: 'update',
+      },
+    });
+  }
 
   validateFields(workspacePath, typeDef, newFields, 'update');
   const newBody = bodyUpdate ?? existing.body;
@@ -202,9 +237,33 @@ export function update(
 // Delete (soft — moves to .workgraph/archive/)
 // ---------------------------------------------------------------------------
 
-export function remove(workspacePath: string, relPath: string, actor: string): void {
+export interface PrimitiveRemoveOptions {
+  skipAuthorization?: boolean;
+  requiredCapabilities?: string[];
+  action?: string;
+}
+
+export function remove(
+  workspacePath: string,
+  relPath: string,
+  actor: string,
+  options: PrimitiveRemoveOptions = {},
+): void {
   const absPath = path.join(workspacePath, relPath);
   if (!fs.existsSync(absPath)) throw new Error(`Not found: ${relPath}`);
+  const typeName = inferType(workspacePath, relPath, {});
+  if (!options.skipAuthorization) {
+    auth.assertAuthorizedMutation(workspacePath, {
+      actor,
+      action: options.action ?? `store.${typeName}.delete`,
+      target: relPath,
+      requiredCapabilities: options.requiredCapabilities ?? capabilitiesForStoreMutation(typeName, 'delete'),
+      metadata: {
+        primitive_type: typeName,
+        mutation: 'delete',
+      },
+    });
+  }
 
   const archiveDir = path.join(workspacePath, '.workgraph', 'archive');
   if (!fs.existsSync(archiveDir)) fs.mkdirSync(archiveDir, { recursive: true });
@@ -212,7 +271,6 @@ export function remove(workspacePath: string, relPath: string, actor: string): v
   const archivePath = path.join(archiveDir, path.basename(relPath));
   fs.renameSync(absPath, archivePath);
 
-  const typeName = inferType(workspacePath, relPath, {});
   ledger.append(workspacePath, actor, 'delete', relPath, typeName);
   graph.refreshWikiLinkGraphIndex(workspacePath);
 }
@@ -411,6 +469,35 @@ function normalizeRefPath(value: unknown): string {
     ? raw.slice(2, -2)
     : raw;
   return unwrapped.endsWith('.md') ? unwrapped : `${unwrapped}.md`;
+}
+
+function capabilitiesForStoreMutation(
+  typeName: string,
+  mutation: 'create' | 'update' | 'delete',
+): string[] {
+  switch (typeName) {
+    case 'thread':
+      return mutation === 'create'
+        ? ['thread:create', 'thread:manage', 'policy:manage']
+        : ['thread:update', 'thread:manage', 'thread:complete', 'policy:manage'];
+    case 'run':
+      return ['dispatch:run', 'policy:manage'];
+    case 'policy':
+      return ['policy:manage'];
+    case 'policy-gate':
+      return ['gate:manage', 'policy:manage'];
+    case 'checkpoint':
+      return ['checkpoint:create', 'dispatch:run', 'policy:manage'];
+    case 'role':
+    case 'trust-token':
+    case 'agent-registration-request':
+    case 'agent-registration-approval':
+      return ['agent:register', 'policy:manage'];
+    case 'presence':
+      return ['agent:heartbeat', 'agent:register', 'policy:manage'];
+    default:
+      return [];
+  }
 }
 
 function validateFields(

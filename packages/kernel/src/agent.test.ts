@@ -2,10 +2,13 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import * as auth from './auth.js';
+import * as ledger from './ledger.js';
 import { loadRegistry, saveRegistry } from './registry.js';
 import * as agent from './agent.js';
 import { getParty } from './policy.js';
 import * as store from './store.js';
+import * as thread from './thread.js';
 import { initWorkspace } from './workspace.js';
 
 let workspacePath: string;
@@ -132,5 +135,88 @@ describe('agent presence', () => {
     expect(() => agent.registerAgent(workspacePath, 'agent-beta', {
       token: initResult.bootstrapTrustToken,
     })).toThrow('already been used');
+  });
+
+  it('supports approval-based registration with strict scoped credential enforcement + revocation', () => {
+    const initResult = initWorkspace(workspacePath, { createReadme: false });
+    const admin = agent.registerAgent(workspacePath, 'admin-agent', {
+      token: initResult.bootstrapTrustToken,
+      capabilities: ['agent:approve-registration', 'thread:create', 'thread:update', 'thread:complete'],
+    });
+    expect(admin.apiKey).toBeDefined();
+
+    const serverConfigPath = path.join(workspacePath, '.workgraph', 'server.json');
+    const serverConfig = JSON.parse(fs.readFileSync(serverConfigPath, 'utf-8')) as Record<string, unknown>;
+    serverConfig.auth = {
+      mode: 'strict',
+      allowUnauthenticatedFallback: false,
+    };
+    serverConfig.registration = {
+      ...(serverConfig.registration as Record<string, unknown>),
+      mode: 'approval',
+      allowBootstrapFallback: true,
+    };
+    fs.writeFileSync(serverConfigPath, `${JSON.stringify(serverConfig, null, 2)}\n`, 'utf-8');
+
+    const request = agent.submitRegistrationRequest(workspacePath, 'agent-beta', {
+      role: 'roles/contributor.md',
+      capabilities: ['thread:create'],
+      note: 'Need contributor access.',
+    });
+    expect(request.request.fields.status).toBe('pending');
+
+    expect(() =>
+      agent.reviewRegistrationRequest(workspacePath, request.request.path, 'admin-agent', 'approved'),
+    ).toThrow('strict auth mode requires a valid credential');
+
+    const reviewed = auth.runWithAuthContext(
+      { credentialToken: admin.apiKey, source: 'cli' },
+      () =>
+        agent.reviewRegistrationRequest(
+          workspacePath,
+          request.request.path,
+          'admin-agent',
+          'approved',
+          { note: 'Approved for contributor scope.' },
+        ),
+    );
+    expect(reviewed.decision).toBe('approved');
+    expect(reviewed.apiKey).toBeDefined();
+    expect(reviewed.credential?.actor).toBe('agent-beta');
+    expect(reviewed.credential?.scopes).toContain('thread:create');
+
+    expect(() =>
+      thread.createThread(workspacePath, 'Strict no token', 'Denied without credential', 'agent-beta'),
+    ).toThrow('strict auth mode requires a valid credential');
+
+    expect(() =>
+      auth.runWithAuthContext(
+        { credentialToken: reviewed.apiKey, source: 'cli' },
+        () => thread.createThread(workspacePath, 'Actor mismatch', 'Denied by identity mismatch', 'agent-gamma'),
+      ),
+    ).toThrow('does not match claimed actor');
+
+    const created = auth.runWithAuthContext(
+      { credentialToken: reviewed.apiKey, source: 'cli' },
+      () => thread.createThread(workspacePath, 'Strict allowed', 'Valid credential actor', 'agent-beta'),
+    );
+    expect(created.path).toBe('threads/strict-allowed.md');
+
+    const revoked = auth.runWithAuthContext(
+      { credentialToken: admin.apiKey, source: 'cli' },
+      () => agent.revokeAgentCredential(workspacePath, reviewed.credential!.id, 'admin-agent', 'offboarded'),
+    );
+    expect(revoked.status).toBe('revoked');
+
+    expect(() =>
+      auth.runWithAuthContext(
+        { credentialToken: reviewed.apiKey, source: 'cli' },
+        () => thread.createThread(workspacePath, 'After revoke', 'Should fail', 'agent-beta'),
+      ),
+    ).toThrow('Credential is revoked');
+
+    const authorizeEntries = ledger.readAll(workspacePath).filter((entry) => entry.op === 'authorize');
+    expect(authorizeEntries.some((entry) => entry.data?.allowed === true)).toBe(true);
+    expect(authorizeEntries.some((entry) => entry.data?.allowed === false)).toBe(true);
   });
 });

@@ -4,6 +4,8 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import * as auth from './auth.js';
+import * as ledger from './ledger.js';
 import type { PolicyParty, PolicyRegistry } from './types.js';
 
 const POLICY_FILE = '.workgraph/policy.json';
@@ -53,7 +55,25 @@ export function upsertParty(
     roles?: string[];
     capabilities?: string[];
   },
+  options: {
+    actor?: string;
+    skipAuthorization?: boolean;
+  } = {},
 ): PolicyParty {
+  const actor = String(options.actor ?? 'system').trim() || 'system';
+  if (!options.skipAuthorization) {
+    auth.assertAuthorizedMutation(workspacePath, {
+      actor,
+      action: 'policy.party.upsert',
+      target: `.workgraph/policy.json#party/${partyId}`,
+      requiredCapabilities: ['policy:manage', 'agent:register'],
+      allowSystemActor: true,
+      metadata: {
+        module: 'policy',
+        party_id: partyId,
+      },
+    });
+  }
   const registry = loadPolicyRegistry(workspacePath);
   const now = new Date().toISOString();
   const existing = registry.parties[partyId];
@@ -66,6 +86,19 @@ export function upsertParty(
   };
   registry.parties[partyId] = next;
   savePolicyRegistry(workspacePath, registry);
+  ledger.append(
+    workspacePath,
+    actor,
+    existing ? 'update' : 'create',
+    `.workgraph/policy.json#party/${partyId}`,
+    'policy-party',
+    {
+      party_id: partyId,
+      roles: next.roles,
+      capabilities: next.capabilities,
+      ...(existing ? { replaced: true } : { replaced: false }),
+    },
+  );
   return next;
 }
 

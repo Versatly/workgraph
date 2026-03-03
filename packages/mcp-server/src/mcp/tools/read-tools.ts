@@ -61,7 +61,7 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
     },
     async (args) => {
       try {
-        const actor = resolveActor(args.actor, options.defaultActor);
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
         const brief = orientation.brief(options.workspacePath, actor, {
           recentCount: args.recentCount,
           nextCount: args.nextCount,

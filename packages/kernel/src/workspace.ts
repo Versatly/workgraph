@@ -203,6 +203,15 @@ Default server config is in \`.workgraph/server.json\` (host: ${input.serverHost
 Bootstrap trust token path: \`${input.bootstrapTrustTokenPath}\`  
 Bootstrap trust token value: \`${input.bootstrapTrustToken}\`
 
+Preferred (approval flow):
+
+\`\`\`bash
+workgraph agent request agent-1 -w "${input.workspacePath}" --role roles/admin.md
+workgraph agent review agent-1 -w "${input.workspacePath}" --decision approved --actor admin-approver
+\`\`\`
+
+Bootstrap fallback (legacy/hybrid migration mode):
+
 \`\`\`bash
 workgraph agent register agent-1 -w "${input.workspacePath}" --token ${input.bootstrapTrustToken}
 \`\`\`
