@@ -19,6 +19,8 @@ import {
   buildTimelineLens,
 } from './server-lenses.js';
 import {
+  createDashboardEventFilter,
+  type DashboardEvent,
   listDashboardEventsSince,
   subscribeToDashboardEvents,
   toSsePayload,
@@ -45,7 +47,8 @@ const DEFAULT_LEDGER_LIMIT = 20;
 const DEFAULT_THREADS_LIMIT = 100;
 const MAX_LEDGER_LIMIT = 500;
 const MAX_THREADS_LIMIT = 1_000;
-const SSE_KEEPALIVE_MS = 15_000;
+const DEFAULT_SSE_KEEPALIVE_MS = 15_000;
+const SSE_RETRY_MS = 3_000;
 
 type LogLevel = 'info' | 'warn' | 'error';
 
@@ -56,6 +59,7 @@ export interface WorkgraphServerOptions {
   bearerToken?: string;
   defaultActor?: string;
   endpointPath?: string;
+  sseKeepaliveMs?: number;
 }
 
 type PrimitiveInstance = any;
@@ -113,6 +117,7 @@ export async function startWorkgraphServer(options: WorkgraphServerOptions): Pro
   const port = normalizePort(options.port, DEFAULT_PORT);
   const endpointPath = readNonEmptyString(options.endpointPath) ?? DEFAULT_ENDPOINT_PATH;
   const defaultActor = readNonEmptyString(options.defaultActor) ?? 'anonymous';
+  const sseKeepaliveMs = normalizeSseKeepaliveMs(options.sseKeepaliveMs);
 
   const workspaceInitialized = ensureWorkspaceInitialized(workspacePath);
   const unsubscribeWebhookDispatch = subscribeToDashboardEvents(workspacePath, (event) => {
@@ -133,7 +138,7 @@ export async function startWorkgraphServer(options: WorkgraphServerOptions): Pro
         app.use('/api', (req: any, _res: any, next: () => void) => {
           auth.runWithAuthContext(buildRequestAuthContext(req), () => next());
         });
-        registerRestRoutes(app, workspacePath, defaultActor);
+        registerRestRoutes(app, workspacePath, defaultActor, sseKeepaliveMs);
       },
     });
   } catch (error) {
@@ -227,13 +232,27 @@ export function loadServerOptionsFromEnv(env: NodeJS.ProcessEnv): WorkgraphServe
     bearerToken: readNonEmptyString(env.WORKGRAPH_BEARER_TOKEN),
     defaultActor: readNonEmptyString(env.WORKGRAPH_ACTOR) ?? 'anonymous',
     endpointPath: DEFAULT_ENDPOINT_PATH,
+    sseKeepaliveMs: parseOptionalPositiveInt(env.WORKGRAPH_SSE_KEEPALIVE_MS, {
+      max: 60_000,
+    }),
   };
 }
 
-function registerRestRoutes(app: any, workspacePath: string, defaultActor: string): void {
+function registerRestRoutes(
+  app: any,
+  workspacePath: string,
+  defaultActor: string,
+  sseKeepaliveMs: number,
+): void {
   app.get('/api/events', (req: any, res: any) => {
     try {
-      const lastEventId = readNonEmptyString(req.headers?.['last-event-id']);
+      const lastEventId = readNonEmptyString(req.headers?.['last-event-id'])
+        ?? readNonEmptyString(req.query?.lastEventId);
+      const filter = createDashboardEventFilter({
+        eventTypes: readCsvQueryValues(req.query, ['event', 'events']),
+        primitiveTypes: readCsvQueryValues(req.query, ['primitive', 'primitiveType']),
+        threads: readCsvQueryValues(req.query, ['thread']),
+      });
       res.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       res.setHeader('Cache-Control', 'no-cache, no-transform');
       res.setHeader('Connection', 'keep-alive');
@@ -242,31 +261,68 @@ function registerRestRoutes(app: any, workspacePath: string, defaultActor: strin
         res.flushHeaders();
       }
       if (!safeStreamWrite(res, ':connected\n\n')) return;
+      if (!safeStreamWrite(res, `retry: ${SSE_RETRY_MS}\n\n`)) return;
 
-      const replay = listDashboardEventsSince(workspacePath, lastEventId);
-      for (const event of replay) {
-        if (!safeStreamWrite(res, toSsePayload(event))) {
+      let cleaned = false;
+      let streamReady = false;
+      let unsubscribe = () => {};
+      let keepAlive: NodeJS.Timeout | undefined;
+      const queuedLiveEvents: DashboardEvent[] = [];
+      let dedupeDuringBootstrap = true;
+      const bootstrapDeliveredIds = new Set<string>();
+
+      const cleanup = () => {
+        if (cleaned) return;
+        cleaned = true;
+        if (keepAlive) {
+          clearInterval(keepAlive);
+        }
+        unsubscribe();
+      };
+
+      const emitEvent = (event: DashboardEvent): boolean => {
+        if (dedupeDuringBootstrap) {
+          if (bootstrapDeliveredIds.has(event.id)) return true;
+          bootstrapDeliveredIds.add(event.id);
+        }
+        if (safeStreamWrite(res, toSsePayload(event))) {
+          return true;
+        }
+        cleanup();
+        return false;
+      };
+
+      unsubscribe = subscribeToDashboardEvents(workspacePath, (event) => {
+        if (!streamReady) {
+          queuedLiveEvents.push(event);
           return;
         }
+        emitEvent(event);
+      }, filter);
+
+      const replay = listDashboardEventsSince(workspacePath, lastEventId, filter);
+      for (const event of replay) {
+        if (!emitEvent(event)) return;
       }
 
-      const unsubscribe = subscribeToDashboardEvents(workspacePath, (event) => {
-        safeStreamWrite(res, toSsePayload(event));
-      });
-      const keepAlive = setInterval(() => {
-        safeStreamWrite(res, ':keepalive\n\n');
-      }, SSE_KEEPALIVE_MS);
+      while (queuedLiveEvents.length > 0) {
+        const event = queuedLiveEvents.shift();
+        if (!event) break;
+        if (!emitEvent(event)) return;
+      }
+      streamReady = true;
+      dedupeDuringBootstrap = false;
+      bootstrapDeliveredIds.clear();
+
+      keepAlive = setInterval(() => {
+        if (!safeStreamWrite(res, `:keepalive ${Date.now()}\n\n`)) {
+          cleanup();
+        }
+      }, sseKeepaliveMs);
       if (typeof keepAlive.unref === 'function') {
         keepAlive.unref();
       }
 
-      let cleaned = false;
-      const cleanup = () => {
-        if (cleaned) return;
-        cleaned = true;
-        clearInterval(keepAlive);
-        unsubscribe();
-      };
       req.on('close', cleanup);
       req.on('aborted', cleanup);
       res.on('close', cleanup);
@@ -717,6 +773,14 @@ function normalizePort(value: number | undefined, fallback: number): number {
   return Math.trunc(value);
 }
 
+function normalizeSseKeepaliveMs(value: number | undefined): number {
+  if (value === undefined) return DEFAULT_SSE_KEEPALIVE_MS;
+  if (!Number.isFinite(value) || value < 100 || value > 60_000) {
+    throw new Error(`Invalid sse keepalive "${String(value)}". Expected 100..60000 ms.`);
+  }
+  return Math.trunc(value);
+}
+
 function parseStringList(value: unknown): string[] | undefined {
   if (value === undefined || value === null) return undefined;
   if (Array.isArray(value)) {
@@ -730,6 +794,24 @@ function parseStringList(value: unknown): string[] | undefined {
     .map((item) => item.trim())
     .filter(Boolean);
   return fromString.length > 0 ? fromString : undefined;
+}
+
+function readCsvQueryValues(
+  query: Record<string, unknown> | undefined,
+  keys: string[],
+): string[] | undefined {
+  if (!query) return undefined;
+  const values = new Set<string>();
+  for (const key of keys) {
+    const raw = query[key];
+    if (raw === undefined || raw === null) continue;
+    const normalized = parseStringList(raw);
+    if (!normalized) continue;
+    for (const item of normalized) {
+      values.add(item);
+    }
+  }
+  return values.size > 0 ? [...values] : undefined;
 }
 
 function readNonEmptyString(value: unknown): string | undefined {

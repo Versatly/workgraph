@@ -124,6 +124,7 @@ Key workspace packages:
 
 Migration notes: see `docs/MIGRATION.md`.
 Live workspace repair runbook: see `docs/INVARIANT_REPAIR_PLAYBOOK.md`.
+Realtime control-api SSE contract: see `docs/SSE_EVENTS.md`.
 
 ### Development workflow (contributors)
 
@@ -131,6 +132,21 @@ Live workspace repair runbook: see `docs/INVARIANT_REPAIR_PLAYBOOK.md`.
 pnpm install
 pnpm run ci
 ```
+
+The default `pnpm run test` script now uses `scripts/run-tests.mjs`, a hardened
+Vitest wrapper that enforces deterministic process exit in CI (especially on
+Windows where lingering `esbuild` children can keep `vitest run` alive after
+all test files report complete).
+
+- `pnpm run test`: hardened runner (recommended for CI/local reliability)
+- `pnpm run test:vitest`: raw Vitest invocation (useful for debugging Vitest itself)
+
+Optional tuning knobs:
+
+- `WORKGRAPH_TEST_EXIT_GRACE_MS`: grace period after all file results are
+  observed before forced process-tree cleanup (default `15000`)
+- `WORKGRAPH_TEST_MAX_RUNTIME_MS`: hard timeout for the full run (default
+  `1200000`)
 
 ### Demo vault generator
 

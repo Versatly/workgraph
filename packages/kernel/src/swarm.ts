@@ -404,11 +404,24 @@ export async function workerLoop(
 ): Promise<{ completed: number; errors: number }> {
   let completed = 0;
   let errors = 0;
-  const maxTasks = options?.maxTasks ?? Infinity;
+  // Safety cap: default to the deployment task count so a malformed scheduler
+  // cannot spin forever in long-lived worker loops.
+  const inferredTaskCap = inferSwarmTaskCap(workspacePath, spaceSlug);
+  const maxTasks = options?.maxTasks ?? inferredTaskCap ?? Infinity;
   const delayMs = options?.delayMs ?? 1000;
 
   while (completed + errors < maxTasks) {
-    const claimed = workerClaim(workspacePath, spaceSlug, agent);
+    let claimed: PrimitiveInstance | null = null;
+    try {
+      claimed = workerClaim(workspacePath, spaceSlug, agent);
+    } catch {
+      // Claim contention can happen under parallel workers; treat as retryable.
+      errors++;
+      if (delayMs > 0) {
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
+      continue;
+    }
     if (!claimed) break; // No more work
 
     try {
@@ -434,6 +447,14 @@ export async function workerLoop(
   }
 
   return { completed, errors };
+}
+
+function inferSwarmTaskCap(workspacePath: string, spaceSlug: string): number | null {
+  try {
+    return getSwarmStatus(workspacePath, spaceSlug).total;
+  } catch {
+    return null;
+  }
 }
 
 // ---------------------------------------------------------------------------
