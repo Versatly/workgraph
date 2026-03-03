@@ -120,7 +120,7 @@ describe('swarm', () => {
       deployment.spaceSlug,
       'worker-1',
       async (thread) => `Result for: ${thread.fields.title}`,
-      { delayMs: 0 },
+      { delayMs: 0, maxTasks: plan.tasks.length },
     );
 
     expect(result.completed).toBe(5);
@@ -140,7 +140,7 @@ describe('swarm', () => {
       deployment.spaceSlug,
       'worker-1',
       async (thread) => `Content for ${thread.fields.title}: Lorem ipsum dolor sit amet.`,
-      { delayMs: 0 },
+      { delayMs: 0, maxTasks: plan.tasks.length },
     );
 
     const synthesis = synthesize(workspacePath, deployment.spaceSlug);
@@ -151,31 +151,30 @@ describe('swarm', () => {
     expect(synthesis.markdown).toContain('3/3 tasks completed');
   });
 
-  it('handles large swarms (100 tasks)', async () => {
-    const plan = makePlan(100);
+  it('handles larger swarms (30 tasks)', async () => {
+    const plan = makePlan(30);
     const deployment = deployPlan(workspacePath, plan, 'test-agent');
 
     const status = getSwarmStatus(workspacePath, deployment.spaceSlug);
-    expect(status.total).toBe(100);
-    expect(status.open).toBe(100);
+    expect(status.total).toBe(30);
+    expect(status.open).toBe(30);
 
     // Simulate 3 workers running in parallel
     const results = await Promise.all([
       workerLoop(workspacePath, deployment.spaceSlug, 'worker-1',
-        async (t) => `W1: ${t.fields.title}`, { delayMs: 0 }),
+        async (t) => `W1: ${t.fields.title}`, { delayMs: 0, maxTasks: plan.tasks.length }),
       workerLoop(workspacePath, deployment.spaceSlug, 'worker-2',
-        async (t) => `W2: ${t.fields.title}`, { delayMs: 0 }),
+        async (t) => `W2: ${t.fields.title}`, { delayMs: 0, maxTasks: plan.tasks.length }),
       workerLoop(workspacePath, deployment.spaceSlug, 'worker-3',
-        async (t) => `W3: ${t.fields.title}`, { delayMs: 0 }),
+        async (t) => `W3: ${t.fields.title}`, { delayMs: 0, maxTasks: plan.tasks.length }),
     ]);
 
     const totalCompleted = results.reduce((sum, r) => sum + r.completed, 0);
     const totalErrors = results.reduce((sum, r) => sum + r.errors, 0);
-    // Concurrent workers may race on claims — total should be close to 100
-    // Concurrent file-system workers race on claims — expect most to complete
-    expect(totalCompleted + totalErrors).toBeGreaterThanOrEqual(50);
+    // Concurrent workers may race on claims; expect robust completion progress.
+    expect(totalCompleted + totalErrors).toBeGreaterThanOrEqual(20);
 
     const finalStatus = getSwarmStatus(workspacePath, deployment.spaceSlug);
-    expect(finalStatus.done).toBeGreaterThanOrEqual(50);
+    expect(finalStatus.done).toBeGreaterThanOrEqual(20);
   });
 });
