@@ -27,6 +27,9 @@ importers:
       '@types/node':
         specifier: ^20.11.0
         version: 20.19.35
+      '@versatly/workgraph-mcp-server':
+        specifier: workspace:*
+        version: link:packages/mcp-server
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
