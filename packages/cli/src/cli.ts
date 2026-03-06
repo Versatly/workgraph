@@ -7,6 +7,7 @@ import { registerAutonomyCommands } from './cli/commands/autonomy.js';
 import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
+import { registerSafetyCommands } from './cli/commands/safety.js';
 import { registerTriggerCommands } from './cli/commands/trigger.js';
 import {
   addWorkspaceOption,
@@ -2213,6 +2214,12 @@ registerTriggerCommands(program, DEFAULT_ACTOR);
 // ============================================================================
 
 registerConversationCommands(program, DEFAULT_ACTOR);
+
+// ============================================================================
+// safety
+// ============================================================================
+
+registerSafetyCommands(program, DEFAULT_ACTOR);
 
 // ============================================================================
 // onboarding
