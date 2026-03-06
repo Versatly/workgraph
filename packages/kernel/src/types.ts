@@ -369,6 +369,58 @@ export interface PolicyRegistry {
 
 export type RunStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
 
+export type DispatchRunEvidenceType =
+  | 'stdout'
+  | 'stderr'
+  | 'log'
+  | 'file-change'
+  | 'test-result'
+  | 'pr-url'
+  | 'url'
+  | 'attachment'
+  | 'thread-ref'
+  | 'reply-ref'
+  | 'metric'
+  | 'error';
+
+export interface DispatchRunEvidenceItem {
+  id: string;
+  runId: string;
+  ts: string;
+  type: DispatchRunEvidenceType;
+  source: 'adapter-output' | 'adapter-error' | 'adapter-log' | 'adapter-metric' | 'git' | 'derived';
+  value: string;
+  metadata?: Record<string, unknown>;
+}
+
+export type DispatchRunAuditEventKind =
+  | 'run-created'
+  | 'run-idempotency-hit'
+  | 'run-status-changed'
+  | 'run-marked'
+  | 'run-followup'
+  | 'run-heartbeat'
+  | 'run-logs-appended'
+  | 'run-execution-started'
+  | 'run-execution-finished'
+  | 'run-execution-timeout'
+  | 'run-execution-error'
+  | 'run-evidence-collected'
+  | 'run-retried'
+  | 'run-handoff';
+
+export interface DispatchRunAuditEvent {
+  id: string;
+  runId: string;
+  seq: number;
+  ts: string;
+  actor: string;
+  kind: DispatchRunAuditEventKind;
+  data: Record<string, unknown>;
+  prevHash?: string;
+  hash: string;
+}
+
 export interface DispatchRun {
   id: string;
   createdAt: string;
@@ -394,4 +446,13 @@ export interface DispatchRun {
     level: 'info' | 'warn' | 'error';
     message: string;
   }>;
+  audit?: {
+    eventCount: number;
+    headHash?: string;
+  };
+  evidenceChain?: {
+    count: number;
+    byType: Record<string, number>;
+    lastCollectedAt?: string;
+  };
 }
