@@ -1,6 +1,6 @@
 {
   "name": "@versatly/workgraph",
-  "version": "2.0.0",
+  "version": "2.0.2",
   "description": "Agent-first workgraph workspace for multi-agent coordination with dynamic primitives, append-only ledger, and markdown-native storage.",
   "workspaces": [
     "packages/*",
@@ -83,17 +83,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@versatly/workgraph-adapter-claude-code": "workspace:*",
-    "@versatly/workgraph-adapter-cursor-cloud": "workspace:*",
-    "@versatly/workgraph-cli": "workspace:*",
-    "@versatly/workgraph-control-api": "workspace:*",
-    "@versatly/workgraph-kernel": "workspace:*",
-    "@versatly/workgraph-mcp-server": "workspace:*",
-    "@versatly/workgraph-obsidian-integration": "workspace:*",
-    "@versatly/workgraph-policy": "workspace:*",
-    "@versatly/workgraph-runtime-adapter-core": "workspace:*",
-    "@versatly/workgraph-search-qmd-adapter": "workspace:*",
-    "@versatly/workgraph-skills": "workspace:*",
     "commander": "^12.0.0",
     "gray-matter": "^4.0.3",
     "yaml": "^2.8.1",
