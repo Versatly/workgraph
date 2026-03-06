@@ -12,6 +12,7 @@ export interface FireTriggerOptions {
   actor: string;
   eventKey?: string;
   objective?: string;
+  adapter?: string;
   context?: Record<string, unknown>;
 }
 
@@ -19,6 +20,18 @@ export interface FireTriggerResult {
   triggerPath: string;
   run: DispatchRun;
   idempotencyKey: string;
+}
+
+export interface FireTriggerAndExecuteOptions extends FireTriggerOptions {
+  execute?: boolean;
+  retryFailed?: boolean;
+  executeInput?: Omit<dispatch.DispatchExecuteInput, 'actor'>;
+  retryInput?: Omit<dispatch.DispatchRetryInput, 'actor'>;
+}
+
+export interface FireTriggerAndExecuteResult extends FireTriggerResult {
+  executed: boolean;
+  retriedFromRunId?: string;
 }
 
 export function fireTrigger(
@@ -42,6 +55,7 @@ export function fireTrigger(
 
   const run = dispatch.createRun(workspacePath, {
     actor: options.actor,
+    adapter: options.adapter,
     objective,
     context: {
       trigger_path: triggerPath,
@@ -62,6 +76,52 @@ export function fireTrigger(
     triggerPath,
     run,
     idempotencyKey,
+  };
+}
+
+export async function fireTriggerAndExecute(
+  workspacePath: string,
+  triggerPath: string,
+  options: FireTriggerAndExecuteOptions,
+): Promise<FireTriggerAndExecuteResult> {
+  const fired = fireTrigger(workspacePath, triggerPath, options);
+  if (options.execute === false) {
+    return {
+      ...fired,
+      executed: false,
+    };
+  }
+
+  if (fired.run.status === 'failed' && options.retryFailed) {
+    const retried = await dispatch.retryRun(workspacePath, fired.run.id, {
+      actor: options.actor,
+      ...(options.retryInput ?? {}),
+    });
+    return {
+      triggerPath: fired.triggerPath,
+      idempotencyKey: fired.idempotencyKey,
+      run: retried,
+      executed: true,
+      retriedFromRunId: fired.run.id,
+    };
+  }
+
+  if (fired.run.status === 'queued' || fired.run.status === 'running') {
+    const executed = await dispatch.executeRun(workspacePath, fired.run.id, {
+      actor: options.actor,
+      ...(options.executeInput ?? {}),
+    });
+    return {
+      triggerPath: fired.triggerPath,
+      idempotencyKey: fired.idempotencyKey,
+      run: executed,
+      executed: true,
+    };
+  }
+
+  return {
+    ...fired,
+    executed: false,
   };
 }
 

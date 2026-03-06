@@ -154,6 +154,9 @@ export interface StartTriggerEngineOptions {
   intervalSeconds?: number;
   maxCycles?: number;
   logger?: (line: string) => void;
+  executeRuns?: boolean;
+  execution?: Omit<dispatch.DispatchExecuteInput, 'actor'>;
+  retryFailedRuns?: boolean;
 }
 
 export interface TriggerDashboardItem {
@@ -194,6 +197,28 @@ export interface AddSynthesisTriggerOptions {
 
 export interface AddSynthesisTriggerResult {
   trigger: PrimitiveInstance;
+}
+
+export interface TriggerRunExecutionResult {
+  runId: string;
+  triggerPath?: string;
+  status: DispatchRun['status'];
+  retriedFromRunId?: string;
+  error?: string;
+}
+
+export interface TriggerRunEvidenceLoopResult {
+  cycle: TriggerEngineCycleResult;
+  executedRuns: TriggerRunExecutionResult[];
+  succeeded: number;
+  failed: number;
+  cancelled: number;
+  skipped: number;
+}
+
+export interface TriggerRunEvidenceLoopOptions extends TriggerEngineCycleOptions {
+  execution?: Omit<dispatch.DispatchExecuteInput, 'actor'>;
+  retryFailedRuns?: boolean;
 }
 
 export function triggerStatePath(workspacePath: string): string {
@@ -394,6 +419,83 @@ export function runTriggerEngineCycle(
   };
 }
 
+export async function runTriggerRunEvidenceLoop(
+  workspacePath: string,
+  options: TriggerRunEvidenceLoopOptions = {},
+): Promise<TriggerRunEvidenceLoopResult> {
+  const cycle = runTriggerEngineCycle(workspacePath, options);
+  const actor = options.actor ?? 'system';
+  const triggerState = loadTriggerState(workspacePath);
+  const targetRuns = new Map<string, string>();
+  for (const triggerResult of cycle.triggers) {
+    if (!triggerResult.fired || triggerResult.actionType !== 'dispatch-run') continue;
+    const runtime = triggerState.triggers[triggerResult.triggerPath];
+    const runId = typeof runtime?.lastResult?.run_id === 'string'
+      ? String(runtime.lastResult.run_id)
+      : undefined;
+    if (!runId) continue;
+    targetRuns.set(runId, triggerResult.triggerPath);
+  }
+
+  const executedRuns: TriggerRunExecutionResult[] = [];
+  for (const [runId, triggerPath] of targetRuns) {
+    try {
+      const run = dispatch.status(workspacePath, runId);
+      if ((run.status === 'failed' || run.status === 'cancelled') && options.retryFailedRuns) {
+        const retried = await dispatch.retryRun(workspacePath, run.id, {
+          actor,
+          execute: true,
+          ...(options.execution ?? {}),
+        });
+        executedRuns.push({
+          runId: retried.id,
+          triggerPath,
+          status: retried.status,
+          retriedFromRunId: run.id,
+        });
+        continue;
+      }
+      if (run.status === 'queued' || run.status === 'running') {
+        const executed = await dispatch.executeRun(workspacePath, run.id, {
+          actor,
+          ...(options.execution ?? {}),
+        });
+        executedRuns.push({
+          runId: executed.id,
+          triggerPath,
+          status: executed.status,
+        });
+        continue;
+      }
+      executedRuns.push({
+        runId: run.id,
+        triggerPath,
+        status: run.status,
+      });
+    } catch (error) {
+      executedRuns.push({
+        runId,
+        triggerPath,
+        status: 'failed',
+        error: errorMessage(error),
+      });
+    }
+  }
+
+  return {
+    cycle,
+    executedRuns,
+    succeeded: executedRuns.filter((entry) => entry.status === 'succeeded').length,
+    failed: executedRuns.filter((entry) => entry.status === 'failed').length,
+    cancelled: executedRuns.filter((entry) => entry.status === 'cancelled').length,
+    skipped: executedRuns.filter((entry) =>
+      entry.status !== 'succeeded'
+      && entry.status !== 'failed'
+      && entry.status !== 'cancelled')
+      .length,
+  };
+}
+
 export async function startTriggerEngine(
   workspacePath: string,
   options: StartTriggerEngineOptions = {},
@@ -406,10 +508,17 @@ export async function startTriggerEngine(
 
   let completedCycles = 0;
   while (options.maxCycles === undefined || completedCycles < options.maxCycles) {
-    const cycleResult = runTriggerEngineCycle(workspacePath, {
-      actor,
-      intervalSeconds,
-    });
+    const cycleResult = options.executeRuns
+      ? (await runTriggerRunEvidenceLoop(workspacePath, {
+          actor,
+          intervalSeconds,
+          execution: options.execution,
+          retryFailedRuns: options.retryFailedRuns,
+        })).cycle
+      : runTriggerEngineCycle(workspacePath, {
+          actor,
+          intervalSeconds,
+        });
     logger(
       `[${cycleResult.cycleAt}] cycle=${completedCycles + 1} evaluated=${cycleResult.evaluated} fired=${cycleResult.fired} errors=${cycleResult.errors}`,
     );

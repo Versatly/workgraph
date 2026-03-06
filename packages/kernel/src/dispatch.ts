@@ -10,12 +10,27 @@ import * as ledger from './ledger.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
 import * as gate from './gate.js';
+import {
+  appendDispatchRunAuditEvent,
+  listDispatchRunAuditEvents,
+} from './dispatch-run-audit.js';
+import {
+  captureWorkspaceGitState,
+  collectDispatchExecutionEvidence,
+} from './dispatch-run-evidence.js';
 import { resolveDispatchAdapter } from './runtime-adapter-registry.js';
 import type { DispatchAdapterLogEntry } from './runtime-adapter-contracts.js';
-import type { DispatchRun, PrimitiveInstance, RunStatus } from './types.js';
+import type {
+  DispatchRun,
+  DispatchRunAuditEvent,
+  DispatchRunEvidenceItem,
+  PrimitiveInstance,
+  RunStatus,
+} from './types.js';
 
 const RUNS_FILE = '.workgraph/dispatch-runs.json';
 const DEFAULT_LEASE_MINUTES = 30;
+const DEFAULT_EXECUTE_TIMEOUT_MS = 10 * 60_000;
 
 export interface DispatchCreateInput {
   actor: string;
@@ -32,6 +47,10 @@ export interface DispatchExecuteInput {
   stepDelayMs?: number;
   space?: string;
   createCheckpoint?: boolean;
+  timeoutMs?: number;
+  dispatchMode?: 'direct' | 'self-assembly';
+  selfAssemblyAgent?: string;
+  selfAssemblyOptions?: Record<string, unknown>;
 }
 
 export interface DispatchHeartbeatInput {
@@ -62,6 +81,23 @@ export interface DispatchClaimResult {
   gateCheck: gate.ThreadGateCheckResult;
 }
 
+export interface DispatchRetryInput {
+  actor: string;
+  adapter?: string;
+  objective?: string;
+  contextPatch?: Record<string, unknown>;
+  execute?: boolean;
+  agents?: string[];
+  maxSteps?: number;
+  stepDelayMs?: number;
+  space?: string;
+  createCheckpoint?: boolean;
+  timeoutMs?: number;
+  dispatchMode?: 'direct' | 'self-assembly';
+  selfAssemblyAgent?: string;
+  selfAssemblyOptions?: Record<string, unknown>;
+}
+
 export function createRun(workspacePath: string, input: DispatchCreateInput): DispatchRun {
   assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.create', '.workgraph/dispatch-runs', [
     'dispatch:run',
@@ -69,7 +105,17 @@ export function createRun(workspacePath: string, input: DispatchCreateInput): Di
   const state = loadRuns(workspacePath);
   if (input.idempotencyKey) {
     const existing = state.runs.find((run) => run.idempotencyKey === input.idempotencyKey);
-    if (existing) return existing;
+    if (existing) {
+      appendDispatchRunAuditEvent(workspacePath, {
+        runId: existing.id,
+        actor: input.actor,
+        kind: 'run-idempotency-hit',
+        data: {
+          idempotency_key: input.idempotencyKey,
+        },
+      });
+      return hydrateRunWithRuntimeMetadata(workspacePath, existing);
+    }
   }
 
   const now = new Date().toISOString();
@@ -93,6 +139,17 @@ export function createRun(workspacePath: string, input: DispatchCreateInput): Di
 
   state.runs.push(run);
   saveRuns(workspacePath, state);
+  appendDispatchRunAuditEvent(workspacePath, {
+    runId: run.id,
+    actor: input.actor,
+    kind: 'run-created',
+    data: {
+      adapter: run.adapter,
+      objective: run.objective,
+      status: run.status,
+      idempotency_key: run.idempotencyKey,
+    },
+  });
   ledger.append(workspacePath, input.actor, 'create', `.workgraph/runs/${run.id}`, 'run', {
     adapter: run.adapter,
     objective: run.objective,
@@ -100,7 +157,7 @@ export function createRun(workspacePath: string, input: DispatchCreateInput): Di
   });
 
   ensureRunPrimitive(workspacePath, run, input.actor);
-  return run;
+  return hydrateRunWithRuntimeMetadata(workspacePath, run);
 }
 
 export function claimThread(workspacePath: string, threadRef: string, actor: string): DispatchClaimResult {
@@ -123,7 +180,7 @@ export function claimThread(workspacePath: string, threadRef: string, actor: str
 export function status(workspacePath: string, runId: string): DispatchRun {
   const run = getRun(workspacePath, runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
-  return run;
+  return hydrateRunWithRuntimeMetadata(workspacePath, run);
 }
 
 export function followup(workspacePath: string, runId: string, actor: string, input: string): DispatchRun {
@@ -145,12 +202,21 @@ export function followup(workspacePath: string, runId: string, actor: string, in
     message: `Follow-up from ${actor}: ${input}`,
   });
   saveRuns(workspacePath, state);
+  appendDispatchRunAuditEvent(workspacePath, {
+    runId: run.id,
+    actor,
+    kind: 'run-followup',
+    data: {
+      input,
+      status: run.status,
+    },
+  });
   ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
     followup: true,
     status: run.status,
   });
   syncRunPrimitive(workspacePath, run, actor);
-  return run;
+  return hydrateRunWithRuntimeMetadata(workspacePath, run);
 }
 
 export function stop(workspacePath: string, runId: string, actor: string): DispatchRun {
@@ -184,9 +250,20 @@ export function markRun(
     target.context = run.context;
     target.updatedAt = new Date().toISOString();
     saveRuns(workspacePath, state);
+    appendDispatchRunAuditEvent(workspacePath, {
+      runId: target.id,
+      actor,
+      kind: 'run-marked',
+      data: {
+        status: target.status,
+        has_output: Boolean(target.output),
+        has_error: Boolean(target.error),
+        context_keys: Object.keys(target.context ?? {}),
+      },
+    });
     syncRunPrimitive(workspacePath, target, actor);
   }
-  return target ?? run;
+  return hydrateRunWithRuntimeMetadata(workspacePath, target ?? run);
 }
 
 export function heartbeat(
@@ -215,12 +292,22 @@ export function heartbeat(
   });
 
   saveRuns(workspacePath, state);
+  appendDispatchRunAuditEvent(workspacePath, {
+    runId: run.id,
+    actor: input.actor,
+    kind: 'run-heartbeat',
+    data: {
+      lease_expires: run.leaseExpires,
+      lease_duration_minutes: run.leaseDurationMinutes,
+      heartbeat_count: run.heartbeats?.length ?? 0,
+    },
+  });
   ledger.append(workspacePath, input.actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
     heartbeat: true,
     lease_expires: run.leaseExpires,
   });
   syncRunPrimitive(workspacePath, run, input.actor);
-  return run;
+  return hydrateRunWithRuntimeMetadata(workspacePath, run);
 }
 
 export function reconcileExpiredLeases(
@@ -256,6 +343,16 @@ export function reconcileExpiredLeases(
   if (requeuedRuns.length > 0) {
     saveRuns(workspacePath, state);
     for (const run of requeuedRuns) {
+      appendDispatchRunAuditEvent(workspacePath, {
+        runId: run.id,
+        actor,
+        kind: 'run-status-changed',
+        data: {
+          from_status: 'running',
+          to_status: 'queued',
+          reason: 'lease-expired',
+        },
+      });
       ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
         status: run.status,
         reconciled_expired_lease: true,
@@ -312,6 +409,26 @@ export function handoffRun(
     to_actor: input.to,
     reason: input.reason,
   });
+  appendDispatchRunAuditEvent(workspacePath, {
+    runId: sourceRun.id,
+    actor: input.actor,
+    kind: 'run-handoff',
+    data: {
+      to_run_id: created.id,
+      to_actor: input.to,
+      reason: input.reason,
+    },
+  });
+  appendDispatchRunAuditEvent(workspacePath, {
+    runId: created.id,
+    actor: input.actor,
+    kind: 'run-handoff',
+    data: {
+      from_run_id: sourceRun.id,
+      from_actor: sourceRun.actor,
+      reason: input.reason,
+    },
+  });
 
   return {
     sourceRun: status(workspacePath, sourceRun.id),
@@ -323,9 +440,29 @@ export function logs(workspacePath: string, runId: string): DispatchRun['logs'] 
   return status(workspacePath, runId).logs;
 }
 
+export function auditTrail(workspacePath: string, runId: string): DispatchRunAuditEvent[] {
+  const run = status(workspacePath, runId);
+  return listDispatchRunAuditEvents(workspacePath, run.id);
+}
+
+export function listRunEvidence(workspacePath: string, runId: string): DispatchRunEvidenceItem[] {
+  const trail = auditTrail(workspacePath, runId);
+  const evidence: DispatchRunEvidenceItem[] = [];
+  for (const entry of trail) {
+    if (entry.kind !== 'run-evidence-collected') continue;
+    const items = Array.isArray(entry.data.items) ? entry.data.items : [];
+    for (const item of items) {
+      if (!item || typeof item !== 'object') continue;
+      evidence.push(item as DispatchRunEvidenceItem);
+    }
+  }
+  return evidence;
+}
+
 export function listRuns(workspacePath: string, options: { status?: RunStatus; limit?: number } = {}): DispatchRun[] {
   const runs = loadRuns(workspacePath).runs
     .filter((run) => (options.status ? run.status === options.status : true))
+    .map((run) => hydrateRunWithRuntimeMetadata(workspacePath, run))
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   if (options.limit && options.limit > 0) {
     return runs.slice(0, options.limit);
@@ -351,38 +488,145 @@ export async function executeRun(
     throw new Error(`Dispatch adapter "${existing.adapter}" does not implement execute().`);
   }
 
+  const resolvedDispatchMode = input.dispatchMode
+    ?? normalizeDispatchMode(existing.context?.dispatch_mode)
+    ?? 'direct';
+  const resolvedTimeoutMs = normalizeExecutionTimeoutMs(
+    input.timeoutMs ?? readOptionalNumber(existing.context?.run_timeout_ms),
+  );
+  const beforeGitState = captureWorkspaceGitState(workspacePath);
+
+  appendDispatchRunAuditEvent(workspacePath, {
+    runId,
+    actor: input.actor,
+    kind: 'run-execution-started',
+    data: {
+      adapter: existing.adapter,
+      dispatch_mode: resolvedDispatchMode,
+      timeout_ms: resolvedTimeoutMs,
+    },
+  });
+
+  if (resolvedDispatchMode === 'self-assembly') {
+    const selfAssembly = await attemptSelfAssembly(workspacePath, existing, input);
+    appendRunLogs(workspacePath, runId, input.actor, selfAssembly.logs);
+    if (!selfAssembly.ok) {
+      appendDispatchRunAuditEvent(workspacePath, {
+        runId,
+        actor: input.actor,
+        kind: 'run-execution-error',
+        data: {
+          dispatch_mode: resolvedDispatchMode,
+          error: selfAssembly.error,
+          stage: 'self-assembly',
+        },
+      });
+      return markRun(workspacePath, runId, input.actor, 'failed', {
+        error: selfAssembly.error,
+        contextPatch: {
+          dispatch_mode: resolvedDispatchMode,
+          self_assembly_failed: true,
+        },
+      });
+    }
+  }
+
   if (existing.status === 'queued') {
     setStatus(workspacePath, runId, input.actor, 'running', `Run started on adapter "${existing.adapter}".`);
   }
 
-  const execution = await adapter.execute({
-    workspacePath,
-    runId,
-    actor: input.actor,
-    objective: existing.objective,
-    context: existing.context,
-    agents: input.agents,
-    maxSteps: input.maxSteps,
-    stepDelayMs: input.stepDelayMs,
-    space: input.space,
-    createCheckpoint: input.createCheckpoint,
-    isCancelled: () => status(workspacePath, runId).status === 'cancelled',
-  });
+  try {
+    const execution = await withExecutionTimeout(
+      adapter.execute({
+        workspacePath,
+        runId,
+        actor: input.actor,
+        objective: existing.objective,
+        context: existing.context,
+        agents: input.agents,
+        maxSteps: input.maxSteps,
+        stepDelayMs: input.stepDelayMs,
+        space: input.space,
+        createCheckpoint: input.createCheckpoint,
+        isCancelled: () => status(workspacePath, runId).status === 'cancelled',
+      }),
+      resolvedTimeoutMs,
+      runId,
+    );
 
-  appendRunLogs(workspacePath, runId, input.actor, execution.logs);
+    appendRunLogs(workspacePath, runId, input.actor, execution.logs);
+    const finalStatus = execution.status;
+    if (finalStatus === 'queued' || finalStatus === 'running') {
+      throw new Error(`Adapter returned invalid terminal status "${finalStatus}" for execute().`);
+    }
+    const afterGitState = captureWorkspaceGitState(workspacePath);
+    const evidence = collectDispatchExecutionEvidence({
+      runId,
+      execution,
+      beforeGitState,
+      afterGitState,
+    });
+    appendDispatchRunAuditEvent(workspacePath, {
+      runId,
+      actor: input.actor,
+      kind: 'run-evidence-collected',
+      data: {
+        items: evidence.items,
+        summary: evidence.summary,
+      },
+    });
+    appendDispatchRunAuditEvent(workspacePath, {
+      runId,
+      actor: input.actor,
+      kind: 'run-execution-finished',
+      data: {
+        status: finalStatus,
+        evidence_count: evidence.summary.count,
+      },
+    });
 
-  const finalStatus = execution.status;
-  if (finalStatus === 'queued' || finalStatus === 'running') {
-    throw new Error(`Adapter returned invalid terminal status "${finalStatus}" for execute().`);
+    return markRun(workspacePath, runId, input.actor, finalStatus, {
+      output: execution.output,
+      error: execution.error,
+      contextPatch: {
+        ...(execution.metrics ? { adapter_metrics: execution.metrics } : {}),
+        dispatch_mode: resolvedDispatchMode,
+        evidence_chain: evidence.summary,
+      },
+    });
+  } catch (error) {
+    const message = errorMessage(error);
+    const statusValue = status(workspacePath, runId);
+    if (statusValue.status === 'cancelled') {
+      appendDispatchRunAuditEvent(workspacePath, {
+        runId,
+        actor: input.actor,
+        kind: 'run-execution-finished',
+        data: {
+          status: 'cancelled',
+          reason: 'execution cancelled',
+        },
+      });
+      return statusValue;
+    }
+    const kind = message.includes('timed out')
+      ? 'run-execution-timeout'
+      : 'run-execution-error';
+    appendDispatchRunAuditEvent(workspacePath, {
+      runId,
+      actor: input.actor,
+      kind,
+      data: {
+        error: message,
+      },
+    });
+    return markRun(workspacePath, runId, input.actor, 'failed', {
+      error: message,
+      contextPatch: {
+        dispatch_mode: resolvedDispatchMode,
+      },
+    });
   }
-
-  return markRun(workspacePath, runId, input.actor, finalStatus, {
-    output: execution.output,
-    error: execution.error,
-    contextPatch: execution.metrics
-      ? { adapter_metrics: execution.metrics }
-      : undefined,
-  });
 }
 
 export async function createAndExecuteRun(
@@ -394,6 +638,59 @@ export async function createAndExecuteRun(
   return executeRun(workspacePath, run.id, {
     actor: createInput.actor,
     ...executeInput,
+  });
+}
+
+export async function retryRun(
+  workspacePath: string,
+  runId: string,
+  input: DispatchRetryInput,
+): Promise<DispatchRun> {
+  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.retry', runId, [
+    'dispatch:run',
+  ]);
+  const source = status(workspacePath, runId);
+  if (source.status !== 'failed') {
+    throw new Error(`Run ${runId} is in status "${source.status}". Only failed runs can be retried.`);
+  }
+  const priorAttempt = readOptionalNumber(source.context?.retry_attempt) ?? 0;
+  const retryAttempt = Math.trunc(priorAttempt) + 1;
+  const retried = createRun(workspacePath, {
+    actor: input.actor,
+    adapter: input.adapter ?? source.adapter,
+    objective: input.objective ?? source.objective,
+    context: {
+      ...(source.context ?? {}),
+      ...(input.contextPatch ?? {}),
+      retry_of_run_id: source.id,
+      retry_attempt: retryAttempt,
+      retry_requested_by: input.actor,
+      retry_requested_at: new Date().toISOString(),
+    },
+  });
+  appendDispatchRunAuditEvent(workspacePath, {
+    runId: source.id,
+    actor: input.actor,
+    kind: 'run-retried',
+    data: {
+      retried_run_id: retried.id,
+      retry_attempt: retryAttempt,
+    },
+  });
+  if (input.execute === false) {
+    return retried;
+  }
+  return executeRun(workspacePath, retried.id, {
+    actor: input.actor,
+    agents: input.agents,
+    maxSteps: input.maxSteps,
+    stepDelayMs: input.stepDelayMs,
+    space: input.space,
+    createCheckpoint: input.createCheckpoint,
+    timeoutMs: input.timeoutMs,
+    dispatchMode: input.dispatchMode,
+    selfAssemblyAgent: input.selfAssemblyAgent,
+    selfAssemblyOptions: input.selfAssemblyOptions,
   });
 }
 
@@ -413,6 +710,15 @@ function appendRunLogs(
   run.logs.push(...logEntries);
   run.updatedAt = new Date().toISOString();
   saveRuns(workspacePath, state);
+  appendDispatchRunAuditEvent(workspacePath, {
+    runId: run.id,
+    actor,
+    kind: 'run-logs-appended',
+    data: {
+      count: logEntries.length,
+      levels: [...new Set(logEntries.map((entry) => entry.level))],
+    },
+  });
   ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
     log_append_count: logEntries.length,
   });
@@ -432,6 +738,7 @@ function setStatus(
   const state = loadRuns(workspacePath);
   const run = state.runs.find((entry) => entry.id === runId);
   if (!run) throw new Error(`Run not found: ${runId}`);
+  const previousStatus = run.status;
   assertRunStatusTransition(run.status, statusValue, runId);
   const now = new Date().toISOString();
   run.status = statusValue;
@@ -443,11 +750,21 @@ function setStatus(
   run.updatedAt = now;
   run.logs.push({ ts: now, level: 'info', message: logMessage });
   saveRuns(workspacePath, state);
+  appendDispatchRunAuditEvent(workspacePath, {
+    runId: run.id,
+    actor,
+    kind: 'run-status-changed',
+    data: {
+      from_status: previousStatus,
+      to_status: statusValue,
+      lease_expires: run.leaseExpires,
+    },
+  });
   ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
     status: run.status,
   });
   syncRunPrimitive(workspacePath, run, actor);
-  return run;
+  return hydrateRunWithRuntimeMetadata(workspacePath, run);
 }
 
 function runsPath(workspacePath: string): string {
@@ -512,20 +829,21 @@ function syncRunPrimitive(workspacePath: string, run: DispatchRun, actor: string
   const runs = store.list(workspacePath, 'run');
   const existing = runs.find((entry) => String(entry.fields.run_id) === run.id);
   if (!existing) return;
+  const hydrated = hydrateRunWithRuntimeMetadata(workspacePath, run);
   store.update(
     workspacePath,
     existing.path,
     {
-      status: run.status,
-      runtime: run.adapter,
-      objective: run.objective,
-      owner: run.actor,
-      lease_expires: run.leaseExpires,
-      lease_duration_minutes: run.leaseDurationMinutes,
-      last_heartbeat: latestHeartbeat(run),
-      heartbeat_timestamps: run.heartbeats ?? [],
+      status: hydrated.status,
+      runtime: hydrated.adapter,
+      objective: hydrated.objective,
+      owner: hydrated.actor,
+      lease_expires: hydrated.leaseExpires,
+      lease_duration_minutes: hydrated.leaseDurationMinutes,
+      last_heartbeat: latestHeartbeat(hydrated),
+      heartbeat_timestamps: hydrated.heartbeats ?? [],
     },
-    renderRunBody(run),
+    renderRunBody(hydrated),
     actor,
   );
 }
@@ -569,6 +887,23 @@ function renderRunBody(run: DispatchRun): string {
     lines.push(run.error);
     lines.push('');
   }
+  if (run.audit?.eventCount || run.evidenceChain?.count) {
+    lines.push('## Evidence & Audit');
+    lines.push('');
+    lines.push(`audit_events: ${run.audit?.eventCount ?? 0}`);
+    lines.push(`audit_head_hash: ${run.audit?.headHash ?? 'none'}`);
+    lines.push(`evidence_items: ${run.evidenceChain?.count ?? 0}`);
+    if (run.evidenceChain?.lastCollectedAt) {
+      lines.push(`evidence_last_collected_at: ${run.evidenceChain.lastCollectedAt}`);
+    }
+    if (run.evidenceChain?.byType && Object.keys(run.evidenceChain.byType).length > 0) {
+      lines.push('evidence_by_type:');
+      for (const [type, count] of Object.entries(run.evidenceChain.byType)) {
+        lines.push(`  - ${type}: ${count}`);
+      }
+    }
+    lines.push('');
+  }
   if (run.context && Object.keys(run.context).length > 0) {
     lines.push('## Context');
     lines.push('');
@@ -586,6 +921,211 @@ function hydrateRun(run: DispatchRun): DispatchRun {
     leaseDurationMinutes: normalizeLeaseMinutes(run.leaseDurationMinutes),
     heartbeats: Array.isArray(run.heartbeats) ? run.heartbeats : [],
   };
+}
+
+function hydrateRunWithRuntimeMetadata(workspacePath: string, run: DispatchRun): DispatchRun {
+  const base = hydrateRun(run);
+  const trail = listDispatchRunAuditEvents(workspacePath, run.id);
+  const evidenceCount = trail
+    .filter((entry) => entry.kind === 'run-evidence-collected')
+    .reduce((total, entry) => {
+      const items = Array.isArray(entry.data.items) ? entry.data.items : [];
+      return total + items.length;
+    }, 0);
+  const byType: Record<string, number> = {};
+  for (const item of listRunEvidenceFromTrail(trail)) {
+    byType[item.type] = (byType[item.type] ?? 0) + 1;
+  }
+  return {
+    ...base,
+    audit: {
+      eventCount: trail.length,
+      headHash: trail[trail.length - 1]?.hash,
+    },
+    evidenceChain: {
+      count: evidenceCount,
+      byType,
+      lastCollectedAt: trail.filter((entry) => entry.kind === 'run-evidence-collected').at(-1)?.ts,
+    },
+  };
+}
+
+function listRunEvidenceFromTrail(trail: DispatchRunAuditEvent[]): DispatchRunEvidenceItem[] {
+  const items: DispatchRunEvidenceItem[] = [];
+  for (const entry of trail) {
+    if (entry.kind !== 'run-evidence-collected') continue;
+    const rawItems = Array.isArray(entry.data.items) ? entry.data.items : [];
+    for (const item of rawItems) {
+      if (!item || typeof item !== 'object') continue;
+      items.push(item as DispatchRunEvidenceItem);
+    }
+  }
+  return items;
+}
+
+async function attemptSelfAssembly(
+  workspacePath: string,
+  run: DispatchRun,
+  input: DispatchExecuteInput,
+): Promise<{
+  ok: boolean;
+  logs: DispatchAdapterLogEntry[];
+  error?: string;
+}> {
+  const now = new Date().toISOString();
+  const agentName = input.selfAssemblyAgent
+    ?? readOptionalString(run.context?.self_assembly_agent)
+    ?? readOptionalString(input.selfAssemblyOptions?.agentName)
+    ?? input.actor;
+  const rawOptions = isRecord(run.context?.self_assembly_options)
+    ? run.context?.self_assembly_options
+    : undefined;
+  const mergedOptions = {
+    ...normalizeSelfAssemblyOptions(rawOptions),
+    ...normalizeSelfAssemblyOptions(input.selfAssemblyOptions),
+  };
+  try {
+    const module = await import('./agent-self-assembly.js');
+    const result = module.assembleAgent(workspacePath, agentName, {
+      ...mergedOptions,
+    });
+    return {
+      ok: true,
+      logs: [
+        {
+          ts: now,
+          level: 'info',
+          message: `Self-assembly dispatched agent "${result.agentName}" before run execution.`,
+        },
+        ...(result.claimedThread
+          ? [{
+              ts: now,
+              level: 'info' as const,
+              message: `Self-assembly claimed ${result.claimedThread.path}.`,
+            }]
+          : []),
+        ...(result.warnings.length > 0
+          ? result.warnings.map((warning) => ({
+              ts: now,
+              level: 'warn' as const,
+              message: `Self-assembly warning: ${warning}`,
+            }))
+          : []),
+      ],
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      logs: [{
+        ts: now,
+        level: 'error',
+        message: `Self-assembly failed: ${errorMessage(error)}`,
+      }],
+      error: `Self-assembly failed: ${errorMessage(error)}`,
+    };
+  }
+}
+
+function normalizeSelfAssemblyOptions(
+  value: Record<string, unknown> | undefined,
+): SelfAssemblyDispatchOptions {
+  if (!value) return {};
+  const normalized: SelfAssemblyDispatchOptions = {};
+  const credentialToken = readOptionalString(value.credentialToken);
+  const bootstrapToken = readOptionalString(value.bootstrapToken);
+  const role = readOptionalString(value.role);
+  const registerActor = readOptionalString(value.registerActor);
+  const recoveryActor = readOptionalString(value.recoveryActor);
+  const spaceRef = readOptionalString(value.spaceRef);
+  const recoveryLimit = readOptionalNumber(value.recoveryLimit);
+  const leaseTtlMinutes = readOptionalNumber(value.leaseTtlMinutes);
+  if (credentialToken) normalized.credentialToken = credentialToken;
+  if (bootstrapToken) normalized.bootstrapToken = bootstrapToken;
+  if (role) normalized.role = role;
+  if (registerActor) normalized.registerActor = registerActor;
+  if (typeof value.recoverStaleClaims === 'boolean') normalized.recoverStaleClaims = value.recoverStaleClaims;
+  if (recoveryActor) normalized.recoveryActor = recoveryActor;
+  if (typeof recoveryLimit === 'number') normalized.recoveryLimit = Math.trunc(recoveryLimit);
+  if (typeof value.recoveryRequired === 'boolean') normalized.recoveryRequired = value.recoveryRequired;
+  if (spaceRef) normalized.spaceRef = spaceRef;
+  if (typeof leaseTtlMinutes === 'number') normalized.leaseTtlMinutes = Math.trunc(leaseTtlMinutes);
+  if (typeof value.createPlanStepIfMissing === 'boolean') {
+    normalized.createPlanStepIfMissing = value.createPlanStepIfMissing;
+  }
+  return normalized;
+}
+
+interface SelfAssemblyDispatchOptions {
+  credentialToken?: string;
+  bootstrapToken?: string;
+  role?: string;
+  registerActor?: string;
+  recoverStaleClaims?: boolean;
+  recoveryActor?: string;
+  recoveryLimit?: number;
+  recoveryRequired?: boolean;
+  spaceRef?: string;
+  leaseTtlMinutes?: number;
+  createPlanStepIfMissing?: boolean;
+}
+
+function normalizeDispatchMode(rawValue: unknown): 'direct' | 'self-assembly' | undefined {
+  const normalized = String(rawValue ?? '').trim().toLowerCase();
+  if (normalized === 'direct' || normalized === 'self-assembly') {
+    return normalized;
+  }
+  return undefined;
+}
+
+function normalizeExecutionTimeoutMs(value: unknown): number {
+  const numeric = readOptionalNumber(value);
+  if (numeric === undefined || !Number.isFinite(numeric) || numeric <= 0) {
+    return DEFAULT_EXECUTE_TIMEOUT_MS;
+  }
+  return Math.trunc(Math.min(60 * 60_000, Math.max(1_000, numeric)));
+}
+
+async function withExecutionTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  runId: string,
+): Promise<T> {
+  let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_resolve, reject) => {
+        timeoutHandle = setTimeout(() => {
+          reject(new Error(`Dispatch execution timed out after ${timeoutMs}ms for run ${runId}.`));
+        }, timeoutMs);
+      }),
+    ]);
+  } finally {
+    if (timeoutHandle) clearTimeout(timeoutHandle);
+  }
+}
+
+function readOptionalString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readOptionalNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === 'object' && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function normalizeLeaseMinutes(value: unknown): number {

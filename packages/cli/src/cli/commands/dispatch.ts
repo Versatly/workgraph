@@ -181,6 +181,50 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
 
   addWorkspaceOption(
     dispatchCmd
+      .command('retry <runId>')
+      .description('Retry a failed run by creating a new run attempt')
+      .option('-a, --actor <name>', 'Actor', defaultActor)
+      .option('--adapter <name>', 'Adapter override for retry')
+      .option('--objective <text>', 'Objective override for retry')
+      .option('--no-execute', 'Create retry run but do not execute immediately')
+      .option('--agents <actors>', 'Comma-separated agent identities')
+      .option('--max-steps <n>', 'Maximum scheduler steps', '200')
+      .option('--step-delay-ms <ms>', 'Delay between scheduling steps', '25')
+      .option('--space <spaceRef>', 'Restrict execution to one space')
+      .option('--timeout-ms <ms>', 'Execution timeout in milliseconds')
+      .option('--dispatch-mode <mode>', 'direct|self-assembly')
+      .option('--self-assembly-agent <agent>', 'Agent identity for self-assembly dispatch mode')
+      .option('--json', 'Emit structured JSON output'),
+  ).action((runId, opts) =>
+    runCommand(
+      opts,
+      async () => {
+        const workspacePath = resolveWorkspacePath(opts);
+        return {
+          run: await workgraph.dispatch.retryRun(workspacePath, runId, {
+            actor: opts.actor,
+            adapter: opts.adapter,
+            objective: opts.objective,
+            execute: opts.execute,
+            agents: csv(opts.agents),
+            maxSteps: Number.parseInt(String(opts.maxSteps), 10),
+            stepDelayMs: Number.parseInt(String(opts.stepDelayMs), 10),
+            space: opts.space,
+            timeoutMs: opts.timeoutMs ? Number.parseInt(String(opts.timeoutMs), 10) : undefined,
+            dispatchMode: opts.dispatchMode,
+            selfAssemblyAgent: opts.selfAssemblyAgent,
+          }),
+        };
+      },
+      (result) => [
+        `Retried run: ${result.run.id} [${result.run.status}]`,
+        ...(result.run.context?.retry_of_run_id ? [`Source run: ${String(result.run.context.retry_of_run_id)}`] : []),
+      ],
+    ),
+  );
+
+  addWorkspaceOption(
+    dispatchCmd
       .command('followup <runId> <input>')
       .description('Send follow-up input to a run')
       .option('-a, --actor <name>', 'Actor', defaultActor)

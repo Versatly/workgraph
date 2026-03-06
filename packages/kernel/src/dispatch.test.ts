@@ -245,9 +245,9 @@ describe('dispatch core module', () => {
       adapter: 'test-invalid-terminal',
       objective: 'Bad terminal status',
     });
-    await expect(
-      executeRun(workspacePath, invalid.id, { actor: 'agent-adapter' }),
-    ).rejects.toThrow('invalid terminal status "running"');
+    const invalidResult = await executeRun(workspacePath, invalid.id, { actor: 'agent-adapter' });
+    expect(invalidResult.status).toBe('failed');
+    expect(invalidResult.error).toContain('invalid terminal status "running"');
   });
 });
 
