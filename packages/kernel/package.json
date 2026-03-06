@@ -11,5 +11,8 @@
   "dependencies": {
     "gray-matter": "^4.0.3",
     "yaml": "^2.8.1"
+  },
+  "devDependencies": {
+    "@versatly/workgraph-mcp-server": "workspace:*"
   }
 }

@@ -12,6 +12,7 @@
 
 import * as auth from './auth.js';
 import * as agent from './agent.js';
+import * as capability from './capability.js';
 import * as conversation from './conversation.js';
 import * as dispatch from './dispatch.js';
 import * as orientation from './orientation.js';
@@ -19,12 +20,6 @@ import * as policy from './policy.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
 import type { PrimitiveInstance, WorkgraphBrief, WorkgraphStatusSnapshot } from './types.js';
-
-const REQUIREMENT_TAG_PREFIXES = {
-  capability: 'requires:capability:',
-  skill: 'requires:skill:',
-  adapter: 'requires:adapter:',
-} as const;
 
 export interface AgentCapabilityAdvertisement {
   capabilities?: string[];
@@ -156,24 +151,7 @@ export function matchThreadToAgent(
   threadInstance: PrimitiveInstance,
   capabilityProfile: AgentCapabilityProfile,
 ): ThreadCapabilityMatch {
-  const requirements = readThreadCapabilityRequirements(threadInstance);
-  const missingCapabilities = requirements.capabilities
-    .filter((requiredCapability) => !capabilitySatisfied(capabilityProfile.capabilities, requiredCapability));
-  const missingSkills = requirements.skills
-    .filter((requiredSkill) => !capabilityProfile.skills.includes(requiredSkill));
-  const missingAdapters = requirements.adapters
-    .filter((requiredAdapter) => !capabilityProfile.adapters.includes(requiredAdapter));
-
-  return {
-    thread: threadInstance,
-    requirements,
-    missing: {
-      capabilities: missingCapabilities,
-      skills: missingSkills,
-      adapters: missingAdapters,
-    },
-    matched: missingCapabilities.length === 0 && missingSkills.length === 0 && missingAdapters.length === 0,
-  };
+  return capability.matchThreadToCapabilityProfile(threadInstance, capabilityProfile);
 }
 
 function maybeBootstrapRegister(
@@ -381,53 +359,6 @@ function findPlanStepForExecution(
     const assignee = readOptionalString(step.fields.assignee);
     return !assignee || assignee === actor;
   });
-}
-
-function readThreadCapabilityRequirements(threadInstance: PrimitiveInstance): ThreadCapabilityRequirements {
-  const capabilityRequirements = dedupeStrings([
-    ...asStringList(threadInstance.fields.required_capabilities),
-    ...asStringList(threadInstance.fields.requiredCapabilities),
-    ...extractTagRequirements(threadInstance.fields.tags, REQUIREMENT_TAG_PREFIXES.capability),
-  ]);
-  const skillRequirements = dedupeStrings([
-    ...asStringList(threadInstance.fields.required_skills),
-    ...asStringList(threadInstance.fields.requiredSkills),
-    ...extractTagRequirements(threadInstance.fields.tags, REQUIREMENT_TAG_PREFIXES.skill),
-  ]);
-  const adapterRequirements = dedupeStrings([
-    ...asStringList(threadInstance.fields.required_adapters),
-    ...asStringList(threadInstance.fields.requiredAdapters),
-    ...extractTagRequirements(threadInstance.fields.tags, REQUIREMENT_TAG_PREFIXES.adapter),
-  ]);
-
-  return {
-    capabilities: capabilityRequirements,
-    skills: skillRequirements,
-    adapters: adapterRequirements,
-  };
-}
-
-function extractTagRequirements(value: unknown, prefix: string): string[] {
-  return asStringList(value)
-    .filter((tag) => tag.startsWith(prefix))
-    .map((tag) => tag.slice(prefix.length))
-    .filter(Boolean);
-}
-
-function capabilitySatisfied(grantedCapabilities: string[], requiredCapability: string): boolean {
-  const normalizedRequired = normalizeToken(requiredCapability);
-  if (!normalizedRequired) return true;
-  for (const grantedCapability of grantedCapabilities) {
-    if (grantedCapability === '*') return true;
-    if (grantedCapability === normalizedRequired) return true;
-    if (
-      grantedCapability.endsWith(':*') &&
-      normalizedRequired.startsWith(`${grantedCapability.slice(0, -2)}:`)
-    ) {
-      return true;
-    }
-  }
-  return false;
 }
 
 function withCredentialContext<T>(credentialToken: string | undefined, fn: () => T): T {
