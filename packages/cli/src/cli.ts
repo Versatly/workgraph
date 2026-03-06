@@ -7,6 +7,7 @@ import { registerAutonomyCommands } from './cli/commands/autonomy.js';
 import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
+import { registerPortabilityCommands } from './cli/commands/portability.js';
 import { registerTriggerCommands } from './cli/commands/trigger.js';
 import {
   addWorkspaceOption,
@@ -2195,6 +2196,12 @@ addWorkspaceOption(
     },
   )
 );
+
+// ============================================================================
+// portability
+// ============================================================================
+
+registerPortabilityCommands(program);
 
 // ============================================================================
 // dispatch
