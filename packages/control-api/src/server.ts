@@ -31,6 +31,7 @@ import {
   listWebhooks,
   registerWebhook,
 } from './server-webhooks.js';
+import { registerWebhookGatewayEndpoint } from './webhook-gateway.js';
 
 const ledger = ledgerModule;
 const auth = authModule;
@@ -72,6 +73,7 @@ export interface WorkgraphServerHandle {
   baseUrl: string;
   healthUrl: string;
   url: string;
+  webhookGatewayUrlTemplate: string;
   close: () => Promise<void>;
   workspacePath: string;
   workspaceInitialized: boolean;
@@ -134,6 +136,7 @@ export async function startWorkgraphServer(options: WorkgraphServerOptions): Pro
       endpointPath,
       bearerToken: options.bearerToken,
       onApp: ({ app, bearerAuthMiddleware }) => {
+        registerWebhookGatewayEndpoint(app, workspacePath);
         app.use('/api', bearerAuthMiddleware);
         app.use('/api', (req: any, _res: any, next: () => void) => {
           auth.runWithAuthContext(buildRequestAuthContext(req), () => next());
@@ -148,6 +151,7 @@ export async function startWorkgraphServer(options: WorkgraphServerOptions): Pro
 
   return {
     ...handle,
+    webhookGatewayUrlTemplate: `${handle.baseUrl}/webhook-gateway/{sourceKey}`,
     close: async () => {
       unsubscribeWebhookDispatch();
       await handle.close();
@@ -212,6 +216,7 @@ export async function runWorkgraphServerFromEnv(): Promise<void> {
     endpointPath: handle.endpointPath,
     mcpUrl: handle.url,
     healthUrl: handle.healthUrl,
+    webhookGatewayUrlTemplate: handle.webhookGatewayUrlTemplate,
   });
 
   await waitForShutdown(handle, {
