@@ -39,6 +39,7 @@ export * as triggerEngine from './trigger-engine.js';
 export * as trigger from './trigger.js';
 export * as autonomy from './autonomy.js';
 export * as autonomyDaemon from './autonomy-daemon.js';
+export * as safety from './safety.js';
 export * as commandCenter from './command-center.js';
 export * as board from './board.js';
 export * as agent from './agent.js';
