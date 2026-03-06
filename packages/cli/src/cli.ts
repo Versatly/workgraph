@@ -7,6 +7,7 @@ import { registerAutonomyCommands } from './cli/commands/autonomy.js';
 import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
+import { registerSafetyCommands } from './cli/commands/safety.js';
 import { registerTriggerCommands } from './cli/commands/trigger.js';
 import {
   addWorkspaceOption,
@@ -81,6 +82,7 @@ addWorkspaceOption(
         `Seeded types: ${result.seededTypes.join(', ')}`,
         `Generated .base files: ${result.generatedBases.length}`,
         `Config: ${result.configPath}`,
+        `Runtime config: ${result.runtimeConfigPath}`,
         `Server config: ${result.serverConfigPath}`,
         `Starter kit primitives: roles=${roleSeeded} policies=${policySeeded} gates=${gateSeeded} spaces=${spaceSeeded}`,
         `Bootstrap trust token (${result.bootstrapTrustTokenPath}): ${result.bootstrapTrustToken}`,
@@ -2305,6 +2307,7 @@ addWorkspaceOption(
 // ============================================================================
 
 registerAutonomyCommands(program, DEFAULT_ACTOR);
+registerSafetyCommands(program, DEFAULT_ACTOR);
 
 // ============================================================================
 // serve (http server)

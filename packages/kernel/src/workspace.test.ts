@@ -31,6 +31,7 @@ describe('workspace init', () => {
     expect(fs.existsSync(path.join(workspacePath, 'README.md'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'QUICKSTART.md'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, '.workgraph/server.json'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, '.workgraph/config.yaml'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, '.workgraph/primitive-registry.yaml'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, '.workgraph/bases/thread.base'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, '.workgraph/graph-index.json'))).toBe(true);
@@ -86,8 +87,9 @@ describe('workspace init', () => {
   });
 
   it('writes workspace config in predictable location', () => {
-    initWorkspace(workspacePath);
+    const result = initWorkspace(workspacePath);
     expect(fs.existsSync(workspaceConfigPath(workspacePath))).toBe(true);
+    expect(result.runtimeConfigPath).toBe(path.join(workspacePath, '.workgraph/config.yaml'));
   });
 });
 

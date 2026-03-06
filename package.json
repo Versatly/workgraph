@@ -90,6 +90,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.11.0",
+    "@versatly/workgraph-mcp-server": "workspace:*",
     "ajv": "^8.18.0",
     "ajv-formats": "^3.0.1",
     "tsup": "^8.5.1",

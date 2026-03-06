@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as dispatch from './dispatch.js';
+import * as safety from './safety.js';
 import * as thread from './thread.js';
 import * as triggerEngine from './trigger-engine.js';
 
@@ -61,27 +62,51 @@ export async function runAutonomyLoop(
     let runId: string | undefined;
     let runStatus: string | undefined;
     if (options.executeReadyThreads !== false && readyNow.length > 0) {
-      const run = await dispatch.createAndExecuteRun(
-        workspacePath,
-        {
+      try {
+        safety.assertAutomatedDispatchAllowed(workspacePath, {
+          agent: options.actor,
+          source: 'autonomy-loop',
           actor: options.actor,
-          adapter: options.adapter ?? 'cursor-cloud',
-          objective: `Autonomy cycle ${cycle}: coordinate ${readyNow.length} ready thread(s)`,
-          context: {
-            autonomy_cycle: cycle,
-            autonomy_ready_count: readyNow.length,
+        });
+        const run = await dispatch.createAndExecuteRun(
+          workspacePath,
+          {
+            actor: options.actor,
+            adapter: options.adapter ?? 'cursor-cloud',
+            objective: `Autonomy cycle ${cycle}: coordinate ${readyNow.length} ready thread(s)`,
+            context: {
+              autonomy_cycle: cycle,
+              autonomy_ready_count: readyNow.length,
+              safety_source: 'autonomy-loop',
+            },
           },
-        },
-        {
-          agents: options.agents,
-          maxSteps: options.maxSteps,
-          stepDelayMs: options.stepDelayMs,
-          space: options.space,
-          createCheckpoint: true,
-        },
-      );
-      runId = run.id;
-      runStatus = run.status;
+          {
+            agents: options.agents,
+            maxSteps: options.maxSteps,
+            stepDelayMs: options.stepDelayMs,
+            space: options.space,
+            createCheckpoint: true,
+          },
+        );
+        runId = run.id;
+        runStatus = run.status;
+        safety.recordSafetyOutcome(workspacePath, {
+          source: 'autonomy-loop',
+          success: run.status === 'succeeded',
+          agent: options.actor,
+          error: run.error ?? (run.status === 'failed' ? 'Autonomy dispatch run failed.' : undefined),
+          actor: options.actor,
+        });
+      } catch (error) {
+        runStatus = `blocked:${errorMessage(error)}`;
+        safety.recordSafetyOutcome(workspacePath, {
+          source: 'autonomy-loop',
+          success: false,
+          agent: options.actor,
+          error: errorMessage(error),
+          actor: options.actor,
+        });
+      }
     }
 
     const report: AutonomyCycleReport = {
@@ -147,4 +172,8 @@ function writeHeartbeat(filePath: string | undefined, payload: Record<string, un
   const dir = path.dirname(absolutePath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(absolutePath, JSON.stringify(payload, null, 2) + '\n', 'utf-8');
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }

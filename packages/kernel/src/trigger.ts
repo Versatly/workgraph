@@ -5,6 +5,7 @@
 import { createHash } from 'node:crypto';
 import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';
+import * as safety from './safety.js';
 import * as store from './store.js';
 import type { DispatchRun } from './types.js';
 
@@ -52,6 +53,12 @@ export function fireTrigger(
     ?? `Trigger ${String(trigger.fields.title ?? triggerPath)} fired action ${String(trigger.fields.action ?? 'run')}`;
   const eventSeed = options.eventKey ?? new Date().toISOString();
   const idempotencyKey = buildIdempotencyKey(triggerPath, eventSeed, objective);
+  safety.assertAutomatedDispatchAllowed(workspacePath, {
+    agent: options.actor,
+    source: 'trigger-fire',
+    triggerPath,
+    actor: options.actor,
+  });
 
   const run = dispatch.createRun(workspacePath, {
     actor: options.actor,
@@ -60,6 +67,7 @@ export function fireTrigger(
     context: {
       trigger_path: triggerPath,
       trigger_event: String(trigger.fields.event ?? ''),
+      safety_source: 'trigger-fire',
       ...options.context,
     },
     idempotencyKey,
@@ -97,6 +105,14 @@ export async function fireTriggerAndExecute(
       actor: options.actor,
       ...(options.retryInput ?? {}),
     });
+    safety.recordSafetyOutcome(workspacePath, {
+      source: 'trigger-fire',
+      success: retried.status === 'succeeded',
+      agent: options.actor,
+      triggerPath,
+      error: retried.error,
+      actor: options.actor,
+    });
     return {
       triggerPath: fired.triggerPath,
       idempotencyKey: fired.idempotencyKey,
@@ -110,6 +126,14 @@ export async function fireTriggerAndExecute(
     const executed = await dispatch.executeRun(workspacePath, fired.run.id, {
       actor: options.actor,
       ...(options.executeInput ?? {}),
+    });
+    safety.recordSafetyOutcome(workspacePath, {
+      source: 'trigger-fire',
+      success: executed.status === 'succeeded',
+      agent: options.actor,
+      triggerPath,
+      error: executed.error,
+      actor: options.actor,
     });
     return {
       triggerPath: fired.triggerPath,

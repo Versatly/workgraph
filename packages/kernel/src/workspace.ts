@@ -9,6 +9,7 @@ import { syncPrimitiveRegistryManifest, generateBasesFromPrimitiveRegistry } fro
 import { refreshWikiLinkGraphIndex } from './graph.js';
 import { loadPolicyRegistry } from './policy.js';
 import { seedStarterKit, type StarterKitSeedResult } from './starter-kit.js';
+import { ensureRuntimeConfig } from './safety.js';
 import type { WorkgraphWorkspaceConfig } from './types.js';
 
 const WORKGRAPH_CONFIG_FILE = '.workgraph.json';
@@ -23,6 +24,7 @@ export interface InitWorkspaceOptions {
 export interface InitWorkspaceResult {
   workspacePath: string;
   configPath: string;
+  runtimeConfigPath: string;
   config: WorkgraphWorkspaceConfig;
   alreadyInitialized: boolean;
   createdDirectories: string[];
@@ -77,6 +79,7 @@ export function initWorkspace(targetPath: string, options: InitWorkspaceOptions 
   }
 
   const config = ensureWorkspaceConfig(configPath, resolvedPath, options.name);
+  const runtimeConfig = ensureRuntimeConfig(resolvedPath);
 
   const readmeEnabled = options.createReadme !== false;
   const readmePath = readmeEnabled
@@ -102,6 +105,7 @@ export function initWorkspace(targetPath: string, options: InitWorkspaceOptions 
   return {
     workspacePath: resolvedPath,
     configPath,
+    runtimeConfigPath: runtimeConfig.path,
     config,
     alreadyInitialized,
     createdDirectories,

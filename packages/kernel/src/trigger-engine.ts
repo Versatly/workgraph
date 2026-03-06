@@ -7,6 +7,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';
+import * as safety from './safety.js';
 import * as store from './store.js';
 import { matchesCronSchedule, nextCronMatch, parseCronExpression, type CronSchedule } from './cron.js';
 import type { DispatchRun, PrimitiveInstance } from './types.js';
@@ -361,6 +362,7 @@ export function runTriggerEngineCycle(
     }
 
     try {
+      const actionActor = resolveTriggerActionActor(trigger, trigger.action, actor);
       const actionResult = executeTriggerAction(
         workspacePath,
         trigger,
@@ -381,6 +383,15 @@ export function runTriggerEngineCycle(
         runtime.state = 'ready';
       }
       runtime.lastError = undefined;
+      if (trigger.action.type !== 'dispatch-run') {
+        safety.recordSafetyOutcome(workspacePath, {
+          source: 'trigger-engine',
+          success: true,
+          agent: actionActor,
+          triggerPath: trigger.path,
+          actor,
+        });
+      }
       results.push({
         triggerPath: trigger.path,
         fired: true,
@@ -389,8 +400,17 @@ export function runTriggerEngineCycle(
         runtimeState: runtime.state,
       });
     } catch (error) {
+      const actionActor = resolveTriggerActionActor(trigger, trigger.action, actor);
       runtime.state = 'error';
       runtime.lastError = errorMessage(error);
+      safety.recordSafetyOutcome(workspacePath, {
+        source: 'trigger-engine',
+        success: false,
+        agent: actionActor,
+        triggerPath: trigger.path,
+        error: runtime.lastError,
+        actor,
+      });
       errors += 1;
       results.push({
         triggerPath: trigger.path,
@@ -439,6 +459,7 @@ export async function runTriggerRunEvidenceLoop(
 
   const executedRuns: TriggerRunExecutionResult[] = [];
   for (const [runId, triggerPath] of targetRuns) {
+    let outcome: TriggerRunExecutionResult;
     try {
       const run = dispatch.status(workspacePath, runId);
       if ((run.status === 'failed' || run.status === 'cancelled') && options.retryFailedRuns) {
@@ -447,39 +468,39 @@ export async function runTriggerRunEvidenceLoop(
           execute: true,
           ...(options.execution ?? {}),
         });
-        executedRuns.push({
+        outcome = {
           runId: retried.id,
           triggerPath,
           status: retried.status,
           retriedFromRunId: run.id,
-        });
-        continue;
-      }
-      if (run.status === 'queued' || run.status === 'running') {
+        };
+      } else if (run.status === 'queued' || run.status === 'running') {
         const executed = await dispatch.executeRun(workspacePath, run.id, {
           actor,
           ...(options.execution ?? {}),
         });
-        executedRuns.push({
+        outcome = {
           runId: executed.id,
           triggerPath,
           status: executed.status,
-        });
-        continue;
+        };
+      } else {
+        outcome = {
+          runId: run.id,
+          triggerPath,
+          status: run.status,
+        };
       }
-      executedRuns.push({
-        runId: run.id,
-        triggerPath,
-        status: run.status,
-      });
     } catch (error) {
-      executedRuns.push({
+      outcome = {
         runId,
         triggerPath,
         status: 'failed',
         error: errorMessage(error),
-      });
+      };
     }
+    executedRuns.push(outcome);
+    recordTriggerRunSafetyOutcome(workspacePath, actor, outcome);
   }
 
   return {
@@ -601,6 +622,7 @@ export function evaluateThreadCompleteCascadeTriggers(
     }
 
     try {
+      const actionActor = resolveTriggerActionActor(trigger, trigger.action, actor);
       const actionResult = executeTriggerAction(
         workspacePath,
         trigger,
@@ -620,6 +642,15 @@ export function evaluateThreadCompleteCascadeTriggers(
         runtime.cooldownUntil = undefined;
         runtime.state = 'ready';
       }
+      if (trigger.action.type !== 'dispatch-run') {
+        safety.recordSafetyOutcome(workspacePath, {
+          source: 'trigger-cascade',
+          success: true,
+          agent: actionActor,
+          triggerPath: trigger.path,
+          actor,
+        });
+      }
       results.push({
         triggerPath: trigger.path,
         fired: true,
@@ -628,8 +659,17 @@ export function evaluateThreadCompleteCascadeTriggers(
         runtimeState: runtime.state,
       });
     } catch (error) {
+      const actionActor = resolveTriggerActionActor(trigger, trigger.action, actor);
       runtime.state = 'error';
       runtime.lastError = errorMessage(error);
+      safety.recordSafetyOutcome(workspacePath, {
+        source: 'trigger-cascade',
+        success: false,
+        agent: actionActor,
+        triggerPath: trigger.path,
+        error: runtime.lastError,
+        actor,
+      });
       errors += 1;
       results.push({
         triggerPath: trigger.path,
@@ -758,6 +798,12 @@ function executeTriggerAction(
       };
     }
     case 'dispatch-run': {
+      safety.assertAutomatedDispatchAllowed(workspacePath, {
+        agent: actor,
+        source: 'trigger-engine',
+        triggerPath: trigger.path,
+        actor: defaultActor,
+      });
       const objectiveTemplate = action.objective
         ?? `Trigger ${trigger.title} fired (${trigger.path})`;
       const objective = String(materializeTemplateValue(objectiveTemplate, context));
@@ -768,6 +814,7 @@ function executeTriggerAction(
         context: {
           trigger_path: trigger.path,
           event_key: eventKey,
+          safety_source: 'trigger-engine',
           ...(materializeTemplateValue(action.context ?? {}, context) as Record<string, unknown>),
         },
         idempotencyKey: eventKey ? buildDispatchIdempotencyKey(trigger.path, eventKey, objective) : undefined,
@@ -872,6 +919,42 @@ function createThreadFromTrigger(
     tags: action.tags ?? [],
   };
   return store.create(workspacePath, 'thread', fields, body, actor);
+}
+
+function resolveTriggerActionActor(
+  trigger: NormalizedTrigger,
+  action: TriggerAction,
+  defaultActor: string,
+): string {
+  return action.actor ?? (trigger.synthesis?.actor ?? defaultActor);
+}
+
+function recordTriggerRunSafetyOutcome(
+  workspacePath: string,
+  actor: string,
+  outcome: TriggerRunExecutionResult,
+): void {
+  if (!outcome.triggerPath) return;
+  if (outcome.status === 'succeeded') {
+    safety.recordSafetyOutcome(workspacePath, {
+      source: 'trigger-run-evidence-loop',
+      success: true,
+      agent: actor,
+      triggerPath: outcome.triggerPath,
+      actor,
+    });
+    return;
+  }
+  if (outcome.status === 'failed' || outcome.status === 'cancelled') {
+    safety.recordSafetyOutcome(workspacePath, {
+      source: 'trigger-run-evidence-loop',
+      success: false,
+      agent: actor,
+      triggerPath: outcome.triggerPath,
+      error: outcome.error ?? `Dispatch run ended with status "${outcome.status}".`,
+      actor,
+    });
+  }
 }
 
 function appendTriggerFireLedger(
