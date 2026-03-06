@@ -128,6 +128,361 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
       "destructiveHint": true,
       "idempotentHint": false,
     },
+    "description": "Post a correlated question and optionally await/poll for a reply.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "description": "Actor identity for write attribution.",
+          "type": "string",
+        },
+        "awaitReply": {
+          "description": "Whether the tool should wait for a matching reply event.",
+          "type": "boolean",
+        },
+        "conversationPath": {
+          "description": "Optional existing conversation path.",
+          "type": "string",
+        },
+        "correlationId": {
+          "description": "Optional correlation ID (generated when omitted).",
+          "type": "string",
+        },
+        "evidence": {
+          "description": "Optional evidence attachments for ask context.",
+          "items": {
+            "properties": {
+              "kind": {
+                "description": "Evidence attachment kind.",
+                "enum": [
+                  "link",
+                  "file",
+                ],
+                "type": "string",
+              },
+              "mime_type": {
+                "description": "MIME type for this attachment when known.",
+                "type": "string",
+              },
+              "path": {
+                "description": "Workspace-relative file path for file evidence.",
+                "type": "string",
+              },
+              "sha256": {
+                "description": "Optional sha256 digest for file integrity checks.",
+                "type": "string",
+              },
+              "size_bytes": {
+                "description": "Attachment size in bytes.",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "title": {
+                "description": "Short human-readable evidence title.",
+                "type": "string",
+              },
+              "url": {
+                "description": "Evidence URL for link-based artifacts.",
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "idempotencyKey": {
+          "description": "Stable idempotency key for retry-safe asks.",
+          "type": "string",
+        },
+        "metadata": {
+          "additionalProperties": {},
+          "description": "Arbitrary machine-readable metadata preserved with the event.",
+          "propertyNames": {
+            "type": "string",
+          },
+          "type": "object",
+        },
+        "pollIntervalMs": {
+          "description": "Polling interval used while awaiting reply.",
+          "maximum": 5000,
+          "minimum": 25,
+          "type": "integer",
+        },
+        "question": {
+          "description": "Question text to post.",
+          "minLength": 1,
+          "type": "string",
+        },
+        "threadPath": {
+          "description": "Target thread path (threads/<slug>.md).",
+          "minLength": 1,
+          "type": "string",
+        },
+        "timeoutMs": {
+          "description": "Reply wait timeout when awaitReply=true.",
+          "maximum": 120000,
+          "minimum": 0,
+          "type": "integer",
+        },
+      },
+      "required": [
+        "threadPath",
+        "question",
+      ],
+      "type": "object",
+    },
+    "name": "wg_ask",
+    "title": "WorkGraph Ask",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Write agent liveness plus active-work claim heartbeat updates.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "description": "Actor identity to heartbeat.",
+          "type": "string",
+        },
+        "capabilities": {
+          "description": "Optional runtime capabilities snapshot for presence.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "currentWork": {
+          "description": "Current work/thread marker for presence state.",
+          "type": "string",
+        },
+        "status": {
+          "description": "Presence status update for actor liveness.",
+          "enum": [
+            "online",
+            "busy",
+            "offline",
+          ],
+          "type": "string",
+        },
+        "threadLeaseMinutes": {
+          "description": "Thread lease extension window in minutes.",
+          "maximum": 240,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "threadPath": {
+          "description": "Optional specific thread to heartbeat claim lease for.",
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "wg_heartbeat",
+    "title": "WorkGraph Heartbeat",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Append a structured collaboration message event to a thread conversation.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "description": "Actor identity for write attribution.",
+          "type": "string",
+        },
+        "body": {
+          "description": "Message body text to append.",
+          "minLength": 1,
+          "type": "string",
+        },
+        "conversationPath": {
+          "description": "Optional existing conversation path.",
+          "type": "string",
+        },
+        "correlationId": {
+          "description": "Correlation ID for ask/reply coordination.",
+          "type": "string",
+        },
+        "evidence": {
+          "description": "Optional evidence attachment descriptors.",
+          "items": {
+            "properties": {
+              "kind": {
+                "description": "Evidence attachment kind.",
+                "enum": [
+                  "link",
+                  "file",
+                ],
+                "type": "string",
+              },
+              "mime_type": {
+                "description": "MIME type for this attachment when known.",
+                "type": "string",
+              },
+              "path": {
+                "description": "Workspace-relative file path for file evidence.",
+                "type": "string",
+              },
+              "sha256": {
+                "description": "Optional sha256 digest for file integrity checks.",
+                "type": "string",
+              },
+              "size_bytes": {
+                "description": "Attachment size in bytes.",
+                "maximum": 9007199254740991,
+                "minimum": 0,
+                "type": "integer",
+              },
+              "title": {
+                "description": "Short human-readable evidence title.",
+                "type": "string",
+              },
+              "url": {
+                "description": "Evidence URL for link-based artifacts.",
+                "type": "string",
+              },
+            },
+            "required": [
+              "kind",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "idempotencyKey": {
+          "description": "Stable idempotency key for retry-safe writes.",
+          "type": "string",
+        },
+        "messageType": {
+          "description": "Conversation event type/kind.",
+          "enum": [
+            "message",
+            "note",
+            "decision",
+            "system",
+            "ask",
+            "reply",
+          ],
+          "type": "string",
+        },
+        "metadata": {
+          "additionalProperties": {},
+          "description": "Arbitrary machine-readable metadata preserved with the event.",
+          "propertyNames": {
+            "type": "string",
+          },
+          "type": "object",
+        },
+        "replyToCorrelationId": {
+          "description": "Correlation ID this reply responds to.",
+          "type": "string",
+        },
+        "threadPath": {
+          "description": "Target thread path (threads/<slug>.md).",
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+        "body",
+      ],
+      "type": "object",
+    },
+    "name": "wg_post_message",
+    "title": "WorkGraph Post Message",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Create a child thread with inherited context and optional idempotency key.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "description": "Actor identity for write attribution.",
+          "type": "string",
+        },
+        "contextRefs": {
+          "description": "Additional context refs inherited by child thread.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "conversationPath": {
+          "description": "Optional conversation to attach spawned child thread.",
+          "type": "string",
+        },
+        "deps": {
+          "description": "Optional dependency thread refs.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "goal": {
+          "description": "New child thread goal/body seed.",
+          "minLength": 1,
+          "type": "string",
+        },
+        "idempotencyKey": {
+          "description": "Stable idempotency key for retry-safe spawn.",
+          "type": "string",
+        },
+        "parentThreadPath": {
+          "description": "Parent thread path for child spawn operation.",
+          "minLength": 1,
+          "type": "string",
+        },
+        "priority": {
+          "description": "Optional child priority override.",
+          "type": "string",
+        },
+        "space": {
+          "description": "Optional space override for the spawned child thread.",
+          "type": "string",
+        },
+        "tags": {
+          "description": "Optional child tags.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "title": {
+          "description": "New child thread title.",
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "parentThreadPath",
+        "title",
+        "goal",
+      ],
+      "type": "object",
+    },
+    "name": "wg_spawn_thread",
+    "title": "WorkGraph Spawn Thread",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
     "description": "Run autonomous collaboration cycles with drift checks.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
