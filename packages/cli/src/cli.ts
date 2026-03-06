@@ -4,6 +4,7 @@ import { Command } from 'commander';
 import * as workgraph from '@versatly/workgraph-kernel';
 import { startWorkgraphServer, waitForShutdown } from '@versatly/workgraph-control-api';
 import { registerAutonomyCommands } from './cli/commands/autonomy.js';
+import { registerCapabilityCommands } from './cli/commands/capability.js';
 import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
@@ -2201,6 +2202,12 @@ addWorkspaceOption(
 // ============================================================================
 
 registerDispatchCommands(program, DEFAULT_ACTOR);
+
+// ============================================================================
+// capability
+// ============================================================================
+
+registerCapabilityCommands(program);
 
 // ============================================================================
 // trigger
