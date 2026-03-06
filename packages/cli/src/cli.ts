@@ -9,6 +9,7 @@ import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
 import { registerSafetyCommands } from './cli/commands/safety.js';
 import { registerPortabilityCommands } from './cli/commands/portability.js';
+import { registerFederationCommands } from './cli/commands/federation.js';
 import { registerTriggerCommands } from './cli/commands/trigger.js';
 import {
   addWorkspaceOption,
@@ -2222,6 +2223,7 @@ registerConversationCommands(program, DEFAULT_ACTOR);
 
 registerSafetyCommands(program, DEFAULT_ACTOR);
 registerPortabilityCommands(program);
+registerFederationCommands(program, threadCmd, DEFAULT_ACTOR);
 
 // ============================================================================
 // onboarding
