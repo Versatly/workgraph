@@ -258,6 +258,99 @@ addWorkspaceOption(
 
 addWorkspaceOption(
   threadCmd
+    .command('participants <threadPath>')
+    .description('List thread participants and roles')
+    .option('--json', 'Emit structured JSON output')
+).action((threadPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const participants = workgraph.thread.listThreadParticipants(workspacePath, threadPath);
+      return { threadPath, participants, count: participants.length };
+    },
+    (result) => {
+      if (result.participants.length === 0) {
+        return [`No participants recorded for ${result.threadPath}.`];
+      }
+      return [
+        `Participants for ${result.threadPath}:`,
+        ...result.participants.map((participant) =>
+          `- ${participant.actor} [${participant.role}] joined=${participant.joined_at}`),
+      ];
+    },
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('invite <threadPath>')
+    .description('Invite or update a participant role on a thread')
+    .requiredOption('--participant <name>', 'Participant actor name')
+    .option('--role <role>', 'owner | contributor | reviewer | observer', 'contributor')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((threadPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        thread: workgraph.thread.inviteThreadParticipant(
+          workspacePath,
+          threadPath,
+          opts.actor,
+          opts.participant,
+          opts.role,
+        ),
+      };
+    },
+    (result) => [`Invited participant on: ${result.thread.path}`],
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('join <threadPath>')
+    .description('Join a thread as participant')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--role <role>', 'contributor | reviewer | observer', 'contributor')
+    .option('--json', 'Emit structured JSON output')
+).action((threadPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        thread: workgraph.thread.joinThread(workspacePath, threadPath, opts.actor, opts.role),
+      };
+    },
+    (result) => [`Joined thread: ${result.thread.path}`],
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('leave <threadPath>')
+    .description('Leave a thread (or remove another participant if authorized)')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--participant <name>', 'Participant actor to remove (defaults to --actor)')
+    .option('--json', 'Emit structured JSON output')
+).action((threadPath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return {
+        thread: workgraph.thread.leaveThread(workspacePath, threadPath, opts.actor, opts.participant),
+      };
+    },
+    (result) => [`Updated participants on: ${result.thread.path}`],
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
     .command('claim <threadPath>')
     .description('Claim a thread for this agent')
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)

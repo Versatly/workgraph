@@ -5,6 +5,12 @@ export * as auth from './auth.js';
 export * as store from './store.js';
 export * as thread from './thread.js';
 export * as capability from './capability.js';
+export {
+  inviteThreadParticipant,
+  joinThread,
+  leaveThread,
+  listThreadParticipants,
+} from './thread.js';
 export * as conversation from './conversation.js';
 export * as workspace from './workspace.js';
 export * as serverConfig from './server-config.js';

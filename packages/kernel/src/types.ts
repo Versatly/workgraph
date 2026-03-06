@@ -139,6 +139,19 @@ export type ThreadStatus =
   | 'done'
   | 'cancelled';
 
+export type ThreadParticipantRole =
+  | 'owner'
+  | 'contributor'
+  | 'reviewer'
+  | 'observer';
+
+export interface ThreadParticipant {
+  actor: string;
+  role: ThreadParticipantRole;
+  joined_at: string;
+  invited_by?: string;
+}
+
 export const THREAD_STATUS_TRANSITIONS: Record<ThreadStatus, ThreadStatus[]> = {
   open: ['active', 'cancelled'],
   active: ['blocked', 'done', 'cancelled', 'open'],
