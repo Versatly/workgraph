@@ -9,6 +9,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
+    "@versatly/workgraph-mcp-server": "workspace:*",
     "gray-matter": "^4.0.3",
     "yaml": "^2.8.1"
   }
