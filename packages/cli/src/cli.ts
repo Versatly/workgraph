@@ -7,6 +7,7 @@ import { registerAdapterCommands } from './cli/commands/adapter.js';
 import { registerAutonomyCommands } from './cli/commands/autonomy.js';
 import { registerCapabilityCommands } from './cli/commands/capability.js';
 import { registerConversationCommands } from './cli/commands/conversation.js';
+import { registerCursorCommands } from './cli/commands/cursor.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
 import { registerSafetyCommands } from './cli/commands/safety.js';
@@ -2207,6 +2208,7 @@ addWorkspaceOption(
 
 registerAdapterCommands(program, DEFAULT_ACTOR);
 registerDispatchCommands(program, DEFAULT_ACTOR);
+registerCursorCommands(program, DEFAULT_ACTOR);
 
 // ============================================================================
 // trigger
