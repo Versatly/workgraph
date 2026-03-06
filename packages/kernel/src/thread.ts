@@ -102,6 +102,7 @@ export function isReadyForClaim(workspacePath: string, threadPathOrInstance: str
     const depRef = normalizeThreadRef(dep);
     if (!depRef) continue;
     if (depRef.startsWith('external/')) return false;
+    if (isFederatedThreadRef(depRef)) return false;
     const depThread = store.read(workspacePath, depRef);
     if (!depThread || depThread.fields.status !== 'done') {
       return false;
@@ -872,6 +873,11 @@ export function inferThreadDependenciesFromText(text: string): string[] {
     const normalized = normalizeThreadRef(match[0] ?? '');
     if (normalized && !normalized.startsWith('external/')) refs.add(normalized);
   }
+  const federatedMatches = text.matchAll(/\b[a-z0-9][a-z0-9_-]*:[a-z0-9._/-]+\b/gi);
+  for (const match of federatedMatches) {
+    const normalized = normalizeThreadRef(match[0] ?? '');
+    if (normalized && !normalized.startsWith('external/')) refs.add(normalized);
+  }
   return [...refs].sort((a, b) => a.localeCompare(b));
 }
 
@@ -883,6 +889,7 @@ function normalizeThreadRef(value: unknown): string {
     : raw;
   const primary = unwrapped.split('|')[0].trim().split('#')[0].trim();
   if (!primary) return '';
+  if (isFederatedThreadRef(primary)) return normalizeFederatedThreadRef(primary);
   if (primary.startsWith('external/')) return primary;
   if (primary.endsWith('.md')) return primary;
   return `${primary}.md`;
@@ -905,6 +912,23 @@ function uniqueThreadRefs(values: string[]): string[] {
     seen.add(normalized);
   }
   return [...seen];
+}
+
+function isFederatedThreadRef(value: string): boolean {
+  return /^[a-z0-9][a-z0-9_-]*:[a-z0-9._/-]+$/i.test(value);
+}
+
+function normalizeFederatedThreadRef(value: string): string {
+  const [workspace, ...threadParts] = value.split(':');
+  const normalizedWorkspace = String(workspace).trim().toLowerCase();
+  const normalizedThread = threadParts.join(':')
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/^threads\//, '')
+    .replace(/\.md$/i, '')
+    .toLowerCase();
+  if (!normalizedWorkspace || !normalizedThread) return '';
+  return `${normalizedWorkspace}:${normalizedThread}`;
 }
 
 function asBoolean(value: unknown, fallback: boolean = false): boolean {

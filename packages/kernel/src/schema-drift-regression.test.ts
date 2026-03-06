@@ -5,6 +5,7 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+// @ts-expect-error Workspace-level test dependency is resolved via vitest alias.
 import { createWorkgraphMcpServer } from '@versatly/workgraph-mcp-server';
 import { loadRegistry, saveRegistry } from './registry.js';
 import { ensureCliBuiltForTests } from '../../../tests/helpers/cli-build.js';

@@ -270,6 +270,11 @@ describe('thread lifecycle', () => {
     const inferred = inferThreadDependenciesFromText('wait for [[threads/api-schema]] and threads/db-migration.md');
     expect(inferred).toEqual(['threads/api-schema.md', 'threads/db-migration.md']);
   });
+
+  it('infers federated dependency refs from text payloads', () => {
+    const inferred = inferThreadDependenciesFromText('wait for remote:remote-task and [[federation-hub:external-review]]');
+    expect(inferred).toEqual(['federation-hub:external-review', 'remote:remote-task']);
+  });
 });
 
 describe('thread scheduling helpers', () => {

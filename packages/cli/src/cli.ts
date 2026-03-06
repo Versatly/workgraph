@@ -98,6 +98,111 @@ addWorkspaceOption(
 );
 
 // ============================================================================
+// federation
+// ============================================================================
+
+const federationCmd = program
+  .command('federation')
+  .description('Manage cross-workspace federation remotes and sync');
+
+addWorkspaceOption(
+  federationCmd
+    .command('add <name> <target>')
+    .description('Add or update a known remote workspace (path or URL)')
+    .option('--read-write', 'Allow future write operations to this remote (disabled by default)')
+    .option('--json', 'Emit structured JSON output')
+).action((name, target, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.federation.addRemoteWorkspace(workspacePath, name, target, {
+        readOnly: !opts.readWrite,
+      });
+    },
+    (result) => [
+      `${result.created ? 'Added' : (result.updated ? 'Updated' : 'Kept')} remote workspace: ${result.remote.name}`,
+      `Target: ${result.remote.target}`,
+      `Mode: ${result.remote.readOnly ? 'read-only' : 'read-write'}`,
+      `Config: ${result.configPath}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  federationCmd
+    .command('remove <name>')
+    .description('Remove a known remote workspace')
+    .option('--json', 'Emit structured JSON output')
+).action((name, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.federation.removeRemoteWorkspace(workspacePath, name);
+    },
+    (result) => {
+      if (!result.removed) return [`Remote not found: ${name}`];
+      return [
+        `Removed remote workspace: ${result.remote?.name}`,
+        `Config: ${result.configPath}`,
+      ];
+    },
+  )
+);
+
+addWorkspaceOption(
+  federationCmd
+    .command('list')
+    .description('List known remote workspaces')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const remotes = workgraph.federation.listRemoteWorkspaces(workspacePath);
+      return {
+        remotes,
+        count: remotes.length,
+      };
+    },
+    (result) => {
+      if (result.remotes.length === 0) return ['No remote workspaces configured.'];
+      return [
+        ...result.remotes.map((remote) =>
+          `${remote.name} -> ${remote.target} [${remote.readOnly ? 'read-only' : 'read-write'}]`
+        ),
+        `${result.count} remote workspace(s)`,
+      ];
+    },
+  )
+);
+
+addWorkspaceOption(
+  federationCmd
+    .command('sync <workspace>')
+    .description('Pull latest read-only state from one remote workspace')
+    .option('--json', 'Emit structured JSON output')
+).action((workspace, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.federation.syncRemoteWorkspace(workspacePath, workspace);
+    },
+    (result) => [
+      `Synced remote workspace: ${result.remote.name}`,
+      `Target: ${result.remote.target}`,
+      `Cache: ${result.cachePath}`,
+      `Threads: ${result.snapshot.threadCount}`,
+      `Ledger entries: ${result.snapshot.ledgerEntries}`,
+      `Backlinks refreshed: ${result.backlinksRefreshed}`,
+    ],
+  )
+);
+
+// ============================================================================
 // thread
 // ============================================================================
 
@@ -139,6 +244,33 @@ addWorkspaceOption(
       `Status: ${String(result.thread.fields.status)}`,
       `Priority: ${String(result.thread.fields.priority)}`,
     ]
+  )
+);
+
+addWorkspaceOption(
+  threadCmd
+    .command('link <localThreadRef> <remoteFederatedRef>')
+    .description('Link a local thread to a federated remote thread id (workspace:thread-id)')
+    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output')
+).action((localThreadRef, remoteFederatedRef, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.federation.linkFederatedThread(
+        workspacePath,
+        localThreadRef,
+        remoteFederatedRef,
+        opts.actor,
+      );
+    },
+    (result) => [
+      `Linked thread: ${result.thread.path}`,
+      `Remote: ${result.link.remoteFederatedId}`,
+      `Local federated id: ${result.link.localFederatedId}`,
+      `Backlinks tracked: ${result.backlinksTracked}`,
+    ],
   )
 );
 
@@ -1796,31 +1928,70 @@ addWorkspaceOption(
 
 addWorkspaceOption(
   program
-    .command('search <text>')
+    .command('search [text]')
     .description('Keyword search across markdown body/frontmatter with optional QMD-compatible mode')
     .option('--type <type>', 'Limit to primitive type')
     .option('--mode <mode>', 'auto | core | qmd', 'auto')
+    .option('--federated <query>', 'Search local first, then all known federation remotes')
     .option('--limit <n>', 'Result limit')
     .option('--json', 'Emit structured JSON output')
 ).action((text, opts) =>
   runCommand(
     opts,
     () => {
+      const queryText = String(opts.federated ?? text ?? '').trim();
+      if (!queryText) {
+        throw new Error('Missing search query. Provide <text> or --federated <query>.');
+      }
       const workspacePath = resolveWorkspacePath(opts);
-      const result = workgraph.searchQmdAdapter.search(workspacePath, text, {
+      const local = workgraph.searchQmdAdapter.search(workspacePath, queryText, {
         mode: opts.mode,
         type: opts.type,
         limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
       });
+      if (!opts.federated) {
+        return {
+          query: queryText,
+          local,
+          remotes: [],
+          count: local.results.length,
+          federatedCount: 0,
+          totalCount: local.results.length,
+        };
+      }
+      const remotes = workgraph.federation.searchFederatedWorkspaces(workspacePath, queryText, {
+        type: opts.type,
+        limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+      });
+      const federatedCount = remotes.reduce((sum, remote) => sum + remote.results.length, 0);
       return {
-        ...result,
-        count: result.results.length,
+        query: queryText,
+        local,
+        remotes,
+        count: local.results.length,
+        federatedCount,
+        totalCount: local.results.length + federatedCount,
       };
     },
     (result) => [
-      `Mode: ${result.mode}`,
-      ...(result.fallbackReason ? [`Note: ${result.fallbackReason}`] : []),
-      ...result.results.map((item) => `${item.type} ${item.path}`),
+      `Query: ${result.query}`,
+      `Local mode: ${result.local.mode}`,
+      ...(result.local.fallbackReason ? [`Local note: ${result.local.fallbackReason}`] : []),
+      ...(result.local.results.length > 0
+        ? result.local.results.map((item) => `LOCAL ${item.type} ${item.path}`)
+        : ['LOCAL no matches']),
+      ...(result.remotes.length > 0
+        ? [
+            '',
+            'Federated remotes:',
+            ...result.remotes.flatMap((remote) => [
+              `${remote.workspace} -> ${remote.results.length} match(es)${remote.error ? ` [${remote.error}]` : ''}`,
+              ...remote.results.map((item) => `  REMOTE ${item.type} ${item.path}`),
+            ]),
+          ]
+        : []),
+      '',
+      `Total matches: ${result.totalCount} (local=${result.count}, federated=${result.federatedCount})`,
     ],
   )
 );
