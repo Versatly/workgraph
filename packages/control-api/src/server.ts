@@ -31,6 +31,7 @@ import {
   listWebhooks,
   registerWebhook,
 } from './server-webhooks.js';
+import { registerWebhookGatewayRoute } from './webhook-gateway.js';
 
 const ledger = ledgerModule;
 const auth = authModule;
@@ -244,6 +245,11 @@ function registerRestRoutes(
   defaultActor: string,
   sseKeepaliveMs: number,
 ): void {
+  registerWebhookGatewayRoute(app, {
+    workspacePath,
+    defaultActor,
+  });
+
   app.get('/api/events', (req: any, res: any) => {
     try {
       const lastEventId = readNonEmptyString(req.headers?.['last-event-id'])

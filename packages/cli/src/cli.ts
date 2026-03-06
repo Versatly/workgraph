@@ -8,6 +8,7 @@ import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
 import { registerTriggerCommands } from './cli/commands/trigger.js';
+import { registerWebhookCommands } from './cli/commands/webhook.js';
 import {
   addWorkspaceOption,
   csv,
@@ -2207,6 +2208,12 @@ registerDispatchCommands(program, DEFAULT_ACTOR);
 // ============================================================================
 
 registerTriggerCommands(program, DEFAULT_ACTOR);
+
+// ============================================================================
+// webhook gateway
+// ============================================================================
+
+registerWebhookCommands(program, DEFAULT_ACTOR);
 
 // ============================================================================
 // conversation + plan-step
