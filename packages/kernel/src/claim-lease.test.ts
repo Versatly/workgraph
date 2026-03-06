@@ -5,9 +5,11 @@ import path from 'node:path';
 import {
   claimLeasePath,
   listClaimLeases,
+  recoverClaimLeaseState,
   removeClaimLease,
   setClaimLease,
 } from './claim-lease.js';
+import { InputValidationError } from './errors.js';
 
 let workspacePath: string;
 
@@ -98,5 +100,38 @@ describe('claim-lease core module', () => {
     expect(listClaimLeases(workspacePath)).toHaveLength(0);
 
     expect(() => removeClaimLease(workspacePath, 'threads/not-present.md')).not.toThrow();
+  });
+
+  it('validates boundary inputs with typed errors', () => {
+    expect(() => setClaimLease(workspacePath, 'invalid-thread-ref', 'agent-a')).toThrow(InputValidationError);
+    expect(() => setClaimLease(workspacePath, 'threads/valid.md', '??')).toThrow(InputValidationError);
+  });
+
+  it('repairs malformed lease records during recovery', () => {
+    const filePath = claimLeasePath(workspacePath);
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, JSON.stringify({
+      version: 1,
+      leases: {
+        'threads/broken.md': {
+          target: 'threads/broken.md',
+          owner: 'agent-fix',
+          claimedAt: 'not-a-date',
+          lastHeartbeatAt: 'also-bad',
+          expiresAt: 'still-bad',
+          ttlMinutes: 5_000,
+        },
+        'threads/remove.md': {
+          owner: '',
+        },
+      },
+    }, null, 2), 'utf-8');
+
+    const report = recoverClaimLeaseState(workspacePath, Date.parse('2026-01-01T00:00:00.000Z'));
+    expect(report.inspected).toBeGreaterThanOrEqual(1);
+    const leases = listClaimLeases(workspacePath);
+    expect(leases.some((entry) => entry.target === 'threads/broken.md')).toBe(true);
+    expect(leases.some((entry) => entry.target === 'threads/remove.md')).toBe(false);
+    expect(leases.find((entry) => entry.target === 'threads/broken.md')?.ttlMinutes).toBe(24 * 60);
   });
 });

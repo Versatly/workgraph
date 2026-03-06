@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { loadRegistry, saveRegistry } from './registry.js';
 import {
   claimThread,
@@ -12,6 +13,7 @@ import {
   heartbeat,
   listRuns,
   markRun,
+  recoverDispatchState,
   reconcileExpiredLeases,
   status,
   stop,
@@ -24,6 +26,7 @@ import type {
   DispatchAdapterExecutionInput,
   DispatchAdapterExecutionResult,
 } from './runtime-adapter-contracts.js';
+import { InputValidationError } from './errors.js';
 
 let workspacePath: string;
 
@@ -248,6 +251,70 @@ describe('dispatch core module', () => {
     const invalidResult = await executeRun(workspacePath, invalid.id, { actor: 'agent-adapter' });
     expect(invalidResult.status).toBe('failed');
     expect(invalidResult.error).toContain('invalid terminal status "running"');
+  });
+
+  it('validates public inputs with typed errors', () => {
+    expect(() => createRun(workspacePath, {
+      actor: '??',
+      objective: 'Invalid actor',
+    })).toThrow(InputValidationError);
+    expect(() => status(workspacePath, 'bad-run-id')).toThrow(InputValidationError);
+  });
+
+  it('continues createRun when audit append fails', () => {
+    const auditPath = path.join(workspacePath, '.workgraph', 'dispatch-run-audit.jsonl');
+    fs.mkdirSync(auditPath, { recursive: true });
+    const run = createRun(workspacePath, {
+      actor: 'agent-audit',
+      objective: 'Audit failure should degrade gracefully',
+    });
+    expect(run.id.startsWith('run_')).toBe(true);
+    expect(status(workspacePath, run.id).id).toBe(run.id);
+  });
+
+  it('recovers orphaned running runs and removes corrupt run entries', () => {
+    const run = createRun(workspacePath, {
+      actor: 'agent-recover',
+      objective: 'Recover me',
+    });
+    markRun(workspacePath, run.id, 'agent-recover', 'running');
+
+    const dispatchStatePath = path.join(workspacePath, '.workgraph', 'dispatch-runs.json');
+    const state = JSON.parse(fs.readFileSync(dispatchStatePath, 'utf-8')) as {
+      version: number;
+      runs: Array<Record<string, unknown>>;
+    };
+    const target = state.runs.find((entry) => entry.id === run.id);
+    expect(target).toBeDefined();
+    target!.leaseExpires = undefined;
+    state.runs.push({
+      id: 'broken',
+      status: 'running',
+      objective: 'bad record',
+    });
+    fs.writeFileSync(dispatchStatePath, JSON.stringify(state, null, 2) + '\n', 'utf-8');
+
+    const recovery = recoverDispatchState(workspacePath, 'agent-repair');
+    expect(recovery.repairedRuns.map((entry) => entry.id)).toContain(run.id);
+    expect(recovery.removedCorruptRuns).toBe(1);
+    expect(status(workspacePath, run.id).status).toBe('queued');
+  });
+
+  it('cleans stale dispatch lock files before mutation', () => {
+    const lockName = `${crypto.createHash('sha1').update('dispatch-runs-state').digest('hex')}.lock`;
+    const lockPath = path.join(workspacePath, '.workgraph', 'locks', lockName);
+    fs.mkdirSync(path.dirname(lockPath), { recursive: true });
+    fs.writeFileSync(lockPath, JSON.stringify({
+      pid: 999_999,
+      key: 'dispatch-runs-state',
+      createdAt: '2000-01-01T00:00:00.000Z',
+    }) + '\n', 'utf-8');
+
+    const run = createRun(workspacePath, {
+      actor: 'agent-lock',
+      objective: 'Stale lock recovery',
+    });
+    expect(run.id.startsWith('run_')).toBe(true);
   });
 });
 

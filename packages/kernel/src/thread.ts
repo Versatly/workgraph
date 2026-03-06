@@ -666,6 +666,83 @@ export function listClaimLeaseStatus(workspacePath: string): claimLease.ClaimLea
   return claimLease.listClaimLeases(workspacePath);
 }
 
+export interface ThreadStateRecoveryResult {
+  repairedAt: string;
+  leaseState: claimLease.ClaimLeaseRecoveryResult;
+  staleClaims: ReapStaleClaimsResult;
+  brokenReferences: Array<{
+    threadPath: string;
+    removedDeps: string[];
+    clearedParent?: string;
+  }>;
+}
+
+export function recoverThreadState(
+  workspacePath: string,
+  actor: string,
+  options: { staleClaimLimit?: number } = {},
+): ThreadStateRecoveryResult {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.recover-state', '.workgraph', [
+    'thread:manage',
+    'policy:manage',
+  ]);
+  const leaseState = claimLease.recoverClaimLeaseState(workspacePath);
+  const staleClaims = reapStaleClaims(workspacePath, actor, {
+    limit: options.staleClaimLimit,
+  });
+  const threads = store.list(workspacePath, 'thread');
+  const existing = new Set(threads.map((entry) => entry.path));
+  const brokenReferences: ThreadStateRecoveryResult['brokenReferences'] = [];
+  for (const threadInstance of threads) {
+    const deps = Array.isArray(threadInstance.fields.deps)
+      ? threadInstance.fields.deps.map((value) => String(value))
+      : [];
+    const removedDeps = deps
+      .map((dep) => normalizeThreadRef(dep))
+      .filter((dep) => dep && !dep.startsWith('external/') && !existing.has(dep));
+    const parentRef = normalizeThreadRef(threadInstance.fields.parent);
+    const shouldClearParent = Boolean(parentRef && !parentRef.startsWith('external/') && !existing.has(parentRef));
+    if (removedDeps.length === 0 && !shouldClearParent) continue;
+    const removedDepSet = new Set(removedDeps);
+    const nextDeps = deps.filter((dep) => {
+      const normalized = normalizeThreadRef(dep);
+      if (!normalized || normalized.startsWith('external/')) return true;
+      return !removedDepSet.has(normalized);
+    });
+    store.update(
+      workspacePath,
+      threadInstance.path,
+      {
+        deps: nextDeps,
+        ...(shouldClearParent ? { parent: undefined } : {}),
+      },
+      undefined,
+      actor,
+      {
+        skipAuthorization: true,
+        action: 'thread.recover-state.store',
+        requiredCapabilities: ['thread:manage', 'policy:manage'],
+      },
+    );
+    ledger.append(workspacePath, actor, 'update', threadInstance.path, 'thread', {
+      recovered: true,
+      removed_broken_deps: removedDeps,
+      ...(shouldClearParent ? { cleared_parent: parentRef } : {}),
+    });
+    brokenReferences.push({
+      threadPath: threadInstance.path,
+      removedDeps,
+      ...(shouldClearParent ? { clearedParent: parentRef } : {}),
+    });
+  }
+  return {
+    repairedAt: new Date().toISOString(),
+    leaseState,
+    staleClaims,
+    brokenReferences,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Decompose — break a thread into sub-threads
 // ---------------------------------------------------------------------------
