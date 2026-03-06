@@ -13,6 +13,7 @@ import { registerMcpCommands } from './cli/commands/mcp.js';
 import { registerSafetyCommands } from './cli/commands/safety.js';
 import { registerPortabilityCommands } from './cli/commands/portability.js';
 import { registerFederationCommands } from './cli/commands/federation.js';
+import { registerWebhookCommands } from './cli/commands/webhook.js';
 import { registerTriggerCommands } from './cli/commands/trigger.js';
 import {
   addWorkspaceOption,
@@ -2308,6 +2309,7 @@ registerCursorCommands(program, DEFAULT_ACTOR);
 // ============================================================================
 
 registerTriggerCommands(program, DEFAULT_ACTOR);
+registerWebhookCommands(program, DEFAULT_ACTOR);
 
 // ============================================================================
 // conversation + plan-step
@@ -2456,6 +2458,7 @@ addWorkspaceOption(
   console.log(`MCP endpoint: ${handle.url}`);
   console.log(`Health: ${handle.healthUrl}`);
   console.log(`Status API: ${handle.baseUrl}/api/status`);
+  console.log(`Webhook endpoint template: ${handle.webhookGatewayUrlTemplate}`);
   await waitForShutdown(handle, {
     onSignal: (signal) => {
       console.error(`Received ${signal}; shutting down...`);
