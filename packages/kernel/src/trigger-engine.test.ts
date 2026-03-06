@@ -115,6 +115,62 @@ describe('trigger engine', () => {
     expect(state.triggers[triggerPrimitive.path]?.cooldownUntil).toBeDefined();
   });
 
+  it('matches event trigger patterns against ledger events', () => {
+    const patternTrigger = store.create(workspacePath, 'trigger', {
+      title: 'Pattern match done events',
+      type: 'event',
+      enabled: true,
+      status: 'active',
+      condition: { type: 'event', pattern: 'thread.*' },
+      action: {
+        type: 'create-thread',
+        title: 'Pattern follow-up {{matched_event_latest_target}}',
+        goal: 'Validate wildcard pattern matching',
+      },
+      cooldown: 0,
+    }, '# Trigger\n', 'system');
+
+    const seed = thread.createThread(workspacePath, 'Pattern source', 'Complete source thread', 'agent-pattern');
+    thread.claim(workspacePath, seed.path, 'agent-pattern');
+    thread.done(workspacePath, seed.path, 'agent-pattern', 'Done https://github.com/versatly/workgraph/pull/33');
+
+    const first = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+    expect(first.fired).toBe(0);
+
+    const another = thread.createThread(workspacePath, 'Pattern source 2', 'Second completion', 'agent-pattern');
+    thread.claim(workspacePath, another.path, 'agent-pattern');
+    thread.done(workspacePath, another.path, 'agent-pattern', 'Done https://github.com/versatly/workgraph/pull/34');
+
+    const second = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+    expect(second.fired).toBe(1);
+    const triggerResult = second.triggers.find((entry) => entry.triggerPath === patternTrigger.path);
+    expect(triggerResult?.reason).toContain('Matched');
+    expect(store.list(workspacePath, 'thread').some((entry) =>
+      String(entry.fields.title).startsWith('Pattern follow-up'))
+    ).toBe(true);
+  });
+
+  it('does not auto-fire manual triggers during engine cycles', () => {
+    const manualTrigger = store.create(workspacePath, 'trigger', {
+      title: 'Manual only trigger',
+      type: 'manual',
+      enabled: true,
+      status: 'active',
+      condition: { type: 'manual' },
+      action: {
+        type: 'dispatch-run',
+        objective: 'Manual fire required',
+      },
+      cooldown: 0,
+    }, '# Trigger\n', 'system');
+
+    const cycle = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+    expect(cycle.fired).toBe(0);
+    const result = cycle.triggers.find((entry) => entry.triggerPath === manualTrigger.path);
+    expect(result?.fired).toBe(false);
+    expect(result?.reason).toContain('Manual trigger condition requires explicit');
+  });
+
   it('fires cascade triggers immediately when thread reaches done state', () => {
     const cascadeTrigger = store.create(workspacePath, 'trigger', {
       title: 'Cascade on completion',

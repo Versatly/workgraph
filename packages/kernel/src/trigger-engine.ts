@@ -5,6 +5,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
@@ -22,6 +23,7 @@ interface TriggerRuntimeState {
   fireCount: number;
   lastEvaluatedAt?: string;
   lastFiredAt?: string;
+  nextFireAt?: string;
   cooldownUntil?: string;
   lastError?: string;
   state?: TriggerRuntimeStatus;
@@ -54,7 +56,7 @@ type TriggerCondition =
     }
   | {
       type: 'event';
-      eventType: string;
+      pattern: string;
     }
   | {
       type: 'file-watch';
@@ -63,6 +65,9 @@ type TriggerCondition =
   | {
       type: 'thread-complete';
       threadPath?: string;
+    }
+  | {
+      type: 'manual';
     };
 
 type TriggerAction =
@@ -110,6 +115,8 @@ interface NormalizedTrigger {
   instance: PrimitiveInstance;
   path: string;
   title: string;
+  triggerType: 'cron' | 'webhook' | 'event' | 'manual';
+  enabled: boolean;
   status: string;
   cooldownSeconds: number;
   condition: TriggerCondition | null;
@@ -130,6 +137,7 @@ export interface TriggerEngineCycleTriggerResult {
   fired: boolean;
   reason: string;
   actionType?: string;
+  nextFireAt?: string;
   runtimeState: TriggerRuntimeStatus;
   error?: string;
 }
@@ -147,6 +155,7 @@ export interface TriggerEngineCycleOptions {
   actor?: string;
   now?: Date;
   intervalSeconds?: number;
+  triggerPaths?: string[];
 }
 
 export interface StartTriggerEngineOptions {
@@ -272,9 +281,13 @@ export function runTriggerEngineCycle(
   const actor = options.actor ?? 'system';
   const intervalSeconds = normalizeInt(options.intervalSeconds, DEFAULT_ENGINE_INTERVAL_SECONDS, 1);
   const state = loadTriggerState(workspacePath);
-  const triggers = listNormalizedTriggers(workspacePath);
+  const allTriggers = listNormalizedTriggers(workspacePath);
+  const triggerPathFilter = normalizeTriggerPathFilter(options.triggerPaths);
+  const triggers = triggerPathFilter
+    ? allTriggers.filter((trigger) => triggerPathFilter.has(trigger.path))
+    : allTriggers;
   const requiresLedgerRead = triggers.some((trigger) =>
-    trigger.status === 'active' && (
+    isTriggerCycleEvaluable(trigger) && (
       trigger.condition?.type === 'event'
       || trigger.condition?.type === 'thread-complete'
     )
@@ -292,13 +305,27 @@ export function runTriggerEngineCycle(
     runtime.lastEvaluatedAt = nowIso;
     runtime.state = 'ready';
     runtime.lastError = undefined;
+    runtime.nextFireAt = computeNextFireAt(trigger, runtime, now);
 
-    if (trigger.status !== 'active') {
+    if (!trigger.enabled) {
       runtime.state = 'inactive';
       results.push({
         triggerPath: trigger.path,
         fired: false,
-        reason: `Trigger status is "${trigger.status}" (only "active" is evaluated).`,
+        reason: 'Trigger is disabled.',
+        nextFireAt: runtime.nextFireAt,
+        runtimeState: runtime.state,
+      });
+      continue;
+    }
+
+    if (!isTriggerStatusActive(trigger.status)) {
+      runtime.state = 'inactive';
+      results.push({
+        triggerPath: trigger.path,
+        fired: false,
+        reason: `Trigger status is "${trigger.status}" (only "active"/"approved" is evaluated).`,
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
       });
       continue;
@@ -312,6 +339,7 @@ export function runTriggerEngineCycle(
         triggerPath: trigger.path,
         fired: false,
         reason: 'Invalid trigger condition.',
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
         error: runtime.lastError,
       });
@@ -325,6 +353,7 @@ export function runTriggerEngineCycle(
         triggerPath: trigger.path,
         fired: false,
         reason: 'Invalid trigger action.',
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
         error: runtime.lastError,
       });
@@ -338,6 +367,7 @@ export function runTriggerEngineCycle(
         triggerPath: trigger.path,
         fired: false,
         reason: cooldownBlock.reason,
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
       });
       continue;
@@ -355,6 +385,7 @@ export function runTriggerEngineCycle(
         triggerPath: trigger.path,
         fired: false,
         reason: decision.reason,
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state ?? 'ready',
       });
       continue;
@@ -381,11 +412,14 @@ export function runTriggerEngineCycle(
         runtime.state = 'ready';
       }
       runtime.lastError = undefined;
+      runtime.nextFireAt = computeNextFireAt(trigger, runtime, now);
+      syncTriggerScheduleFields(workspacePath, trigger, runtime, actor);
       results.push({
         triggerPath: trigger.path,
         fired: true,
         reason: decision.reason,
         actionType: trigger.action.type,
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
       });
     } catch (error) {
@@ -397,6 +431,7 @@ export function runTriggerEngineCycle(
         fired: false,
         reason: decision.reason,
         actionType: trigger.action.type,
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
         error: runtime.lastError,
       });
@@ -546,7 +581,8 @@ export function evaluateThreadCompleteCascadeTriggers(
   };
 
   const candidates = listNormalizedTriggers(workspacePath)
-    .filter((trigger) => trigger.status === 'active')
+    .filter((trigger) => trigger.enabled)
+    .filter((trigger) => isTriggerStatusActive(trigger.status))
     .filter((trigger) => trigger.condition?.type === 'thread-complete')
     .filter((trigger) => trigger.cascadeOn.length === 0 || trigger.cascadeOn.includes('thread-complete'));
 
@@ -559,6 +595,7 @@ export function evaluateThreadCompleteCascadeTriggers(
     runtime.lastEvaluatedAt = nowIso;
     runtime.state = 'ready';
     runtime.lastError = undefined;
+    runtime.nextFireAt = computeNextFireAt(trigger, runtime, now);
 
     if (!trigger.action || !trigger.condition || trigger.condition.type !== 'thread-complete') {
       runtime.state = 'error';
@@ -568,6 +605,7 @@ export function evaluateThreadCompleteCascadeTriggers(
         triggerPath: trigger.path,
         fired: false,
         reason: 'Invalid thread-complete trigger definition.',
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
         error: runtime.lastError,
       });
@@ -582,6 +620,7 @@ export function evaluateThreadCompleteCascadeTriggers(
           triggerPath: trigger.path,
           fired: false,
           reason: `Completed thread ${actual} does not match cascade target ${expected}.`,
+          nextFireAt: runtime.nextFireAt,
           runtimeState: runtime.state,
         });
         continue;
@@ -595,6 +634,7 @@ export function evaluateThreadCompleteCascadeTriggers(
         triggerPath: trigger.path,
         fired: false,
         reason: cooldownBlock.reason,
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
       });
       continue;
@@ -620,11 +660,14 @@ export function evaluateThreadCompleteCascadeTriggers(
         runtime.cooldownUntil = undefined;
         runtime.state = 'ready';
       }
+      runtime.nextFireAt = computeNextFireAt(trigger, runtime, now);
+      syncTriggerScheduleFields(workspacePath, trigger, runtime, actor);
       results.push({
         triggerPath: trigger.path,
         fired: true,
         reason: `Cascade fired for completed thread ${completedThreadPath}.`,
         actionType: trigger.action.type,
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
       });
     } catch (error) {
@@ -636,6 +679,7 @@ export function evaluateThreadCompleteCascadeTriggers(
         fired: false,
         reason: `Cascade action failed for ${completedThreadPath}.`,
         actionType: trigger.action.type,
+        nextFireAt: runtime.nextFireAt,
         runtimeState: runtime.state,
         error: runtime.lastError,
       });
@@ -891,7 +935,9 @@ function appendTriggerFireLedger(
 }
 
 function buildDispatchIdempotencyKey(triggerPath: string, eventKey: string, objective: string): string {
-  return `${triggerPath}:${eventKey}:${objective}`.slice(0, 255);
+  return createHash('sha256')
+    .update(`${triggerPath}:${eventKey}:${objective}`)
+    .digest('hex');
 }
 
 function evaluateTriggerCondition(input: {
@@ -934,11 +980,16 @@ function evaluateTriggerCondition(input: {
       };
     }
     case 'event':
-      return evaluateEventCondition(input, condition.eventType);
+      return evaluateEventCondition(input, condition.pattern);
     case 'thread-complete':
       return evaluateEventCondition(input, 'thread-complete');
     case 'file-watch':
       return evaluateFileWatchCondition(input, condition.glob);
+    case 'manual':
+      return {
+        matched: false,
+        reason: 'Manual trigger condition requires explicit `workgraph trigger fire`.',
+      };
     default: {
       const exhaustive: never = condition;
       return {
@@ -1007,8 +1058,8 @@ function evaluateEventCondition(input: {
   runtime: TriggerRuntimeState;
   now: Date;
   ledgerEntries: ReturnType<typeof ledger.readAll>;
-}, eventTypeRaw: string): TriggerConditionDecision {
-  const eventType = eventTypeRaw.toLowerCase();
+}, eventPatternRaw: string): TriggerConditionDecision {
+  const eventPattern = eventPatternRaw.toLowerCase();
   const totalEntries = input.ledgerEntries.length;
   const latestEntry = input.ledgerEntries[totalEntries - 1];
 
@@ -1018,7 +1069,7 @@ function evaluateEventCondition(input: {
     input.runtime.lastEventCursorHash = latestEntry?.hash;
     return {
       matched: false,
-      reason: `Initialized event cursor for ${eventType} at offset ${input.runtime.lastEventCursorOffset}.`,
+      reason: `Initialized event cursor for pattern "${eventPattern}" at offset ${input.runtime.lastEventCursorOffset}.`,
     };
   }
 
@@ -1027,11 +1078,11 @@ function evaluateEventCondition(input: {
   if (newEntries.length === 0) {
     return {
       matched: false,
-      reason: `No new events for ${eventType} since ledger offset ${cursorOffset}.`,
+      reason: `No new events for pattern "${eventPattern}" since ledger offset ${cursorOffset}.`,
     };
   }
 
-  const matching = newEntries.filter((entry) => ledgerEntryMatchesEventType(entry, eventType));
+  const matching = newEntries.filter((entry) => ledgerEntryMatchesEventPattern(entry, eventPattern));
   const latestProcessed = newEntries[newEntries.length - 1]!;
   input.runtime.lastEventCursorOffset = totalEntries;
   input.runtime.lastEventCursorTs = latestProcessed.ts;
@@ -1040,16 +1091,17 @@ function evaluateEventCondition(input: {
   if (matching.length === 0) {
     return {
       matched: false,
-      reason: `No matching ${eventType} events in ${newEntries.length} new ledger entries.`,
+      reason: `No events matched pattern "${eventPattern}" in ${newEntries.length} new ledger entries.`,
     };
   }
 
   const latest = matching[matching.length - 1]!;
   return {
     matched: true,
-    reason: `Matched ${matching.length} ${eventType} event(s).`,
-    eventKey: `${eventType}:${latest.ts}:${latest.target}`,
+    reason: `Matched ${matching.length} event(s) for pattern "${eventPattern}".`,
+    eventKey: `event:${eventPattern}:${latest.ts}:${latest.target}`,
     context: {
+      matched_event_pattern: eventPattern,
       matched_event_count: matching.length,
       matched_event_latest_target: latest.target,
       matched_event_latest_op: latest.op,
@@ -1144,23 +1196,36 @@ function evaluateFileWatchCondition(input: {
   };
 }
 
-function ledgerEntryMatchesEventType(
+function ledgerEntryMatchesEventPattern(
   entry: ReturnType<typeof ledger.readAll>[number],
-  eventType: string,
+  eventPattern: string,
 ): boolean {
-  const typeOp = `${String(entry.type ?? '').toLowerCase()}.${entry.op.toLowerCase()}`;
-  const opOnly = entry.op.toLowerCase();
   const canonicalType = String(entry.type ?? '').toLowerCase();
+  const opOnly = entry.op.toLowerCase();
+  const typeOp = `${canonicalType}.${opOnly}`;
+  const pattern = eventPattern.toLowerCase();
 
-  if (eventType === 'thread-complete') {
+  if (pattern === 'thread-complete') {
     return canonicalType === 'thread' && entry.op === 'done';
   }
-  if (eventType === opOnly) return true;
-  if (eventType === typeOp) return true;
+
   const dataEvent = typeof entry.data?.event_type === 'string'
     ? String(entry.data.event_type).toLowerCase()
-    : null;
-  return dataEvent === eventType;
+    : undefined;
+  const target = String(entry.target ?? '').toLowerCase();
+  const candidates = [
+    opOnly,
+    canonicalType,
+    typeOp,
+    target,
+    `${typeOp}:${target}`,
+    dataEvent,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+
+  if (!pattern.includes('*') && !pattern.includes('?')) {
+    return candidates.includes(pattern);
+  }
+  return candidates.some((candidate) => wildcardMatch(candidate, pattern));
 }
 
 function listNormalizedTriggers(workspacePath: string): NormalizedTrigger[] {
@@ -1171,14 +1236,16 @@ function listNormalizedTriggers(workspacePath: string): NormalizedTrigger[] {
 
 function normalizeTrigger(workspacePath: string, instance: PrimitiveInstance): NormalizedTrigger {
   const status = String(instance.fields.status ?? 'draft').toLowerCase();
-  const title = String(instance.fields.title ?? instance.path);
+  const title = String(instance.fields.name ?? instance.fields.title ?? instance.path);
   const cooldownSeconds = normalizeInt(
     asNumber(instance.fields.cooldown) ?? asNumber(instance.fields.cooldown_seconds) ?? 0,
     0,
     0,
   );
 
-  const condition = safeParseCondition(instance.fields.condition ?? instance.fields.event);
+  const triggerType = parseTriggerPrimitiveType(instance.fields.type, instance.fields.condition);
+  const enabled = asBoolean(instance.fields.enabled) ?? isTriggerStatusActive(status);
+  const condition = safeParseCondition(instance.fields.condition ?? instance.fields.event, triggerType);
   const action = parseTriggerAction(instance.fields.action);
   const synthesis = parseSynthesisConfig(instance.fields.synthesis, instance.fields);
   const cascadeOn = asStringList(instance.fields.cascade_on);
@@ -1195,6 +1262,8 @@ function normalizeTrigger(workspacePath: string, instance: PrimitiveInstance): N
     instance,
     path: instance.path,
     title,
+    triggerType,
+    enabled,
     status,
     cooldownSeconds,
     condition,
@@ -1204,15 +1273,21 @@ function normalizeTrigger(workspacePath: string, instance: PrimitiveInstance): N
   };
 }
 
-function safeParseCondition(raw: unknown): TriggerCondition | null {
+function safeParseCondition(raw: unknown, triggerType: 'cron' | 'webhook' | 'event' | 'manual'): TriggerCondition | null {
   try {
-    return parseTriggerCondition(raw);
+    return parseTriggerCondition(raw, triggerType);
   } catch {
     return null;
   }
 }
 
-function parseTriggerCondition(raw: unknown): TriggerCondition | null {
+function parseTriggerCondition(raw: unknown, triggerType: 'cron' | 'webhook' | 'event' | 'manual'): TriggerCondition | null {
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim().length === 0)) {
+    if (triggerType === 'manual') return { type: 'manual' };
+    if (triggerType === 'webhook') return { type: 'event', pattern: 'webhook.*' };
+    if (triggerType === 'event') return { type: 'event', pattern: '*' };
+    return null;
+  }
   if (typeof raw === 'string') {
     const text = raw.trim();
     if (!text) return null;
@@ -1226,9 +1301,12 @@ function parseTriggerCondition(raw: unknown): TriggerCondition | null {
     if (text.toLowerCase() === 'thread-complete') {
       return { type: 'thread-complete' };
     }
+    if (text.toLowerCase() === 'manual') {
+      return { type: 'manual' };
+    }
     return {
       type: 'event',
-      eventType: text,
+      pattern: text,
     };
   }
 
@@ -1246,11 +1324,19 @@ function parseTriggerCondition(raw: unknown): TriggerCondition | null {
     };
   }
   if (type === 'event' || obj.event !== undefined || obj.event_type !== undefined) {
-    const eventType = String(obj.event ?? obj.event_type ?? '').trim();
-    if (!eventType) return null;
+    const pattern = String(obj.pattern ?? obj.event ?? obj.event_type ?? '').trim();
+    if (!pattern) return null;
     return {
       type: 'event',
-      eventType,
+      pattern,
+    };
+  }
+  if (type === 'webhook') {
+    const pattern = String(obj.pattern ?? obj.event ?? 'webhook.*').trim();
+    if (!pattern) return null;
+    return {
+      type: 'event',
+      pattern,
     };
   }
   if (type === 'file-watch' || obj.glob !== undefined || obj.pattern !== undefined) {
@@ -1267,6 +1353,9 @@ function parseTriggerCondition(raw: unknown): TriggerCondition | null {
       type: 'thread-complete',
       threadPath: threadPath ? normalizeReferencePath(threadPath) : undefined,
     };
+  }
+  if (type === 'manual') {
+    return { type: 'manual' };
   }
 
   return null;
@@ -1302,6 +1391,15 @@ function parseTriggerAction(raw: unknown): TriggerAction | null {
   if (!raw || typeof raw !== 'object') return null;
   const obj = raw as Record<string, unknown>;
   const type = String(obj.type ?? '').toLowerCase();
+  if (!type && (obj.objective !== undefined || obj.adapter !== undefined || obj.context !== undefined)) {
+    return {
+      type: 'dispatch-run',
+      objective: asString(obj.objective),
+      adapter: asString(obj.adapter),
+      context: isRecord(obj.context) ? obj.context : undefined,
+      actor: asString(obj.actor),
+    };
+  }
   switch (type) {
     case 'create-thread':
       return {
@@ -1377,6 +1475,65 @@ function parseSynthesisConfig(raw: unknown, fields: Record<string, unknown>): Sy
   };
 }
 
+function parseTriggerPrimitiveType(
+  rawType: unknown,
+  rawCondition: unknown,
+): 'cron' | 'webhook' | 'event' | 'manual' {
+  const normalized = typeof rawType === 'string'
+    ? rawType.trim().toLowerCase()
+    : '';
+  if (normalized === 'cron' || normalized === 'webhook' || normalized === 'event' || normalized === 'manual') {
+    return normalized;
+  }
+  if (typeof rawCondition === 'string' && looksLikeCron(rawCondition)) return 'cron';
+  if (isRecord(rawCondition) && typeof rawCondition.type === 'string') {
+    const conditionType = String(rawCondition.type).toLowerCase();
+    if (conditionType === 'cron') return 'cron';
+    if (conditionType === 'manual') return 'manual';
+  }
+  return 'event';
+}
+
+function isTriggerStatusActive(status: string): boolean {
+  return status === 'active' || status === 'approved';
+}
+
+function isTriggerCycleEvaluable(trigger: NormalizedTrigger): boolean {
+  return trigger.enabled && isTriggerStatusActive(trigger.status);
+}
+
+function normalizeTriggerPathFilter(triggerPaths: string[] | undefined): Set<string> | null {
+  if (!Array.isArray(triggerPaths) || triggerPaths.length === 0) return null;
+  const normalized = triggerPaths
+    .map((entry) => String(entry ?? '').trim().replace(/\\/g, '/').replace(/^\.\//, ''))
+    .filter(Boolean);
+  if (normalized.length === 0) return null;
+  return new Set(normalized);
+}
+
+function syncTriggerScheduleFields(
+  workspacePath: string,
+  trigger: NormalizedTrigger,
+  runtime: TriggerRuntimeState,
+  actor: string,
+): void {
+  const current = store.read(workspacePath, trigger.path);
+  if (!current || current.type !== 'trigger') return;
+  const currentLastFired = asString(current.fields.last_fired);
+  const currentNextFire = asString(current.fields.next_fire_at);
+  const nextLastFired = runtime.lastFiredAt;
+  const nextFireAt = runtime.nextFireAt;
+
+  const shouldWriteLast = nextLastFired !== undefined && nextLastFired !== currentLastFired;
+  const shouldWriteNext = nextFireAt !== currentNextFire;
+  if (!shouldWriteLast && !shouldWriteNext) return;
+
+  const updates: Record<string, unknown> = {};
+  if (shouldWriteLast) updates.last_fired = nextLastFired;
+  if (shouldWriteNext) updates.next_fire_at = nextFireAt ?? null;
+  store.update(workspacePath, trigger.path, updates, undefined, actor);
+}
+
 function getOrCreateRuntimeState(state: TriggerStateData, triggerPath: string): TriggerRuntimeState {
   if (!state.triggers[triggerPath]) {
     state.triggers[triggerPath] = { fireCount: 0 };
@@ -1427,7 +1584,7 @@ function deriveRuntimeState(
   runtime: TriggerRuntimeState,
   now: Date,
 ): TriggerRuntimeStatus {
-  if (trigger.status !== 'active') return 'inactive';
+  if (!trigger.enabled || !isTriggerStatusActive(trigger.status)) return 'inactive';
   if (runtime.lastError) return 'error';
   if (runtime.cooldownUntil) {
     const until = Date.parse(runtime.cooldownUntil);
@@ -1447,11 +1604,13 @@ function describeCondition(trigger: NormalizedTrigger): string {
     case 'cron':
       return `cron(${trigger.condition.expression})`;
     case 'event':
-      return `event(${trigger.condition.eventType})`;
+      return `event(${trigger.condition.pattern})`;
     case 'file-watch':
       return `file-watch(${trigger.condition.glob})`;
     case 'thread-complete':
       return `thread-complete(${trigger.condition.threadPath ?? '*'})`;
+    case 'manual':
+      return 'manual(explicit fire only)';
     default:
       return 'invalid';
   }
@@ -1679,6 +1838,16 @@ function asNumber(value: unknown): number | undefined {
   if (typeof value === 'string' && value.trim().length > 0) {
     const parsed = Number(value);
     if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  if (typeof value === 'boolean') return value;
+  if (typeof value === 'string') {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === 'true') return true;
+    if (normalized === 'false') return false;
   }
   return undefined;
 }
