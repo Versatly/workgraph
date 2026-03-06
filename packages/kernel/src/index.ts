@@ -66,3 +66,6 @@ export * as wikiIndex from './graph/wiki-index.js';
 export * as graphHygiene from './graph/hygiene.js';
 export * as schemaValidation from './validation/schema.js';
 export * from './errors.js';
+export * as storageAdapter from './storage-adapter.js';
+export * as environment from './environment.js';
+export * as exportImport from './export-import.js';
