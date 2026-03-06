@@ -52,6 +52,7 @@ export * as searchQmdAdapter from './search-qmd-adapter.js';
 export * as swarm from './swarm.js';
 export * as clawdapus from './clawdapus.js';
 export * as mcpEvents from './mcp-events.js';
+export * as cursorBridge from './cursor-bridge.js';
 export * as diagnostics from './diagnostics/index.js';
 export * from './context-graph-contract.js';
 export * as queryEngine from './query/engine.js';

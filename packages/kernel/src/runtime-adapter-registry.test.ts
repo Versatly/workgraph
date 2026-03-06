@@ -40,6 +40,7 @@ describe('runtime adapter registry', () => {
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
     expect(names).toEqual(expect.arrayContaining([
       'claude-code',
+      'cursor-bridge',
       'cursor-cloud',
       'http-webhook',
       'shell-worker',
