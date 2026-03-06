@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { adapterCursorCloud } from '@versatly/workgraph-kernel';
+import { ShellWorkerAdapter } from '@versatly/workgraph-kernel';
 import type {
   DispatchAdapterCreateInput,
   DispatchAdapterExecutionInput,
@@ -7,20 +7,22 @@ import type {
   DispatchAdapterLogEntry,
   DispatchAdapterRunStatus,
 } from '@versatly/workgraph-kernel';
-import {
-  InMemoryAdapterRunStore,
-  type RuntimeAdapterHealthCheckInput,
-  type RuntimeAdapterHealthCheckResult,
-  type RuntimeDispatchAdapter,
-  type RuntimeDispatchConfig,
-  type RuntimeDispatchRunStatus,
-  type RuntimeDispatchTask,
-  type RuntimeRunHandle,
-} from '@versatly/workgraph-runtime-adapter-core';
+import type {
+  RuntimeAdapterHealthCheckInput,
+  RuntimeAdapterHealthCheckResult,
+  RuntimeDispatchConfig,
+  RuntimeDispatchRunStatus,
+  RuntimeDispatchTask,
+  RuntimeRunHandle,
+} from './contracts.js';
+import type { RuntimeDispatchAdapter } from './contracts.js';
+import { InMemoryAdapterRunStore } from './run-store.js';
 
-export class CursorCloudAdapter implements RuntimeDispatchAdapter {
-  readonly name = 'cursor-cloud';
-  private readonly adapter = new adapterCursorCloud.CursorCloudAdapter();
+const HEALTH_CHECK_TIMEOUT_MS = 5_000;
+
+export class ShellSubprocessAdapter implements RuntimeDispatchAdapter {
+  readonly name = 'shell';
+  private readonly worker = new ShellWorkerAdapter();
   private readonly runs = new InMemoryAdapterRunStore(this.name);
 
   async dispatch(task: RuntimeDispatchTask, config: RuntimeDispatchConfig = {}): Promise<RuntimeRunHandle> {
@@ -38,7 +40,7 @@ export class CursorCloudAdapter implements RuntimeDispatchAdapter {
   }
 
   async create(input: DispatchAdapterCreateInput): Promise<DispatchAdapterRunStatus> {
-    const runId = `cursor_cloud_${randomUUID()}`;
+    const runId = `shell_${randomUUID()}`;
     this.runs.seed(runId, {
       actor: input.actor,
       objective: input.objective,
@@ -76,7 +78,7 @@ export class CursorCloudAdapter implements RuntimeDispatchAdapter {
       objective: input.objective,
     });
     this.runs.markRunning(input.runId);
-    const result = await this.adapter.execute({
+    const result = await this.worker.execute({
       ...input,
       isCancelled: () => this.runs.isCancelled(input.runId) || input.isCancelled?.() === true,
     });
@@ -84,12 +86,31 @@ export class CursorCloudAdapter implements RuntimeDispatchAdapter {
     return result;
   }
 
-  async healthCheck(_input: RuntimeAdapterHealthCheckInput = {}): Promise<RuntimeAdapterHealthCheckResult> {
+  async healthCheck(input: RuntimeAdapterHealthCheckInput = {}): Promise<RuntimeAdapterHealthCheckResult> {
+    const timeoutMs = normalizePositiveInt(input.timeoutMs, HEALTH_CHECK_TIMEOUT_MS);
+    const healthRunId = `shell-health-${randomUUID()}`;
+    const command = `"${process.execPath}" -e "process.stdout.write('shell-health-ok')"`;
+    const result = await this.worker.execute({
+      workspacePath: input.workspacePath ?? process.cwd(),
+      runId: healthRunId,
+      actor: 'adapter-healthcheck',
+      objective: 'shell adapter health check',
+      context: {
+        shell_command: command,
+        shell_timeout_ms: timeoutMs,
+      },
+    });
     return {
-      ok: true,
+      ok: result.status === 'succeeded',
       adapter: this.name,
       checkedAt: new Date().toISOString(),
-      message: 'Cursor cloud adapter is available.',
+      message: result.status === 'succeeded'
+        ? 'Shell subprocess execution is available.'
+        : `Shell subprocess health check failed: ${result.error ?? 'unknown error'}`,
+      details: {
+        status: result.status,
+        output: result.output,
+      },
     };
   }
 
@@ -100,6 +121,14 @@ export class CursorCloudAdapter implements RuntimeDispatchAdapter {
       this.runs.markFailed(task.runId, errorMessage(error));
     }
   }
+}
+
+function normalizePositiveInt(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return fallback;
+  }
+  return Math.trunc(parsed);
 }
 
 function errorMessage(error: unknown): string {

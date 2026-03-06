@@ -12,9 +12,11 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
+    "@versatly/workgraph-adapter-cursor-cloud": "workspace:*",
     "@versatly/workgraph-control-api": "workspace:*",
     "@versatly/workgraph-kernel": "workspace:*",
     "@versatly/workgraph-mcp-server": "workspace:*",
+    "@versatly/workgraph-runtime-adapter-core": "workspace:*",
     "commander": "^12.1.0"
   }
 }

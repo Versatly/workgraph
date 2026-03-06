@@ -3,6 +3,7 @@ import path from 'node:path';
 import { Command } from 'commander';
 import * as workgraph from '@versatly/workgraph-kernel';
 import { startWorkgraphServer, waitForShutdown } from '@versatly/workgraph-control-api';
+import { registerAdapterCommands } from './cli/commands/adapter.js';
 import { registerAutonomyCommands } from './cli/commands/autonomy.js';
 import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
@@ -2201,6 +2202,7 @@ addWorkspaceOption(
 // ============================================================================
 
 registerDispatchCommands(program, DEFAULT_ACTOR);
+registerAdapterCommands(program);
 
 // ============================================================================
 // trigger

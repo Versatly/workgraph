@@ -1,5 +1,6 @@
 import { Command } from 'commander';
 import * as workgraph from '@versatly/workgraph-kernel';
+import { toKernelDispatchAdapterName } from '@versatly/workgraph-runtime-adapter-core';
 import {
   addWorkspaceOption,
   csv,
@@ -17,7 +18,7 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
       .command('create <objective>')
       .description('Create a new run dispatch request')
       .option('-a, --actor <name>', 'Actor', defaultActor)
-      .option('--adapter <name>', 'Adapter name', 'cursor-cloud')
+      .option('--adapter <name>', 'Adapter name (shell|webhook|cursor-cloud)', 'cursor-cloud')
       .option('--idempotency-key <key>', 'Idempotency key')
       .option('--json', 'Emit structured JSON output'),
   ).action((objective, opts) =>
@@ -28,7 +29,7 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
         return {
           run: workgraph.dispatch.createRun(workspacePath, {
             actor: opts.actor,
-            adapter: opts.adapter,
+            adapter: normalizeDispatchAdapter(opts.adapter),
             objective,
             idempotencyKey: opts.idempotencyKey,
           }),
@@ -63,7 +64,7 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
       .command('create-execute <objective>')
       .description('Create and execute a run with autonomous multi-agent coordination')
       .option('-a, --actor <name>', 'Actor', defaultActor)
-      .option('--adapter <name>', 'Adapter name', 'cursor-cloud')
+      .option('--adapter <name>', 'Adapter name (shell|webhook|cursor-cloud)', 'cursor-cloud')
       .option('--idempotency-key <key>', 'Idempotency key')
       .option('--agents <actors>', 'Comma-separated agent identities for autonomous execution')
       .option('--max-steps <n>', 'Maximum scheduler steps', '200')
@@ -81,7 +82,7 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
             workspacePath,
             {
               actor: opts.actor,
-              adapter: opts.adapter,
+              adapter: normalizeDispatchAdapter(opts.adapter),
               objective,
               idempotencyKey: opts.idempotencyKey,
             },
@@ -184,7 +185,7 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
       .command('retry <runId>')
       .description('Retry a failed run by creating a new run attempt')
       .option('-a, --actor <name>', 'Actor', defaultActor)
-      .option('--adapter <name>', 'Adapter override for retry')
+      .option('--adapter <name>', 'Adapter override (shell|webhook|cursor-cloud)')
       .option('--objective <text>', 'Objective override for retry')
       .option('--no-execute', 'Create retry run but do not execute immediately')
       .option('--agents <actors>', 'Comma-separated agent identities')
@@ -203,7 +204,7 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
         return {
           run: await workgraph.dispatch.retryRun(workspacePath, runId, {
             actor: opts.actor,
-            adapter: opts.adapter,
+            adapter: opts.adapter ? normalizeDispatchAdapter(opts.adapter) : undefined,
             objective: opts.objective,
             execute: opts.execute,
             agents: csv(opts.agents),
@@ -317,7 +318,7 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
       .requiredOption('--to <agent>', 'Target agent')
       .requiredOption('--reason <text>', 'Reason for handoff')
       .option('-a, --actor <name>', 'Actor', defaultActor)
-      .option('--adapter <name>', 'Adapter override for handoff run')
+      .option('--adapter <name>', 'Adapter override (shell|webhook|cursor-cloud)')
       .option('--json', 'Emit structured JSON output'),
   ).action((runId, opts) =>
     runCommand(
@@ -328,7 +329,7 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
           actor: opts.actor,
           to: opts.to,
           reason: opts.reason,
-          adapter: opts.adapter,
+          adapter: opts.adapter ? normalizeDispatchAdapter(opts.adapter) : undefined,
         });
       },
       (result) => [
@@ -391,4 +392,12 @@ function normalizeRunStatus(status: string): 'running' | 'succeeded' | 'failed' 
     return normalized;
   }
   throw new Error(`Invalid run status "${status}". Expected running|succeeded|failed|cancelled.`);
+}
+
+function normalizeDispatchAdapter(adapterName: string): string {
+  const normalized = String(adapterName ?? '').trim();
+  if (!normalized) {
+    throw new Error('Adapter name is required.');
+  }
+  return toKernelDispatchAdapterName(normalized);
 }

@@ -5,7 +5,6 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createWorkgraphMcpServer } from '@versatly/workgraph-mcp-server';
 import { loadRegistry, saveRegistry } from './registry.js';
 import { ensureCliBuiltForTests } from '../../../tests/helpers/cli-build.js';
 
@@ -43,6 +42,7 @@ describe('schema drift regression', () => {
   });
 
   it('locks MCP tool metadata and input schemas', async () => {
+    const { createWorkgraphMcpServer } = await loadMcpServerModule();
     const server = createWorkgraphMcpServer({
       workspacePath,
       defaultActor: 'agent-schema',
@@ -126,4 +126,13 @@ function normalizeValue(value: unknown): unknown {
     .sort((left, right) => left.localeCompare(right))
     .map((key) => [key, normalizeValue(record[key])] as const);
   return Object.fromEntries(sortedEntries);
+}
+
+async function loadMcpServerModule(): Promise<{
+  createWorkgraphMcpServer: (...args: any[]) => any;
+}> {
+  const moduleUrl = new URL('../../mcp-server/src/index.js', import.meta.url).toString();
+  return import(moduleUrl) as Promise<{
+    createWorkgraphMcpServer: (...args: any[]) => any;
+  }>;
 }
