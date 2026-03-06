@@ -9,7 +9,7 @@
  *   4. Synthesizer: Watches for completion, merges results
  */
 
-import * as fs from 'node:fs';
+import fs from './storage-fs.js';
 import * as path from 'node:path';
 import * as thread from './thread.js';
 import * as store from './store.js';

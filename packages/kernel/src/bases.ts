@@ -2,9 +2,9 @@
  * Primitive registry manifest + Obsidian Bases generation.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import fs from './storage-fs.js';
 import { loadRegistry } from './registry.js';
 
 export interface PrimitiveRegistryManifestField {

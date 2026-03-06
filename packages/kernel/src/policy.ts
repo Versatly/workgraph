@@ -2,8 +2,8 @@
  * Policy registry and status transition gates.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 import * as auth from './auth.js';
 import * as ledger from './ledger.js';
 import type { PolicyParty, PolicyRegistry } from './types.js';

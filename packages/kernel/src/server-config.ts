@@ -1,5 +1,5 @@
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 
 export const WORKGRAPH_SERVER_CONFIG_FILE = '.workgraph/server.json';
 const DEFAULT_SERVER_HOST = '127.0.0.1';

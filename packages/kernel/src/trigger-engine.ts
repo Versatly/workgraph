@@ -2,8 +2,8 @@
  * Trigger polling engine, cascade evaluator, and dashboard/status helpers.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 import { spawnSync } from 'node:child_process';
 import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';

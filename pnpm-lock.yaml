@@ -11,39 +11,6 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(zod@4.3.6)
-      '@versatly/workgraph-adapter-claude-code':
-        specifier: workspace:*
-        version: link:packages/adapter-claude-code
-      '@versatly/workgraph-adapter-cursor-cloud':
-        specifier: workspace:*
-        version: link:packages/adapter-cursor-cloud
-      '@versatly/workgraph-cli':
-        specifier: workspace:*
-        version: link:packages/cli
-      '@versatly/workgraph-control-api':
-        specifier: workspace:*
-        version: link:packages/control-api
-      '@versatly/workgraph-kernel':
-        specifier: workspace:*
-        version: link:packages/kernel
-      '@versatly/workgraph-mcp-server':
-        specifier: workspace:*
-        version: link:packages/mcp-server
-      '@versatly/workgraph-obsidian-integration':
-        specifier: workspace:*
-        version: link:packages/obsidian-integration
-      '@versatly/workgraph-policy':
-        specifier: workspace:*
-        version: link:packages/policy
-      '@versatly/workgraph-runtime-adapter-core':
-        specifier: workspace:*
-        version: link:packages/runtime-adapter-core
-      '@versatly/workgraph-search-qmd-adapter':
-        specifier: workspace:*
-        version: link:packages/search-qmd-adapter
-      '@versatly/workgraph-skills':
-        specifier: workspace:*
-        version: link:packages/skills
       commander:
         specifier: ^12.0.0
         version: 12.1.0
@@ -122,6 +89,10 @@ importers:
       yaml:
         specifier: ^2.8.1
         version: 2.8.2
+    devDependencies:
+      '@versatly/workgraph-mcp-server':
+        specifier: workspace:*
+        version: link:../mcp-server
 
   packages/mcp-server:
     dependencies:

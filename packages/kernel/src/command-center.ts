@@ -2,8 +2,8 @@
  * Command center generator for human + agent operational visibility.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
 

@@ -1,6 +1,6 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
+import fs from './storage-fs.js';
 import type { DispatchRunAuditEvent, DispatchRunAuditEventKind } from './types.js';
 
 const RUN_AUDIT_FILE = '.workgraph/dispatch-run-audit.jsonl';

@@ -2,8 +2,8 @@
  * Obsidian Kanban board generation and sync helpers.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 import * as store from './store.js';
 import type { PrimitiveInstance } from './types.js';
 

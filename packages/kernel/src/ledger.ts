@@ -4,9 +4,10 @@
  * Format: one JSON object per line (.jsonl) in `.workgraph/ledger.jsonl`.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import fs from './storage-fs.js';
+import * as sync from './sync.js';
 import type {
   LedgerChainState,
   LedgerEntry,
@@ -69,6 +70,16 @@ export function append(
   fs.appendFileSync(lPath, JSON.stringify(entry) + '\n', 'utf-8');
   updateIndexWithEntry(workspacePath, entry);
   updateChainStateWithEntry(workspacePath, entry);
+  sync.recordSyncOperation(workspacePath, {
+    op: 'ledger.append',
+    target,
+    type,
+    data: {
+      actor,
+      ledgerOp: op,
+      entryTs: entry.ts,
+    },
+  });
   notifyAppendSubscribers(workspacePath, entry);
   return entry;
 }

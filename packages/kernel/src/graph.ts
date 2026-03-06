@@ -2,8 +2,8 @@
  * Wiki-link graph indexing and graph-intelligence queries.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 import matter from 'gray-matter';
 import { loadRegistry } from './registry.js';
 

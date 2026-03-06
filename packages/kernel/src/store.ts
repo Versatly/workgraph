@@ -2,9 +2,9 @@
  * Workgraph store — CRUD for primitive instances.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
+import fs from './storage-fs.js';
 import matter from 'gray-matter';
 import { loadRegistry, getType } from './registry.js';
 import * as ledger from './ledger.js';

@@ -27,9 +27,14 @@ describe('CLI compatibility smoke', () => {
 
   it('keeps existing JSON envelope and legacy command behaviors', () => {
     const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-cli-compat-'));
+    const importedWorkspacePath = `${workspacePath}-imported`;
+    const archivePath = path.join(os.tmpdir(), `wg-cli-export-${Date.now()}.tar.gz`);
     try {
       const init = runCli(['init', workspacePath, '--json']);
       expect(init.ok).toBe(true);
+
+      const envInfo = runCli(['env', '-w', workspacePath, '--json']);
+      expect(envInfo.ok).toBe(true);
 
       const create = runCli([
         'thread', 'create', 'Compatibility Thread',
@@ -263,7 +268,36 @@ describe('CLI compatibility smoke', () => {
         '--json',
       ]);
       expect(integrationInstall.ok).toBe(true);
+
+      const exported = runCli([
+        'export',
+        archivePath,
+        '-w', workspacePath,
+        '--json',
+      ]);
+      expect(exported.ok).toBe(true);
+      expect(fs.existsSync(archivePath)).toBe(true);
+
+      const imported = runCli([
+        'import',
+        archivePath,
+        '-w', importedWorkspacePath,
+        '--json',
+      ]);
+      expect(imported.ok).toBe(true);
+
+      const syncStatus = runCli([
+        'sync',
+        'status',
+        '-w', workspacePath,
+        '--json',
+      ]);
+      expect(syncStatus.ok).toBe(true);
     } finally {
+      if (fs.existsSync(archivePath)) {
+        fs.rmSync(archivePath, { force: true });
+      }
+      fs.rmSync(importedWorkspacePath, { recursive: true, force: true });
       fs.rmSync(workspacePath, { recursive: true, force: true });
     }
   });
@@ -303,5 +337,17 @@ describe('CLI compatibility smoke', () => {
     expect(planStepHelp.status).toBe(0);
     expect(planStepHelp.stdout).toContain('progress');
     expect(planStepHelp.stdout).toContain('block');
+
+    const envHelp = spawnSync('node', [path.resolve('bin/workgraph.js'), 'env', '--help'], {
+      encoding: 'utf-8',
+    });
+    expect(envHelp.status).toBe(0);
+    expect(envHelp.stdout).toContain('runtime mode');
+
+    const syncHelp = spawnSync('node', [path.resolve('bin/workgraph.js'), 'sync', '--help'], {
+      encoding: 'utf-8',
+    });
+    expect(syncHelp.status).toBe(0);
+    expect(syncHelp.stdout).toContain('status');
   });
 });

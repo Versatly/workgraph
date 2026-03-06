@@ -97,6 +97,105 @@ addWorkspaceOption(
   )
 );
 
+addWorkspaceOption(
+  program
+    .command('export <archivePath>')
+    .description('Export a portable workspace snapshot to a tar.gz archive')
+    .option('--json', 'Emit structured JSON output')
+).action((archivePath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.portability.exportWorkspace(workspacePath, archivePath);
+    },
+    (result) => [
+      `Exported workspace: ${result.workspacePath}`,
+      `Archive: ${result.archivePath}`,
+      `Entries: ${result.entryCount}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('import <archivePath>')
+    .description('Import a portable workspace snapshot from a tar.gz archive')
+    .option('--no-replace', 'Merge into existing workspace without deleting existing files')
+    .option('--json', 'Emit structured JSON output')
+).action((archivePath, opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      return workgraph.portability.importWorkspace(workspacePath, archivePath, {
+        replaceExisting: opts.replace,
+      });
+    },
+    (result) => [
+      `Imported workspace: ${result.workspacePath}`,
+      `Archive: ${result.archivePath}`,
+      `Entries: ${result.entryCount}`,
+    ],
+  )
+);
+
+addWorkspaceOption(
+  program
+    .command('env')
+    .description('Show current runtime mode and cloud feature flags')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const env = workgraph.environment.detectEnvironment(workspacePath);
+      return {
+        workspacePath,
+        ...env,
+      };
+    },
+    (result) => [
+      `Workspace: ${result.workspacePath}`,
+      `Mode: ${result.mode} (source: ${result.modeSource})`,
+      `Offline: ${result.offline ? 'yes' : 'no'}`,
+      `Feature flags: sseServer=${result.featureFlags.sseServer} webhooks=${result.featureFlags.webhooks}`,
+    ],
+  )
+);
+
+const syncCmd = program
+  .command('sync')
+  .description('Cloud sync queue status and replay visibility');
+
+addWorkspaceOption(
+  syncCmd
+    .command('status')
+    .description('Show pending offline operations awaiting cloud sync replay')
+    .option('--json', 'Emit structured JSON output')
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const workspacePath = resolveWorkspacePath(opts);
+      const status = workgraph.sync.getSyncStatus(workspacePath);
+      return {
+        workspacePath,
+        ...status,
+      };
+    },
+    (result) => [
+      `Workspace: ${result.workspacePath}`,
+      `Mode: ${result.mode}`,
+      `Offline: ${result.offline ? 'yes' : 'no'}`,
+      `Pending operations: ${result.pendingOperations}`,
+      `Queue: ${result.queuePath}`,
+      `Last synced: ${result.lastSyncedAt ?? 'never'}`,
+    ],
+  )
+);
+
 // ============================================================================
 // thread
 // ============================================================================
@@ -2320,6 +2419,7 @@ addWorkspaceOption(
     .option('-a, --actor <name>', 'Default actor for thread mutations'),
 ).action(async (opts) => {
   const workspacePath = resolveWorkspacePath(opts);
+  const envInfo = workgraph.environment.detectEnvironment(workspacePath);
   const serverConfig = workgraph.serverConfig.loadServerConfig(workspacePath);
   const port = opts.port !== undefined
     ? parsePortOption(opts.port)
@@ -2341,6 +2441,8 @@ addWorkspaceOption(
     endpointPath,
     bearerToken,
     defaultActor,
+    enableSseServer: envInfo.featureFlags.sseServer,
+    enableWebhooks: envInfo.featureFlags.webhooks,
   });
   console.log(`Server URL: ${handle.baseUrl}`);
   console.log(`MCP endpoint: ${handle.url}`);

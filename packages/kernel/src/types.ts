@@ -242,6 +242,16 @@ export interface WorkgraphWorkspaceConfig {
   mode: 'workgraph';
   createdAt: string;
   updatedAt: string;
+  storageMode?: 'local' | 'cloud';
+  cloud?: {
+    provider?: string;
+    endpoint?: string;
+    bucket?: string;
+  };
+  features?: {
+    sseServer?: boolean;
+    webhooks?: boolean;
+  };
 }
 
 // ---------------------------------------------------------------------------

@@ -2,8 +2,8 @@
  * Workgraph workspace lifecycle (agent-first, no memory scaffolding).
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 import { loadRegistry, saveRegistry, listTypes } from './registry.js';
 import { syncPrimitiveRegistryManifest, generateBasesFromPrimitiveRegistry } from './bases.js';
 import { refreshWikiLinkGraphIndex } from './graph.js';
@@ -52,6 +52,33 @@ export function workspaceConfigPath(workspacePath: string): string {
 
 export function isWorkgraphWorkspace(workspacePath: string): boolean {
   return fs.existsSync(workspaceConfigPath(workspacePath));
+}
+
+export function loadWorkspaceConfig(workspacePath: string): WorkgraphWorkspaceConfig | null {
+  const configPath = workspaceConfigPath(workspacePath);
+  if (!fs.existsSync(configPath)) return null;
+  try {
+    const parsed = JSON.parse(fs.readFileSync(configPath, 'utf-8')) as Partial<WorkgraphWorkspaceConfig>;
+    const now = new Date().toISOString();
+    return {
+      name: readNonEmptyString(parsed.name) ?? path.basename(workspacePath),
+      version: readNonEmptyString(parsed.version) ?? '1.0.0',
+      mode: 'workgraph',
+      createdAt: readNonEmptyString(parsed.createdAt) ?? now,
+      updatedAt: readNonEmptyString(parsed.updatedAt) ?? now,
+      ...(parsed.storageMode === 'local' || parsed.storageMode === 'cloud'
+        ? { storageMode: parsed.storageMode }
+        : {}),
+      ...(parsed.cloud && typeof parsed.cloud === 'object'
+        ? { cloud: parsed.cloud }
+        : {}),
+      ...(parsed.features && typeof parsed.features === 'object'
+        ? { features: parsed.features }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
 }
 
 export function initWorkspace(targetPath: string, options: InitWorkspaceOptions = {}): InitWorkspaceResult {
@@ -132,6 +159,15 @@ function ensureWorkspaceConfig(
         mode: 'workgraph',
         createdAt: readNonEmptyString(parsed.createdAt) ?? now,
         updatedAt: readNonEmptyString(parsed.updatedAt) ?? now,
+        ...(parsed.storageMode === 'local' || parsed.storageMode === 'cloud'
+          ? { storageMode: parsed.storageMode }
+          : {}),
+        ...(parsed.cloud && typeof parsed.cloud === 'object'
+          ? { cloud: parsed.cloud }
+          : {}),
+        ...(parsed.features && typeof parsed.features === 'object'
+          ? { features: parsed.features }
+          : {}),
       };
     } catch {
       // Fall through and rewrite a valid workspace config.
@@ -144,6 +180,7 @@ function ensureWorkspaceConfig(
     mode: 'workgraph',
     createdAt: now,
     updatedAt: now,
+    storageMode: 'local',
   };
   fs.writeFileSync(configPath, JSON.stringify(created, null, 2) + '\n', 'utf-8');
   return created;

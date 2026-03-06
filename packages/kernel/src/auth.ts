@@ -1,7 +1,7 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
+import fs from './storage-fs.js';
 import * as ledger from './ledger.js';
 import { loadServerConfig, type WorkgraphAuthMode } from './server-config.js';
 

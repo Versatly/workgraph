@@ -2,8 +2,8 @@
  * Skill primitive lifecycle.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
 import * as ledger from './ledger.js';

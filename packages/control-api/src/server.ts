@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import {
   auth as authModule,
+  environment as environmentModule,
   ledger as ledgerModule,
   orientation as orientationModule,
   store as storeModule,
@@ -34,6 +35,7 @@ import {
 
 const ledger = ledgerModule;
 const auth = authModule;
+const environment = environmentModule;
 const orientation = orientationModule;
 const store = storeModule;
 const thread = threadModule;
@@ -60,6 +62,8 @@ export interface WorkgraphServerOptions {
   defaultActor?: string;
   endpointPath?: string;
   sseKeepaliveMs?: number;
+  enableSseServer?: boolean;
+  enableWebhooks?: boolean;
 }
 
 type PrimitiveInstance = any;
@@ -118,11 +122,18 @@ export async function startWorkgraphServer(options: WorkgraphServerOptions): Pro
   const endpointPath = readNonEmptyString(options.endpointPath) ?? DEFAULT_ENDPOINT_PATH;
   const defaultActor = readNonEmptyString(options.defaultActor) ?? 'anonymous';
   const sseKeepaliveMs = normalizeSseKeepaliveMs(options.sseKeepaliveMs);
+  const envInfo = environment.detectEnvironment(workspacePath);
+  const enableSseServer = options.enableSseServer
+    ?? (envInfo.mode === 'cloud' ? envInfo.featureFlags.sseServer : true);
+  const enableWebhooks = options.enableWebhooks
+    ?? (envInfo.mode === 'cloud' ? envInfo.featureFlags.webhooks : true);
 
   const workspaceInitialized = ensureWorkspaceInitialized(workspacePath);
-  const unsubscribeWebhookDispatch = subscribeToDashboardEvents(workspacePath, (event) => {
-    void dispatchWebhookEvent(workspacePath, event);
-  });
+  const unsubscribeWebhookDispatch = enableWebhooks
+    ? subscribeToDashboardEvents(workspacePath, (event) => {
+      void dispatchWebhookEvent(workspacePath, event);
+    })
+    : () => {};
 
   let handle: WorkgraphMcpHttpServerHandle;
   try {
@@ -138,7 +149,10 @@ export async function startWorkgraphServer(options: WorkgraphServerOptions): Pro
         app.use('/api', (req: any, _res: any, next: () => void) => {
           auth.runWithAuthContext(buildRequestAuthContext(req), () => next());
         });
-        registerRestRoutes(app, workspacePath, defaultActor, sseKeepaliveMs);
+        registerRestRoutes(app, workspacePath, defaultActor, sseKeepaliveMs, {
+          sseServer: enableSseServer,
+          webhooks: enableWebhooks,
+        });
       },
     });
   } catch (error) {
@@ -235,6 +249,8 @@ export function loadServerOptionsFromEnv(env: NodeJS.ProcessEnv): WorkgraphServe
     sseKeepaliveMs: parseOptionalPositiveInt(env.WORKGRAPH_SSE_KEEPALIVE_MS, {
       max: 60_000,
     }),
+    enableSseServer: readOptionalBoolean(env.WORKGRAPH_FEATURE_SSE_SERVER),
+    enableWebhooks: readOptionalBoolean(env.WORKGRAPH_FEATURE_WEBHOOKS),
   };
 }
 
@@ -243,9 +259,20 @@ function registerRestRoutes(
   workspacePath: string,
   defaultActor: string,
   sseKeepaliveMs: number,
+  featureFlags: {
+    sseServer: boolean;
+    webhooks: boolean;
+  },
 ): void {
   app.get('/api/events', (req: any, res: any) => {
     try {
+      if (!featureFlags.sseServer) {
+        res.status(404).json({
+          ok: false,
+          error: 'SSE event stream is disabled for this deployment mode.',
+        });
+        return;
+      }
       const lastEventId = readNonEmptyString(req.headers?.['last-event-id'])
         ?? readNonEmptyString(req.query?.lastEventId);
       const filter = createDashboardEventFilter({
@@ -502,6 +529,13 @@ function registerRestRoutes(
 
   app.get('/api/webhooks', (_req: any, res: any) => {
     try {
+      if (!featureFlags.webhooks) {
+        res.status(404).json({
+          ok: false,
+          error: 'Webhooks are disabled for this deployment mode.',
+        });
+        return;
+      }
       const webhooks = listWebhooks(workspacePath);
       res.json({
         ok: true,
@@ -515,6 +549,13 @@ function registerRestRoutes(
 
   app.post('/api/webhooks', (req: any, res: any) => {
     try {
+      if (!featureFlags.webhooks) {
+        res.status(404).json({
+          ok: false,
+          error: 'Webhooks are disabled for this deployment mode.',
+        });
+        return;
+      }
       const payload = toRecord(req.body) as WebhookCreateRequestBody;
       const actor = resolveMutationActor(req, workspacePath, payload.actor, defaultActor);
       const url = readNonEmptyString(payload.url);
@@ -554,6 +595,13 @@ function registerRestRoutes(
 
   app.delete('/api/webhooks/:id', (req: any, res: any) => {
     try {
+      if (!featureFlags.webhooks) {
+        res.status(404).json({
+          ok: false,
+          error: 'Webhooks are disabled for this deployment mode.',
+        });
+        return;
+      }
       const actor = resolveMutationActor(req, workspacePath, undefined, defaultActor);
       const webhookId = readNonEmptyString(req.params?.id);
       if (!webhookId) {
@@ -763,6 +811,16 @@ function parseOptionalPort(value: unknown): number | undefined {
     throw new Error(`Invalid port "${String(raw)}". Expected 0..65535.`);
   }
   return parsed;
+}
+
+function readOptionalBoolean(value: unknown): boolean | undefined {
+  const raw = readFirstValue(value);
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (typeof raw === 'boolean') return raw;
+  const normalized = String(raw).trim().toLowerCase();
+  if (normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on') return true;
+  if (normalized === '0' || normalized === 'false' || normalized === 'no' || normalized === 'off') return false;
+  return undefined;
 }
 
 function normalizePort(value: number | undefined, fallback: number): number {

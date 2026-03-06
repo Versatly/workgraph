@@ -1,6 +1,6 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
+import fs from './storage-fs.js';
 
 const DAEMON_DIR = '.workgraph/daemon';
 const AUTONOMY_PID_FILE = 'autonomy.pid';

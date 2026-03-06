@@ -2,8 +2,8 @@
  * Deterministic context lenses for fast, runtime-agnostic orientation.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';
 import * as store from './store.js';

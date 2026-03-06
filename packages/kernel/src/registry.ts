@@ -2,8 +2,8 @@
  * Dynamic primitive type registry.
  */
 
-import fs from 'node:fs';
 import path from 'node:path';
+import fs from './storage-fs.js';
 import * as auth from './auth.js';
 import type { FieldDefinition, PrimitiveTypeDefinition, Registry } from './types.js';
 import * as ledger from './ledger.js';

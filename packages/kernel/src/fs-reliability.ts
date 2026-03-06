@@ -1,7 +1,7 @@
-import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { randomUUID } from 'node:crypto';
+import fs from './storage-fs.js';
 import { ConcurrencyError, StateCorruptionError } from './errors.js';
 
 const DEFAULT_STALE_LOCK_MS = 5 * 60_000;
