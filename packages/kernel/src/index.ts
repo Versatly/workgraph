@@ -43,6 +43,7 @@ export * as safety from './safety.js';
 export * as commandCenter from './command-center.js';
 export * as board from './board.js';
 export * as agent from './agent.js';
+export * as capability from './capability.js';
 export * as agentSelfAssembly from './agent-self-assembly.js';
 export * as intake from './intake.js';
 export * as onboard from './onboard.js';
