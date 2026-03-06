@@ -6,6 +6,7 @@ import { startWorkgraphServer, waitForShutdown } from '@versatly/workgraph-contr
 import { registerAutonomyCommands } from './cli/commands/autonomy.js';
 import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
+import { registerFederationCommands } from './cli/commands/federation.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
 import { registerTriggerCommands } from './cli/commands/trigger.js';
 import {
@@ -473,6 +474,8 @@ addWorkspaceOption(
     (result) => [`Created ${result.children.length} sub-thread(s).`]
   )
 );
+
+registerFederationCommands(program, threadCmd, DEFAULT_ACTOR);
 
 // ============================================================================
 // agent presence
@@ -1800,6 +1803,8 @@ addWorkspaceOption(
     .description('Keyword search across markdown body/frontmatter with optional QMD-compatible mode')
     .option('--type <type>', 'Limit to primitive type')
     .option('--mode <mode>', 'auto | core | qmd', 'auto')
+    .option('--federated', 'Search local + configured federated workspaces')
+    .option('--remote <ids>', 'Comma-separated remote workspace ids (only with --federated)')
     .option('--limit <n>', 'Result limit')
     .option('--json', 'Emit structured JSON output')
 ).action((text, opts) =>
@@ -1807,6 +1812,19 @@ addWorkspaceOption(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
+      if (opts.federated) {
+        const federated = workgraph.federation.searchFederated(workspacePath, text, {
+          type: opts.type,
+          limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+          remoteIds: csv(opts.remote),
+        });
+        return {
+          mode: 'federated' as const,
+          errors: federated.errors,
+          results: federated.results,
+          count: federated.results.length,
+        };
+      }
       const result = workgraph.searchQmdAdapter.search(workspacePath, text, {
         mode: opts.mode,
         type: opts.type,
@@ -1817,11 +1835,22 @@ addWorkspaceOption(
         count: result.results.length,
       };
     },
-    (result) => [
-      `Mode: ${result.mode}`,
-      ...(result.fallbackReason ? [`Note: ${result.fallbackReason}`] : []),
-      ...result.results.map((item) => `${item.type} ${item.path}`),
-    ],
+    (result) => {
+      if (result.mode === 'federated') {
+        return [
+          `Mode: ${result.mode}`,
+          ...(result.errors.length > 0
+            ? result.errors.map((entry) => `WARN ${entry.workspaceId}: ${entry.message}`)
+            : []),
+          ...result.results.map((item) => `${item.workspaceId}:${item.instance.type} ${item.instance.path}`),
+        ];
+      }
+      return [
+        `Mode: ${result.mode}`,
+        ...(result.fallbackReason ? [`Note: ${result.fallbackReason}`] : []),
+        ...result.results.map((item) => `${item.type} ${item.path}`),
+      ];
+    },
   )
 );
 

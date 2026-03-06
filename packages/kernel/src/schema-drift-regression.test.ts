@@ -5,7 +5,6 @@ import { spawnSync } from 'node:child_process';
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { createWorkgraphMcpServer } from '@versatly/workgraph-mcp-server';
 import { loadRegistry, saveRegistry } from './registry.js';
 import { ensureCliBuiltForTests } from '../../../tests/helpers/cli-build.js';
 
@@ -43,6 +42,7 @@ describe('schema drift regression', () => {
   });
 
   it('locks MCP tool metadata and input schemas', async () => {
+    const { createWorkgraphMcpServer } = await loadWorkgraphMcpServerModule();
     const server = createWorkgraphMcpServer({
       workspacePath,
       defaultActor: 'agent-schema',
@@ -77,6 +77,20 @@ describe('schema drift regression', () => {
     }
   });
 });
+
+interface WorkgraphMcpServerLike {
+  connect(transport: unknown): Promise<void>;
+  close(): Promise<void>;
+}
+
+interface WorkgraphMcpServerModule {
+  createWorkgraphMcpServer(input: { workspacePath: string; defaultActor: string }): WorkgraphMcpServerLike;
+}
+
+async function loadWorkgraphMcpServerModule(): Promise<WorkgraphMcpServerModule> {
+  const moduleUrl = new URL('../../mcp-server/src/index.js', import.meta.url);
+  return await import(moduleUrl.href) as WorkgraphMcpServerModule;
+}
 
 function runCliHelp(args: string[]): string {
   const result = spawnSync('node', [path.resolve('bin/workgraph.js'), ...args, '--help'], {
