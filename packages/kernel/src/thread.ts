@@ -12,10 +12,28 @@ import * as claimLease from './claim-lease.js';
 import * as triggerEngine from './trigger-engine.js';
 import * as gate from './gate.js';
 import { collectThreadEvidence, validateThreadEvidence } from './evidence.js';
-import type { PrimitiveInstance, ThreadDoneOptions, ThreadStatus } from './types.js';
+import type {
+  PrimitiveInstance,
+  ThreadDoneOptions,
+  ThreadParticipant,
+  ThreadParticipantRole,
+  ThreadStatus,
+} from './types.js';
 import { THREAD_STATUS_TRANSITIONS } from './types.js';
 
 const CLAIM_LOCK_STALE_MS = 5 * 60_000;
+const THREAD_PARTICIPANT_PERMISSIONS: Record<ThreadParticipantRole, ReadonlySet<ThreadParticipantPermission>> = {
+  owner: new Set(['participants:manage', 'thread:claim', 'thread:mutate', 'thread:complete']),
+  contributor: new Set(['thread:claim', 'thread:mutate', 'thread:complete']),
+  reviewer: new Set(['thread:claim', 'thread:complete']),
+  observer: new Set([]),
+};
+
+type ThreadParticipantPermission =
+  | 'participants:manage'
+  | 'thread:claim'
+  | 'thread:mutate'
+  | 'thread:complete';
 
 // ---------------------------------------------------------------------------
 // Thread creation
@@ -48,6 +66,7 @@ export function createThread(
   const inferredDeps = inferThreadDependenciesFromText(goal);
   const mergedDeps = uniqueThreadRefs([...(opts.deps ?? []), ...inferredDeps]);
   const tid = mintThreadId(title);
+  const participants = [createThreadParticipantRecord(actor, 'owner')];
 
   return store.create(workspacePath, 'thread', {
     tid,
@@ -59,6 +78,7 @@ export function createThread(
     parent: opts.parent,
     space: normalizedSpace,
     context_refs: mergedContextRefs,
+    participants,
     tags: opts.tags ?? [],
   }, `## Goal\n\n${goal}\n`, actor, {
     skipAuthorization: true,
@@ -74,6 +94,134 @@ export function mintThreadId(title: string): string {
     .replace(/^-+|-+$/g, '')
     .slice(0, 80);
   return normalized || 'thread';
+}
+
+export function listThreadParticipants(workspacePath: string, threadPath: string): ThreadParticipant[] {
+  const thread = store.read(workspacePath, threadPath);
+  if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  return normalizeThreadParticipants(thread.fields.participants);
+}
+
+export function joinThread(
+  workspacePath: string,
+  threadPath: string,
+  actor: string,
+  role: ThreadParticipantRole = 'contributor',
+): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.join', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
+  const thread = store.read(workspacePath, threadPath);
+  if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'join');
+  const normalizedRole = normalizeThreadParticipantRole(role);
+  if (normalizedRole === 'owner') {
+    throw new Error('Join cannot grant owner role. Use invite with an owner participant.');
+  }
+
+  const participants = normalizeThreadParticipants(thread.fields.participants);
+  const actorId = normalizeParticipantActor(actor);
+  if (!actorId) {
+    throw new Error('Join requires a non-empty actor.');
+  }
+  if (findThreadParticipant(participants, actorId)) {
+    return thread;
+  }
+
+  const nextParticipants = [...participants, createThreadParticipantRecord(actorId, normalizedRole, actor)];
+  return updateThreadParticipants(
+    workspacePath,
+    threadPath,
+    nextParticipants,
+    actor,
+    'thread.join.store',
+    ['thread:update', 'thread:manage'],
+  );
+}
+
+export function inviteThreadParticipant(
+  workspacePath: string,
+  threadPath: string,
+  actor: string,
+  participantActor: string,
+  role: ThreadParticipantRole = 'contributor',
+): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.invite', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
+  const thread = store.read(workspacePath, threadPath);
+  if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'invite');
+  assertThreadParticipantPermission(thread, actor, 'participants:manage');
+
+  const normalizedTarget = normalizeParticipantActor(participantActor);
+  if (!normalizedTarget) {
+    throw new Error('Invite requires a non-empty participant actor.');
+  }
+  const normalizedRole = normalizeThreadParticipantRole(role);
+  const participants = normalizeThreadParticipants(thread.fields.participants);
+  const existing = findThreadParticipant(participants, normalizedTarget);
+  const nextParticipants = existing
+    ? participants.map((entry) => entry.actor === normalizedTarget
+      ? {
+          ...entry,
+          role: normalizedRole,
+          invited_by: normalizeParticipantActor(actor),
+        }
+      : entry)
+    : [...participants, createThreadParticipantRecord(normalizedTarget, normalizedRole, actor)];
+  assertAtLeastOneOwner(nextParticipants);
+  return updateThreadParticipants(
+    workspacePath,
+    threadPath,
+    nextParticipants,
+    actor,
+    'thread.invite.store',
+    ['thread:update', 'thread:manage'],
+  );
+}
+
+export function leaveThread(
+  workspacePath: string,
+  threadPath: string,
+  actor: string,
+  participantActor?: string,
+): PrimitiveInstance {
+  assertThreadMutationAuthorized(workspacePath, actor, 'thread.leave', threadPath, [
+    'thread:update',
+    'thread:manage',
+  ]);
+  const thread = store.read(workspacePath, threadPath);
+  if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'leave');
+
+  const participants = normalizeThreadParticipants(thread.fields.participants);
+  const actorId = normalizeParticipantActor(actor);
+  const targetActor = normalizeParticipantActor(participantActor ?? actor);
+  if (!targetActor) {
+    throw new Error('Leave requires a non-empty actor.');
+  }
+  if (targetActor !== actorId) {
+    assertThreadParticipantPermission(thread, actor, 'participants:manage');
+  }
+  if (isThreadActivelyOwnedBy(thread, targetActor)) {
+    throw new Error(`Cannot remove "${targetActor}" while actively owning "${threadPath}". Release or handoff first.`);
+  }
+  const nextParticipants = participants.filter((entry) => entry.actor !== targetActor);
+  if (nextParticipants.length === participants.length) {
+    return thread;
+  }
+  assertAtLeastOneOwner(nextParticipants);
+  return updateThreadParticipants(
+    workspacePath,
+    threadPath,
+    nextParticipants,
+    actor,
+    'thread.leave.store',
+    ['thread:update', 'thread:manage'],
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -162,6 +310,7 @@ export function claim(
     const thread = store.read(workspacePath, threadPath);
     if (!thread) throw new Error(`Thread not found: ${threadPath}`);
     assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'claim');
+    assertThreadParticipantPermission(thread, actor, 'thread:claim', { allowImplicitJoinForClaim: true });
     const gateCheck = gate.checkThreadGates(workspacePath, threadPath);
     if (!gateCheck.allowed) {
       throw new Error(gate.summarizeGateFailures(gateCheck));
@@ -177,10 +326,24 @@ export function claim(
       throw new Error(`Thread already claimed by "${owner}". Wait for release or use a different thread.`);
     }
 
+    const participants = normalizeThreadParticipants(thread.fields.participants);
+    const participantEntry = findThreadParticipant(participants, actor);
+    const nextParticipants = participantEntry
+      ? participants
+      : [
+          ...participants,
+          createThreadParticipantRecord(
+            actor,
+            participants.length === 0 ? 'owner' : 'contributor',
+            actor,
+          ),
+        ];
+
     ledger.append(workspacePath, actor, 'claim', threadPath, 'thread');
     const claimed = store.update(workspacePath, threadPath, {
       status: 'active',
       owner: actor,
+      ...(nextParticipants.length !== participants.length ? { participants: nextParticipants } : {}),
     }, undefined, actor, {
       skipAuthorization: true,
       action: 'thread.claim.store',
@@ -206,6 +369,7 @@ export function release(
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'release');
+  assertThreadParticipantPermission(thread, actor, 'thread:mutate');
 
   assertOwner(workspacePath, threadPath, actor);
 
@@ -237,6 +401,7 @@ export function heartbeat(
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'heartbeat');
+  assertThreadParticipantPermission(thread, actor, 'thread:mutate');
   if (thread.fields.status !== 'active') {
     throw new Error(`Cannot heartbeat thread in "${String(thread.fields.status)}" state. Only active threads can be heartbeated.`);
   }
@@ -291,6 +456,7 @@ export function handoff(
   const existing = store.read(workspacePath, threadPath);
   if (!existing) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, existing, fromActor, 'handoff');
+  assertThreadParticipantPermission(existing, fromActor, 'thread:mutate');
   if (existing.fields.status !== 'active') {
     throw new Error(`Cannot handoff thread in "${String(existing.fields.status)}" state. Only active threads can be handed off.`);
   }
@@ -343,6 +509,7 @@ export function block(
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'block');
+  assertThreadParticipantPermission(thread, actor, 'thread:mutate');
 
   assertTransition(thread.fields.status as ThreadStatus, 'blocked');
 
@@ -379,6 +546,7 @@ export function unblock(
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'unblock');
+  assertThreadParticipantPermission(thread, actor, 'thread:mutate');
 
   assertTransition(thread.fields.status as ThreadStatus, 'active');
 
@@ -407,6 +575,7 @@ export function done(
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'done');
+  assertThreadParticipantPermission(thread, actor, 'thread:complete');
   const gateCheck = gate.checkThreadGates(workspacePath, threadPath);
   if (!gateCheck.allowed) {
     throw new Error(gate.summarizeGateFailures(gateCheck));
@@ -475,6 +644,7 @@ export function cancel(
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
   assertThreadNotTerminallyLocked(workspacePath, thread, actor, 'cancel');
+  assertThreadParticipantPermission(thread, actor, 'thread:mutate');
 
   assertTransition(thread.fields.status as ThreadStatus, 'cancelled');
 
@@ -505,6 +675,7 @@ export function reopen(
   ]);
   const thread = store.read(workspacePath, threadPath);
   if (!thread) throw new Error(`Thread not found: ${threadPath}`);
+  assertThreadParticipantPermission(thread, actor, 'thread:complete');
   const status = String(thread.fields.status ?? '') as ThreadStatus;
   if (status !== 'done' && status !== 'cancelled') {
     throw new Error(`Cannot reopen thread in "${status}" state. Only done/cancelled threads can be reopened.`);
@@ -565,6 +736,15 @@ export function heartbeatClaim(
     }
     if (String(thread.fields.owner ?? '') !== actor) {
       skipped.push({ threadPath: target, reason: `owned by ${String(thread.fields.owner ?? 'unknown')}` });
+      continue;
+    }
+    try {
+      assertThreadParticipantPermission(thread, actor, 'thread:mutate');
+    } catch (error) {
+      skipped.push({
+        threadPath: target,
+        reason: error instanceof Error ? error.message : 'participant permission denied',
+      });
       continue;
     }
 
@@ -759,6 +939,7 @@ export function decompose(
   ]);
   const parent = store.read(workspacePath, parentPath);
   if (!parent) throw new Error(`Thread not found: ${parentPath}`);
+  assertThreadParticipantPermission(parent, actor, 'thread:mutate');
 
   const created: PrimitiveInstance[] = [];
 
@@ -795,7 +976,18 @@ function assertThreadNotTerminallyLocked(
   workspacePath: string,
   thread: PrimitiveInstance,
   actor: string,
-  attemptedOp: 'claim' | 'release' | 'heartbeat' | 'handoff' | 'block' | 'unblock' | 'done' | 'cancel',
+  attemptedOp:
+    | 'claim'
+    | 'release'
+    | 'heartbeat'
+    | 'handoff'
+    | 'block'
+    | 'unblock'
+    | 'done'
+    | 'cancel'
+    | 'join'
+    | 'leave'
+    | 'invite',
 ): void {
   const status = String(thread.fields.status ?? '');
   const terminalLock = asBoolean(thread.fields.terminalLock, true);
@@ -808,6 +1000,167 @@ function assertThreadNotTerminallyLocked(
     locked_status: status,
   });
   throw new Error(reason);
+}
+
+function assertThreadParticipantPermission(
+  thread: PrimitiveInstance,
+  actor: string,
+  permission: ThreadParticipantPermission,
+  options: { allowImplicitJoinForClaim?: boolean } = {},
+): void {
+  const participants = normalizeThreadParticipants(thread.fields.participants);
+  if (participants.length === 0) return;
+  const actorId = normalizeParticipantActor(actor);
+  const participant = findThreadParticipant(participants, actorId);
+  if (!participant) {
+    if (permission === 'thread:claim' && options.allowImplicitJoinForClaim) return;
+    throw new Error(`Thread permission denied: "${actor}" is not a participant on ${thread.path}.`);
+  }
+  const allowed = THREAD_PARTICIPANT_PERMISSIONS[participant.role];
+  if (!allowed.has(permission)) {
+    throw new Error(
+      `Thread permission denied: role "${participant.role}" cannot perform "${renderParticipantPermission(permission)}".`,
+    );
+  }
+}
+
+function renderParticipantPermission(permission: ThreadParticipantPermission): string {
+  switch (permission) {
+    case 'participants:manage':
+      return 'participant management';
+    case 'thread:claim':
+      return 'thread claims';
+    case 'thread:mutate':
+      return 'thread lifecycle mutations';
+    case 'thread:complete':
+      return 'thread completion mutations';
+    default:
+      return permission;
+  }
+}
+
+function updateThreadParticipants(
+  workspacePath: string,
+  threadPath: string,
+  participants: ThreadParticipant[],
+  actor: string,
+  action: string,
+  requiredCapabilities: string[],
+): PrimitiveInstance {
+  const normalizedParticipants = normalizeThreadParticipants(participants);
+  return store.update(
+    workspacePath,
+    threadPath,
+    {
+      participants: normalizedParticipants,
+    },
+    undefined,
+    actor,
+    {
+      skipAuthorization: true,
+      action,
+      requiredCapabilities,
+    },
+  );
+}
+
+function createThreadParticipantRecord(
+  actor: string,
+  role: ThreadParticipantRole,
+  invitedBy?: string,
+): ThreadParticipant {
+  return {
+    actor: normalizeParticipantActor(actor),
+    role: normalizeThreadParticipantRole(role),
+    joined_at: new Date().toISOString(),
+    ...(normalizeParticipantActor(invitedBy) ? { invited_by: normalizeParticipantActor(invitedBy) } : {}),
+  };
+}
+
+function normalizeThreadParticipants(value: unknown): ThreadParticipant[] {
+  if (!Array.isArray(value)) return [];
+  const deduped = new Map<string, ThreadParticipant>();
+  for (const rawEntry of value) {
+    const entry = normalizeThreadParticipant(rawEntry);
+    if (!entry) continue;
+    deduped.set(entry.actor, entry);
+  }
+  return [...deduped.values()].sort((a, b) => a.actor.localeCompare(b.actor));
+}
+
+function normalizeThreadParticipant(value: unknown): ThreadParticipant | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const record = value as Partial<ThreadParticipant> & { joinedAt?: string; invitedBy?: string };
+  const actor = normalizeParticipantActor(record.actor);
+  if (!actor) return null;
+  let role: ThreadParticipantRole;
+  try {
+    role = normalizeThreadParticipantRole(record.role);
+  } catch {
+    return null;
+  }
+  const joinedAtCandidate = normalizeIso(record.joined_at) ?? normalizeIso(record.joinedAt);
+  const joinedAt = joinedAtCandidate ?? '1970-01-01T00:00:00.000Z';
+  const invitedBy = normalizeParticipantActor(record.invited_by ?? record.invitedBy);
+  return {
+    actor,
+    role,
+    joined_at: joinedAt,
+    ...(invitedBy ? { invited_by: invitedBy } : {}),
+  };
+}
+
+function normalizeThreadParticipantRole(value: unknown): ThreadParticipantRole {
+  const normalized = String(value ?? 'contributor').trim().toLowerCase();
+  if (
+    normalized === 'owner' ||
+    normalized === 'contributor' ||
+    normalized === 'reviewer' ||
+    normalized === 'observer'
+  ) {
+    return normalized;
+  }
+  throw new Error(
+    `Invalid thread participant role "${String(value ?? '')}". Expected owner|contributor|reviewer|observer.`,
+  );
+}
+
+function findThreadParticipant(
+  participants: ThreadParticipant[],
+  actor: string,
+): ThreadParticipant | undefined {
+  const actorId = normalizeParticipantActor(actor);
+  return participants.find((entry) => entry.actor === actorId);
+}
+
+function assertAtLeastOneOwner(participants: ThreadParticipant[]): void {
+  if (participants.length === 0) {
+    throw new Error('Thread participants must retain at least one owner.');
+  }
+  if (participants.some((participant) => participant.role === 'owner')) return;
+  throw new Error('Thread participants must retain at least one owner.');
+}
+
+function isThreadActivelyOwnedBy(thread: PrimitiveInstance, actor: string): boolean {
+  const owner = normalizeParticipantActor(thread.fields.owner);
+  const actorId = normalizeParticipantActor(actor);
+  const status = String(thread.fields.status ?? '');
+  return owner === actorId && (status === 'active' || status === 'blocked');
+}
+
+function normalizeParticipantActor(value: unknown): string {
+  return String(value ?? '')
+    .trim()
+    .toLowerCase();
+}
+
+function normalizeIso(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  if (!trimmed) return undefined;
+  const parsed = Date.parse(trimmed);
+  if (!Number.isFinite(parsed)) return undefined;
+  return new Date(parsed).toISOString();
 }
 
 function assertTransition(from: ThreadStatus, to: ThreadStatus): void {

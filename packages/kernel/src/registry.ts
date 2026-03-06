@@ -34,6 +34,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
         description: 'open | active | blocked | done | cancelled',
       },
       owner:       { type: 'string', description: 'Agent that claimed this thread' },
+      participants:{ type: 'list', default: [], description: 'Thread participants with roles (owner/contributor/reviewer/observer)' },
       priority:    {
         type: 'string',
         default: 'medium',

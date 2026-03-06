@@ -25,6 +25,7 @@ import {
   inferThreadDependenciesFromText,
   heartbeat,
   handoff,
+  joinThread,
   recoverThreadState,
 } from './thread.js';
 import { loadRegistry, saveRegistry } from './registry.js';
@@ -89,6 +90,7 @@ describe('thread lifecycle', () => {
   it('release by non-owner fails', () => {
     createThread(workspacePath, 'Owned', 'test', 'agent-a');
     claim(workspacePath, 'threads/owned.md', 'agent-b');
+    joinThread(workspacePath, 'threads/owned.md', 'agent-c');
 
     expect(() => release(workspacePath, 'threads/owned.md', 'agent-c'))
       .toThrow('owned by "agent-b"');
@@ -138,6 +140,7 @@ describe('thread lifecycle', () => {
   it('done by non-owner fails', () => {
     createThread(workspacePath, 'NotYours', 'test', 'agent-a');
     claim(workspacePath, 'threads/notyours.md', 'agent-a');
+    joinThread(workspacePath, 'threads/notyours.md', 'agent-b');
 
     expect(() => done(workspacePath, 'threads/notyours.md', 'agent-b'))
       .toThrow('owned by "agent-a"');
