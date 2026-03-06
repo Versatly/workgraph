@@ -25,6 +25,7 @@ import {
   inferThreadDependenciesFromText,
   heartbeat,
   handoff,
+  recoverThreadState,
 } from './thread.js';
 import { loadRegistry, saveRegistry } from './registry.js';
 import * as ledger from './ledger.js';
@@ -336,5 +337,21 @@ describe('thread scheduling helpers', () => {
     const claimed = claimNextReadyInSpace(workspacePath, 'agent-worker', 'spaces/backend');
     expect(claimed?.path).toBe('threads/backend-task.md');
     expect(claimed?.fields.owner).toBe('agent-worker');
+  });
+
+  it('repairs broken thread references and stale claim state', () => {
+    createThread(workspacePath, 'Parent thread', 'parent goal', 'agent-a');
+    createThread(workspacePath, 'Child thread', 'child goal', 'agent-a', {
+      parent: 'threads/parent-thread.md',
+      deps: ['threads/missing-dependency.md'],
+    });
+    claim(workspacePath, 'threads/child-thread.md', 'agent-a', { leaseTtlMinutes: 0 });
+
+    const report = recoverThreadState(workspacePath, 'agent-maintainer', { staleClaimLimit: 20 });
+    const recovered = store.read(workspacePath, 'threads/child-thread.md');
+    expect(report.brokenReferences.some((entry) => entry.threadPath === 'threads/child-thread.md')).toBe(true);
+    expect(recovered?.fields.deps).toEqual([]);
+    expect(['open', 'active', 'blocked']).toContain(String(recovered?.fields.status));
+    expect(report.leaseState.inspected).toBeGreaterThanOrEqual(0);
   });
 });

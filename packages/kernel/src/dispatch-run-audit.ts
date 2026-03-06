@@ -45,10 +45,15 @@ export function listDispatchRunAuditEvents(
 ): DispatchRunAuditEvent[] {
   const filePath = runAuditPath(workspacePath);
   if (!fs.existsSync(filePath)) return [];
-  const lines = fs.readFileSync(filePath, 'utf-8')
-    .split('\n')
-    .map((entry) => entry.trim())
-    .filter(Boolean);
+  let lines: string[] = [];
+  try {
+    lines = fs.readFileSync(filePath, 'utf-8')
+      .split('\n')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
   const parsed: DispatchRunAuditEvent[] = [];
   for (const line of lines) {
     try {

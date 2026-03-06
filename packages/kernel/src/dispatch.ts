@@ -19,6 +19,20 @@ import {
   collectDispatchExecutionEvidence,
 } from './dispatch-run-evidence.js';
 import { resolveDispatchAdapter } from './runtime-adapter-registry.js';
+import {
+  ConflictError,
+  InputValidationError,
+  ResourceNotFoundError,
+  asWorkgraphError,
+} from './errors.js';
+import { atomicWriteFile, withFileLock } from './fs-reliability.js';
+import {
+  validateActorName,
+  validateIdempotencyKey,
+  validateObjective,
+  validateRunId,
+  validateWorkspacePath,
+} from './validation.js';
 import type { DispatchAdapterLogEntry } from './runtime-adapter-contracts.js';
 import type {
   DispatchRun,
@@ -31,6 +45,7 @@ import type {
 const RUNS_FILE = '.workgraph/dispatch-runs.json';
 const DEFAULT_LEASE_MINUTES = 30;
 const DEFAULT_EXECUTE_TIMEOUT_MS = 10 * 60_000;
+const RUNS_LOCK_SCOPE = 'dispatch-runs-state';
 
 export interface DispatchCreateInput {
   actor: string;
@@ -98,129 +113,393 @@ export interface DispatchRetryInput {
   selfAssemblyOptions?: Record<string, unknown>;
 }
 
+export interface DispatchStateRecoveryResult {
+  repairedAt: string;
+  scannedRuns: number;
+  repairedRuns: DispatchRun[];
+  removedCorruptRuns: number;
+  warnings: string[];
+}
+
+function withDispatchOperation<T>(
+  operation: string,
+  context: {
+    workspacePath?: string;
+    runId?: string;
+    actor?: string;
+    threadPath?: string;
+  },
+  fn: () => T,
+): T {
+  try {
+    return fn();
+  } catch (error) {
+    throw asWorkgraphError(error, `Dispatch operation failed: ${operation}`, {
+      operation,
+      workspacePath: context.workspacePath,
+      runId: context.runId,
+      actor: context.actor,
+      threadPath: context.threadPath,
+    });
+  }
+}
+
+async function withDispatchOperationAsync<T>(
+  operation: string,
+  context: {
+    workspacePath?: string;
+    runId?: string;
+    actor?: string;
+    threadPath?: string;
+  },
+  fn: () => Promise<T>,
+): Promise<T> {
+  try {
+    return await fn();
+  } catch (error) {
+    throw asWorkgraphError(error, `Dispatch operation failed: ${operation}`, {
+      operation,
+      workspacePath: context.workspacePath,
+      runId: context.runId,
+      actor: context.actor,
+      threadPath: context.threadPath,
+    });
+  }
+}
+
+function withRunsMutation<T>(workspacePath: string, fn: (state: { version: number; runs: DispatchRun[] }) => T): T {
+  return withFileLock(workspacePath, RUNS_LOCK_SCOPE, () => {
+    const state = loadRuns(workspacePath);
+    const result = fn(state);
+    saveRuns(workspacePath, state);
+    return result;
+  });
+}
+
+function appendDispatchRunAuditEventSafe(
+  workspacePath: string,
+  payload: Parameters<typeof appendDispatchRunAuditEvent>[1],
+  options: {
+    runId?: string;
+    actor?: string;
+    operation?: string;
+  } = {},
+): void {
+  try {
+    appendDispatchRunAuditEvent(workspacePath, payload);
+  } catch (error) {
+    logDispatchWarning(
+      `Audit event append failed${options.operation ? ` during ${options.operation}` : ''}.`,
+      error,
+      {
+        runId: options.runId ?? payload.runId,
+        actor: options.actor ?? payload.actor,
+      },
+    );
+  }
+}
+
+function appendLedgerEventSafe(
+  workspacePath: string,
+  actor: string,
+  op: 'create' | 'update' | 'handoff',
+  target: string,
+  type: string,
+  data?: Record<string, unknown>,
+): void {
+  try {
+    ledger.append(workspacePath, actor, op, target, type, data);
+  } catch (error) {
+    logDispatchWarning('Ledger append failed for non-critical dispatch telemetry.', error, {
+      actor,
+      runId: target.replace('.workgraph/runs/', ''),
+    });
+  }
+}
+
+function ensureRunPrimitiveSafe(workspacePath: string, run: DispatchRun, actor: string): void {
+  try {
+    ensureRunPrimitive(workspacePath, run, actor);
+  } catch (error) {
+    logDispatchWarning('Run primitive creation failed; continuing dispatch operation.', error, {
+      runId: run.id,
+      actor,
+    });
+  }
+}
+
+function syncRunPrimitiveSafe(workspacePath: string, run: DispatchRun, actor: string): void {
+  try {
+    syncRunPrimitive(workspacePath, run, actor);
+  } catch (error) {
+    logDispatchWarning('Run primitive sync failed; continuing dispatch operation.', error, {
+      runId: run.id,
+      actor,
+    });
+  }
+}
+
+function validatedWorkspacePath(workspacePath: string, operation: string): string {
+  return validateWorkspacePath(workspacePath, { workspacePath, operation });
+}
+
 export function createRun(workspacePath: string, input: DispatchCreateInput): DispatchRun {
-  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.create', '.workgraph/dispatch-runs', [
-    'dispatch:run',
-  ]);
-  const state = loadRuns(workspacePath);
-  if (input.idempotencyKey) {
-    const existing = state.runs.find((run) => run.idempotencyKey === input.idempotencyKey);
-    if (existing) {
-      appendDispatchRunAuditEvent(workspacePath, {
-        runId: existing.id,
-        actor: input.actor,
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.create');
+  const safeActor = validateActorName(input.actor, {
+    workspacePath: safeWorkspacePath,
+    actor: input.actor,
+    operation: 'dispatch.run.create',
+  });
+  const safeObjective = validateObjective(input.objective, {
+    workspacePath: safeWorkspacePath,
+    actor: safeActor,
+    operation: 'dispatch.run.create',
+  });
+  const safeIdempotencyKey = validateIdempotencyKey(input.idempotencyKey, {
+    workspacePath: safeWorkspacePath,
+    actor: safeActor,
+    operation: 'dispatch.run.create',
+  });
+  return withDispatchOperation('dispatch.run.create', {
+    workspacePath: safeWorkspacePath,
+    actor: safeActor,
+  }, () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.create', '.workgraph/dispatch-runs', [
+      'dispatch:run',
+    ]);
+    const result = withRunsMutation(safeWorkspacePath, (state) => {
+      if (safeIdempotencyKey) {
+        const existing = state.runs.find((run) => run.idempotencyKey === safeIdempotencyKey);
+        if (existing) {
+          return {
+            run: existing,
+            idempotencyHit: true,
+          };
+        }
+      }
+      const now = new Date().toISOString();
+      const run: DispatchRun = {
+        id: `run_${randomUUID()}`,
+        createdAt: now,
+        updatedAt: now,
+        actor: safeActor,
+        adapter: input.adapter ?? 'cursor-cloud',
+        objective: safeObjective,
+        status: 'queued',
+        leaseDurationMinutes: DEFAULT_LEASE_MINUTES,
+        heartbeats: [],
+        idempotencyKey: safeIdempotencyKey,
+        context: input.context,
+        followups: [],
+        logs: [
+          { ts: now, level: 'info', message: `Run created for objective: ${safeObjective}` },
+        ],
+      };
+      state.runs.push(run);
+      return {
+        run,
+        idempotencyHit: false,
+      };
+    });
+
+    if (result.idempotencyHit) {
+      appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+        runId: result.run.id,
+        actor: safeActor,
         kind: 'run-idempotency-hit',
         data: {
-          idempotency_key: input.idempotencyKey,
+          idempotency_key: safeIdempotencyKey,
         },
+      }, {
+        runId: result.run.id,
+        actor: safeActor,
+        operation: 'dispatch.run.create.idempotency',
       });
-      return hydrateRunWithRuntimeMetadata(workspacePath, existing);
+      return hydrateRunWithRuntimeMetadata(safeWorkspacePath, result.run);
     }
-  }
 
-  const now = new Date().toISOString();
-  const run: DispatchRun = {
-    id: `run_${randomUUID()}`,
-    createdAt: now,
-    updatedAt: now,
-    actor: input.actor,
-    adapter: input.adapter ?? 'cursor-cloud',
-    objective: input.objective,
-    status: 'queued',
-    leaseDurationMinutes: DEFAULT_LEASE_MINUTES,
-    heartbeats: [],
-    idempotencyKey: input.idempotencyKey,
-    context: input.context,
-    followups: [],
-    logs: [
-      { ts: now, level: 'info', message: `Run created for objective: ${input.objective}` },
-    ],
-  };
-
-  state.runs.push(run);
-  saveRuns(workspacePath, state);
-  appendDispatchRunAuditEvent(workspacePath, {
-    runId: run.id,
-    actor: input.actor,
-    kind: 'run-created',
-    data: {
-      adapter: run.adapter,
-      objective: run.objective,
-      status: run.status,
-      idempotency_key: run.idempotencyKey,
-    },
+    appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+      runId: result.run.id,
+      actor: safeActor,
+      kind: 'run-created',
+      data: {
+        adapter: result.run.adapter,
+        objective: result.run.objective,
+        status: result.run.status,
+        idempotency_key: result.run.idempotencyKey,
+      },
+    }, {
+      runId: result.run.id,
+      actor: safeActor,
+      operation: 'dispatch.run.create',
+    });
+    appendLedgerEventSafe(safeWorkspacePath, safeActor, 'create', `.workgraph/runs/${result.run.id}`, 'run', {
+      adapter: result.run.adapter,
+      objective: result.run.objective,
+      status: result.run.status,
+    });
+    ensureRunPrimitiveSafe(safeWorkspacePath, result.run, safeActor);
+    return hydrateRunWithRuntimeMetadata(safeWorkspacePath, result.run);
   });
-  ledger.append(workspacePath, input.actor, 'create', `.workgraph/runs/${run.id}`, 'run', {
-    adapter: run.adapter,
-    objective: run.objective,
-    status: run.status,
-  });
-
-  ensureRunPrimitive(workspacePath, run, input.actor);
-  return hydrateRunWithRuntimeMetadata(workspacePath, run);
 }
 
 export function claimThread(workspacePath: string, threadRef: string, actor: string): DispatchClaimResult {
-  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.thread.claim', threadRef, [
-    'thread:claim',
-    'thread:manage',
-  ]);
-  const threadPath = resolveThreadRef(threadRef);
-  const gateCheck = gate.checkThreadGates(workspacePath, threadPath);
-  if (!gateCheck.allowed) {
-    throw new Error(gate.summarizeGateFailures(gateCheck));
-  }
-  const claimedThread = thread.claim(workspacePath, threadPath, actor);
-  return {
-    thread: claimedThread,
-    gateCheck,
-  };
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.thread.claim');
+  const safeActor = validateActorName(actor, {
+    workspacePath: safeWorkspacePath,
+    actor,
+    operation: 'dispatch.thread.claim',
+  });
+  return withDispatchOperation('dispatch.thread.claim', {
+    workspacePath: safeWorkspacePath,
+    actor: safeActor,
+  }, () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.thread.claim', threadRef, [
+      'thread:claim',
+      'thread:manage',
+    ]);
+    const threadPath = resolveThreadRef(threadRef);
+    const gateCheck = gate.checkThreadGates(safeWorkspacePath, threadPath);
+    if (!gateCheck.allowed) {
+      throw new ConflictError(gate.summarizeGateFailures(gateCheck), {
+        workspacePath: safeWorkspacePath,
+        threadPath,
+        actor: safeActor,
+        operation: 'dispatch.thread.claim',
+      });
+    }
+    const claimedThread = thread.claim(safeWorkspacePath, threadPath, safeActor);
+    return {
+      thread: claimedThread,
+      gateCheck,
+    };
+  });
 }
 
 export function status(workspacePath: string, runId: string): DispatchRun {
-  const run = getRun(workspacePath, runId);
-  if (!run) throw new Error(`Run not found: ${runId}`);
-  return hydrateRunWithRuntimeMetadata(workspacePath, run);
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.status');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
+    runId,
+    operation: 'dispatch.run.status',
+  });
+  return withDispatchOperation('dispatch.run.status', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+  }, () => {
+    const run = getRun(safeWorkspacePath, safeRunId);
+    if (!run) {
+      throw new ResourceNotFoundError(`Run not found: ${safeRunId}`, {
+        workspacePath: safeWorkspacePath,
+        runId: safeRunId,
+        operation: 'dispatch.run.status',
+      });
+    }
+    return hydrateRunWithRuntimeMetadata(safeWorkspacePath, run);
+  });
 }
 
 export function followup(workspacePath: string, runId: string, actor: string, input: string): DispatchRun {
-  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.run.followup', runId, [
-    'dispatch:run',
-  ]);
-  const state = loadRuns(workspacePath);
-  const run = state.runs.find((entry) => entry.id === runId);
-  if (!run) throw new Error(`Run not found: ${runId}`);
-  if (!['queued', 'running'].includes(run.status)) {
-    throw new Error(`Cannot send follow-up to run ${runId} in terminal status "${run.status}".`);
-  }
-  const now = new Date().toISOString();
-  run.followups.push({ ts: now, actor, input });
-  run.updatedAt = now;
-  run.logs.push({
-    ts: now,
-    level: 'info',
-    message: `Follow-up from ${actor}: ${input}`,
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.followup');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
+    runId,
+    operation: 'dispatch.run.followup',
   });
-  saveRuns(workspacePath, state);
-  appendDispatchRunAuditEvent(workspacePath, {
-    runId: run.id,
+  const safeActor = validateActorName(actor, {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
     actor,
-    kind: 'run-followup',
-    data: {
-      input,
+    operation: 'dispatch.run.followup',
+  });
+  const safeInput = String(input ?? '').trim();
+  if (!safeInput) {
+    throw new InputValidationError('Follow-up input must be a non-empty string.', {
+      workspacePath: safeWorkspacePath,
+      runId: safeRunId,
+      actor: safeActor,
+      operation: 'dispatch.run.followup',
+    });
+  }
+  return withDispatchOperation('dispatch.run.followup', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor: safeActor,
+  }, () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.followup', safeRunId, [
+      'dispatch:run',
+    ]);
+    const run = withRunsMutation(safeWorkspacePath, (state) => {
+      const target = state.runs.find((entry) => entry.id === safeRunId);
+      if (!target) {
+        throw new ResourceNotFoundError(`Run not found: ${safeRunId}`, {
+          workspacePath: safeWorkspacePath,
+          runId: safeRunId,
+          actor: safeActor,
+          operation: 'dispatch.run.followup',
+        });
+      }
+      if (!['queued', 'running'].includes(target.status)) {
+        throw new ConflictError(
+          `Cannot send follow-up to run ${safeRunId} in terminal status "${target.status}".`,
+          {
+            workspacePath: safeWorkspacePath,
+            runId: safeRunId,
+            actor: safeActor,
+            operation: 'dispatch.run.followup',
+          },
+        );
+      }
+      const now = new Date().toISOString();
+      target.followups.push({ ts: now, actor: safeActor, input: safeInput });
+      target.updatedAt = now;
+      target.logs.push({
+        ts: now,
+        level: 'info',
+        message: `Follow-up from ${safeActor}: ${safeInput}`,
+      });
+      return target;
+    });
+    appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+      runId: run.id,
+      actor: safeActor,
+      kind: 'run-followup',
+      data: {
+        input: safeInput,
+        status: run.status,
+      },
+    }, {
+      runId: run.id,
+      actor: safeActor,
+      operation: 'dispatch.run.followup',
+    });
+    appendLedgerEventSafe(safeWorkspacePath, safeActor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+      followup: true,
       status: run.status,
-    },
+    });
+    syncRunPrimitiveSafe(safeWorkspacePath, run, safeActor);
+    return hydrateRunWithRuntimeMetadata(safeWorkspacePath, run);
   });
-  ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
-    followup: true,
-    status: run.status,
-  });
-  syncRunPrimitive(workspacePath, run, actor);
-  return hydrateRunWithRuntimeMetadata(workspacePath, run);
 }
 
 export function stop(workspacePath: string, runId: string, actor: string): DispatchRun {
-  return setStatus(workspacePath, runId, actor, 'cancelled', 'Run cancelled by operator.');
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.stop');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
+    runId,
+    operation: 'dispatch.run.stop',
+  });
+  const safeActor = validateActorName(actor, {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor,
+    operation: 'dispatch.run.stop',
+  });
+  return withDispatchOperation('dispatch.run.stop', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor: safeActor,
+  }, () => setStatus(safeWorkspacePath, safeRunId, safeActor, 'cancelled', 'Run cancelled by operator.'));
 }
 
 export function markRun(
@@ -230,40 +509,64 @@ export function markRun(
   nextStatus: Exclude<RunStatus, 'queued'>,
   options: { output?: string; error?: string; contextPatch?: Record<string, unknown> } = {},
 ): DispatchRun {
-  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.run.mark', runId, [
-    'dispatch:run',
-  ]);
-  const run = setStatus(workspacePath, runId, actor, nextStatus, `Run moved to ${nextStatus}.`);
-  if (options.output) run.output = options.output;
-  if (options.error) run.error = options.error;
-  if (options.contextPatch && Object.keys(options.contextPatch).length > 0) {
-    run.context = {
-      ...(run.context ?? {}),
-      ...options.contextPatch,
-    };
-  }
-  const state = loadRuns(workspacePath);
-  const target = state.runs.find((entry) => entry.id === runId);
-  if (target) {
-    target.output = run.output;
-    target.error = run.error;
-    target.context = run.context;
-    target.updatedAt = new Date().toISOString();
-    saveRuns(workspacePath, state);
-    appendDispatchRunAuditEvent(workspacePath, {
-      runId: target.id,
-      actor,
-      kind: 'run-marked',
-      data: {
-        status: target.status,
-        has_output: Boolean(target.output),
-        has_error: Boolean(target.error),
-        context_keys: Object.keys(target.context ?? {}),
-      },
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.mark');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
+    runId,
+    operation: 'dispatch.run.mark',
+  });
+  const safeActor = validateActorName(actor, {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor,
+    operation: 'dispatch.run.mark',
+  });
+  return withDispatchOperation('dispatch.run.mark', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor: safeActor,
+  }, () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.mark', safeRunId, [
+      'dispatch:run',
+    ]);
+    const run = setStatus(safeWorkspacePath, safeRunId, safeActor, nextStatus, `Run moved to ${nextStatus}.`);
+    if (options.output) run.output = options.output;
+    if (options.error) run.error = options.error;
+    if (options.contextPatch && Object.keys(options.contextPatch).length > 0) {
+      run.context = {
+        ...(run.context ?? {}),
+        ...options.contextPatch,
+      };
+    }
+    const target = withRunsMutation(safeWorkspacePath, (state) => {
+      const entry = state.runs.find((candidate) => candidate.id === safeRunId);
+      if (!entry) return null;
+      entry.output = run.output;
+      entry.error = run.error;
+      entry.context = run.context;
+      entry.updatedAt = new Date().toISOString();
+      return entry;
     });
-    syncRunPrimitive(workspacePath, target, actor);
-  }
-  return hydrateRunWithRuntimeMetadata(workspacePath, target ?? run);
+    if (target) {
+      appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+        runId: target.id,
+        actor: safeActor,
+        kind: 'run-marked',
+        data: {
+          status: target.status,
+          has_output: Boolean(target.output),
+          has_error: Boolean(target.error),
+          context_keys: Object.keys(target.context ?? {}),
+        },
+      }, {
+        runId: target.id,
+        actor: safeActor,
+        operation: 'dispatch.run.mark',
+      });
+      syncRunPrimitiveSafe(safeWorkspacePath, target, safeActor);
+    }
+    return hydrateRunWithRuntimeMetadata(safeWorkspacePath, target ?? run);
+  });
 }
 
 export function heartbeat(
@@ -271,101 +574,149 @@ export function heartbeat(
   runId: string,
   input: DispatchHeartbeatInput,
 ): DispatchRun {
-  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.heartbeat', runId, [
-    'dispatch:run',
-  ]);
-  const state = loadRuns(workspacePath);
-  const run = state.runs.find((entry) => entry.id === runId);
-  if (!run) throw new Error(`Run not found: ${runId}`);
-  if (run.status !== 'running') {
-    throw new Error(`Cannot heartbeat run ${runId} in "${run.status}" state. Only running runs may heartbeat.`);
-  }
-
-  const now = new Date().toISOString();
-  run.heartbeats = [...(run.heartbeats ?? []), now];
-  applyLease(run, now, input.leaseMinutes);
-  run.updatedAt = now;
-  run.logs.push({
-    ts: now,
-    level: 'info',
-    message: `Lease heartbeat from ${input.actor}. Extended until ${run.leaseExpires}.`,
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.heartbeat');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
+    runId,
+    operation: 'dispatch.run.heartbeat',
   });
-
-  saveRuns(workspacePath, state);
-  appendDispatchRunAuditEvent(workspacePath, {
-    runId: run.id,
+  const safeActor = validateActorName(input.actor, {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
     actor: input.actor,
-    kind: 'run-heartbeat',
-    data: {
+    operation: 'dispatch.run.heartbeat',
+  });
+  return withDispatchOperation('dispatch.run.heartbeat', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor: safeActor,
+  }, () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.heartbeat', safeRunId, [
+      'dispatch:run',
+    ]);
+    const run = withRunsMutation(safeWorkspacePath, (state) => {
+      const target = state.runs.find((entry) => entry.id === safeRunId);
+      if (!target) {
+        throw new ResourceNotFoundError(`Run not found: ${safeRunId}`, {
+          workspacePath: safeWorkspacePath,
+          runId: safeRunId,
+          actor: safeActor,
+          operation: 'dispatch.run.heartbeat',
+        });
+      }
+      if (target.status !== 'running') {
+        throw new ConflictError(
+          `Cannot heartbeat run ${safeRunId} in "${target.status}" state. Only running runs may heartbeat.`,
+          {
+            workspacePath: safeWorkspacePath,
+            runId: safeRunId,
+            actor: safeActor,
+            operation: 'dispatch.run.heartbeat',
+          },
+        );
+      }
+
+      const now = new Date().toISOString();
+      target.heartbeats = [...(target.heartbeats ?? []), now];
+      applyLease(target, now, input.leaseMinutes);
+      target.updatedAt = now;
+      target.logs.push({
+        ts: now,
+        level: 'info',
+        message: `Lease heartbeat from ${safeActor}. Extended until ${target.leaseExpires}.`,
+      });
+      return target;
+    });
+    appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+      runId: run.id,
+      actor: safeActor,
+      kind: 'run-heartbeat',
+      data: {
+        lease_expires: run.leaseExpires,
+        lease_duration_minutes: run.leaseDurationMinutes,
+        heartbeat_count: run.heartbeats?.length ?? 0,
+      },
+    }, {
+      runId: run.id,
+      actor: safeActor,
+      operation: 'dispatch.run.heartbeat',
+    });
+    appendLedgerEventSafe(safeWorkspacePath, safeActor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+      heartbeat: true,
       lease_expires: run.leaseExpires,
-      lease_duration_minutes: run.leaseDurationMinutes,
-      heartbeat_count: run.heartbeats?.length ?? 0,
-    },
+    });
+    syncRunPrimitiveSafe(safeWorkspacePath, run, safeActor);
+    return hydrateRunWithRuntimeMetadata(safeWorkspacePath, run);
   });
-  ledger.append(workspacePath, input.actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
-    heartbeat: true,
-    lease_expires: run.leaseExpires,
-  });
-  syncRunPrimitive(workspacePath, run, input.actor);
-  return hydrateRunWithRuntimeMetadata(workspacePath, run);
 }
 
 export function reconcileExpiredLeases(
   workspacePath: string,
   actor: string,
 ): DispatchReconcileResult {
-  assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.run.reconcile', '.workgraph/dispatch-runs', [
-    'dispatch:run',
-    'policy:manage',
-  ]);
-  const state = loadRuns(workspacePath);
-  const nowMs = Date.now();
-  const nowIso = new Date(nowMs).toISOString();
-  const requeuedRuns: DispatchRun[] = [];
-
-  for (const run of state.runs) {
-    if (run.status !== 'running') continue;
-    if (!run.leaseExpires) continue;
-    const leaseExpiresMs = Date.parse(run.leaseExpires);
-    if (!Number.isFinite(leaseExpiresMs) || leaseExpiresMs > nowMs) continue;
-
-    run.status = 'queued';
-    run.updatedAt = nowIso;
-    run.logs.push({
-      ts: nowIso,
-      level: 'warn',
-      message: `Lease expired at ${run.leaseExpires}. Run returned to queued.`,
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.reconcile');
+  const safeActor = validateActorName(actor, {
+    workspacePath: safeWorkspacePath,
+    actor,
+    operation: 'dispatch.run.reconcile',
+  });
+  return withDispatchOperation('dispatch.run.reconcile', {
+    workspacePath: safeWorkspacePath,
+    actor: safeActor,
+  }, () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.reconcile', '.workgraph/dispatch-runs', [
+      'dispatch:run',
+      'policy:manage',
+    ]);
+    const nowMs = Date.now();
+    const nowIso = new Date(nowMs).toISOString();
+    const requeuedRuns = withRunsMutation(safeWorkspacePath, (state) => {
+      const requeued: DispatchRun[] = [];
+      for (const run of state.runs) {
+        if (run.status !== 'running') continue;
+        if (!run.leaseExpires) continue;
+        const leaseExpiresMs = Date.parse(run.leaseExpires);
+        if (!Number.isFinite(leaseExpiresMs) || leaseExpiresMs > nowMs) continue;
+        run.status = 'queued';
+        run.updatedAt = nowIso;
+        run.logs.push({
+          ts: nowIso,
+          level: 'warn',
+          message: `Lease expired at ${run.leaseExpires}. Run returned to queued.`,
+        });
+        clearLease(run);
+        requeued.push(run);
+      }
+      return requeued;
     });
-    clearLease(run);
-    requeuedRuns.push(run);
-  }
-
-  if (requeuedRuns.length > 0) {
-    saveRuns(workspacePath, state);
     for (const run of requeuedRuns) {
-      appendDispatchRunAuditEvent(workspacePath, {
+      appendDispatchRunAuditEventSafe(safeWorkspacePath, {
         runId: run.id,
-        actor,
+        actor: safeActor,
         kind: 'run-status-changed',
         data: {
           from_status: 'running',
           to_status: 'queued',
           reason: 'lease-expired',
         },
+      }, {
+        runId: run.id,
+        actor: safeActor,
+        operation: 'dispatch.run.reconcile',
       });
-      ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+      appendLedgerEventSafe(safeWorkspacePath, safeActor, 'update', `.workgraph/runs/${run.id}`, 'run', {
         status: run.status,
         reconciled_expired_lease: true,
       });
-      syncRunPrimitive(workspacePath, run, actor);
+      syncRunPrimitiveSafe(safeWorkspacePath, run, safeActor);
     }
-  }
 
-  return {
-    reconciledAt: nowIso,
-    inspectedRuns: state.runs.length,
-    requeuedRuns,
-  };
+    return {
+      reconciledAt: nowIso,
+      inspectedRuns: loadRuns(safeWorkspacePath).runs.length,
+      requeuedRuns,
+    };
+  });
 }
 
 export function handoffRun(
@@ -373,67 +724,108 @@ export function handoffRun(
   runId: string,
   input: DispatchHandoffInput,
 ): DispatchHandoffResult {
-  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.handoff', runId, [
-    'dispatch:run',
-  ]);
-  const sourceRun = status(workspacePath, runId);
-  const now = new Date().toISOString();
-  const handoffContext: Record<string, unknown> = {
-    ...(sourceRun.context ?? {}),
-    handoff_from_run_id: sourceRun.id,
-    handoff_from_actor: sourceRun.actor,
-    handoff_initiated_by: input.actor,
-    handoff_reason: input.reason,
-    handoff_at: now,
-  };
-  const created = createRun(workspacePath, {
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.handoff');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
+    runId,
+    operation: 'dispatch.run.handoff',
+  });
+  const safeActor = validateActorName(input.actor, {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor: input.actor,
+    operation: 'dispatch.run.handoff',
+  });
+  const safeToActor = validateActorName(input.to, {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
     actor: input.to,
-    adapter: input.adapter ?? sourceRun.adapter,
-    objective: sourceRun.objective,
-    context: handoffContext,
+    operation: 'dispatch.run.handoff',
   });
+  const safeReason = String(input.reason ?? '').trim();
+  if (!safeReason) {
+    throw new InputValidationError('Handoff reason is required.', {
+      workspacePath: safeWorkspacePath,
+      runId: safeRunId,
+      actor: safeActor,
+      operation: 'dispatch.run.handoff',
+    });
+  }
+  return withDispatchOperation('dispatch.run.handoff', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor: safeActor,
+  }, () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.handoff', safeRunId, [
+      'dispatch:run',
+    ]);
+    const sourceRun = status(safeWorkspacePath, safeRunId);
+    const now = new Date().toISOString();
+    const handoffContext: Record<string, unknown> = {
+      ...(sourceRun.context ?? {}),
+      handoff_from_run_id: sourceRun.id,
+      handoff_from_actor: sourceRun.actor,
+      handoff_initiated_by: safeActor,
+      handoff_reason: safeReason,
+      handoff_at: now,
+    };
+    const created = createRun(safeWorkspacePath, {
+      actor: safeToActor,
+      adapter: input.adapter ?? sourceRun.adapter,
+      objective: sourceRun.objective,
+      context: handoffContext,
+    });
 
-  appendRunLogs(workspacePath, sourceRun.id, input.actor, [{
-    ts: now,
-    level: 'info',
-    message: `Run handed off to ${input.to} as ${created.id}. Reason: ${input.reason}`,
-  }]);
-  appendRunLogs(workspacePath, created.id, input.actor, [{
-    ts: now,
-    level: 'info',
-    message: `Handoff received from ${sourceRun.id} by ${input.actor}. Reason: ${input.reason}`,
-  }]);
-  ledger.append(workspacePath, input.actor, 'handoff', `.workgraph/runs/${sourceRun.id}`, 'run', {
-    from_run_id: sourceRun.id,
-    to_run_id: created.id,
-    to_actor: input.to,
-    reason: input.reason,
-  });
-  appendDispatchRunAuditEvent(workspacePath, {
-    runId: sourceRun.id,
-    actor: input.actor,
-    kind: 'run-handoff',
-    data: {
-      to_run_id: created.id,
-      to_actor: input.to,
-      reason: input.reason,
-    },
-  });
-  appendDispatchRunAuditEvent(workspacePath, {
-    runId: created.id,
-    actor: input.actor,
-    kind: 'run-handoff',
-    data: {
+    appendRunLogs(safeWorkspacePath, sourceRun.id, safeActor, [{
+      ts: now,
+      level: 'info',
+      message: `Run handed off to ${safeToActor} as ${created.id}. Reason: ${safeReason}`,
+    }]);
+    appendRunLogs(safeWorkspacePath, created.id, safeActor, [{
+      ts: now,
+      level: 'info',
+      message: `Handoff received from ${sourceRun.id} by ${safeActor}. Reason: ${safeReason}`,
+    }]);
+    appendLedgerEventSafe(safeWorkspacePath, safeActor, 'handoff', `.workgraph/runs/${sourceRun.id}`, 'run', {
       from_run_id: sourceRun.id,
-      from_actor: sourceRun.actor,
-      reason: input.reason,
-    },
-  });
+      to_run_id: created.id,
+      to_actor: safeToActor,
+      reason: safeReason,
+    });
+    appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+      runId: sourceRun.id,
+      actor: safeActor,
+      kind: 'run-handoff',
+      data: {
+        to_run_id: created.id,
+        to_actor: safeToActor,
+        reason: safeReason,
+      },
+    }, {
+      runId: sourceRun.id,
+      actor: safeActor,
+      operation: 'dispatch.run.handoff',
+    });
+    appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+      runId: created.id,
+      actor: safeActor,
+      kind: 'run-handoff',
+      data: {
+        from_run_id: sourceRun.id,
+        from_actor: sourceRun.actor,
+        reason: safeReason,
+      },
+    }, {
+      runId: created.id,
+      actor: safeActor,
+      operation: 'dispatch.run.handoff',
+    });
 
-  return {
-    sourceRun: status(workspacePath, sourceRun.id),
-    handoffRun: status(workspacePath, created.id),
-  };
+    return {
+      sourceRun: status(safeWorkspacePath, sourceRun.id),
+      handoffRun: status(safeWorkspacePath, created.id),
+    };
+  });
 }
 
 export function logs(workspacePath: string, runId: string): DispatchRun['logs'] {
@@ -441,33 +833,63 @@ export function logs(workspacePath: string, runId: string): DispatchRun['logs'] 
 }
 
 export function auditTrail(workspacePath: string, runId: string): DispatchRunAuditEvent[] {
-  const run = status(workspacePath, runId);
-  return listDispatchRunAuditEvents(workspacePath, run.id);
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.audit');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
+    runId,
+    operation: 'dispatch.run.audit',
+  });
+  return withDispatchOperation('dispatch.run.audit', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+  }, () => {
+    const run = status(safeWorkspacePath, safeRunId);
+    try {
+      return listDispatchRunAuditEvents(safeWorkspacePath, run.id);
+    } catch (error) {
+      logDispatchWarning('Audit trail listing failed; returning an empty trail.', error, { runId: run.id });
+      return [];
+    }
+  });
 }
 
 export function listRunEvidence(workspacePath: string, runId: string): DispatchRunEvidenceItem[] {
-  const trail = auditTrail(workspacePath, runId);
-  const evidence: DispatchRunEvidenceItem[] = [];
-  for (const entry of trail) {
-    if (entry.kind !== 'run-evidence-collected') continue;
-    const items = Array.isArray(entry.data.items) ? entry.data.items : [];
-    for (const item of items) {
-      if (!item || typeof item !== 'object') continue;
-      evidence.push(item as DispatchRunEvidenceItem);
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.evidence');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
+    runId,
+    operation: 'dispatch.run.evidence',
+  });
+  return withDispatchOperation('dispatch.run.evidence', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+  }, () => {
+    const trail = auditTrail(safeWorkspacePath, safeRunId);
+    const evidence: DispatchRunEvidenceItem[] = [];
+    for (const entry of trail) {
+      if (entry.kind !== 'run-evidence-collected') continue;
+      const items = Array.isArray(entry.data.items) ? entry.data.items : [];
+      for (const item of items) {
+        if (!item || typeof item !== 'object') continue;
+        evidence.push(item as DispatchRunEvidenceItem);
+      }
     }
-  }
-  return evidence;
+    return evidence;
+  });
 }
 
 export function listRuns(workspacePath: string, options: { status?: RunStatus; limit?: number } = {}): DispatchRun[] {
-  const runs = loadRuns(workspacePath).runs
-    .filter((run) => (options.status ? run.status === options.status : true))
-    .map((run) => hydrateRunWithRuntimeMetadata(workspacePath, run))
-    .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
-  if (options.limit && options.limit > 0) {
-    return runs.slice(0, options.limit);
-  }
-  return runs;
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.list');
+  return withDispatchOperation('dispatch.run.list', { workspacePath: safeWorkspacePath }, () => {
+    const runs = loadRuns(safeWorkspacePath).runs
+      .filter((run) => (options.status ? run.status === options.status : true))
+      .map((run) => hydrateRunWithRuntimeMetadata(safeWorkspacePath, run))
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    if (options.limit && options.limit > 0) {
+      return runs.slice(0, options.limit);
+    }
+    return runs;
+  });
 }
 
 export async function executeRun(
@@ -475,158 +897,243 @@ export async function executeRun(
   runId: string,
   input: DispatchExecuteInput,
 ): Promise<DispatchRun> {
-  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.execute', runId, [
-    'dispatch:run',
-  ]);
-  const existing = status(workspacePath, runId);
-  if (!['queued', 'running'].includes(existing.status)) {
-    throw new Error(`Run ${runId} is in terminal status "${existing.status}" and cannot be executed.`);
-  }
-
-  const adapter = resolveDispatchAdapter(existing.adapter);
-  if (!adapter.execute) {
-    throw new Error(`Dispatch adapter "${existing.adapter}" does not implement execute().`);
-  }
-
-  const resolvedDispatchMode = input.dispatchMode
-    ?? normalizeDispatchMode(existing.context?.dispatch_mode)
-    ?? 'direct';
-  const resolvedTimeoutMs = normalizeExecutionTimeoutMs(
-    input.timeoutMs ?? readOptionalNumber(existing.context?.run_timeout_ms),
-  );
-  const beforeGitState = captureWorkspaceGitState(workspacePath);
-
-  appendDispatchRunAuditEvent(workspacePath, {
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.execute');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
     runId,
-    actor: input.actor,
-    kind: 'run-execution-started',
-    data: {
-      adapter: existing.adapter,
-      dispatch_mode: resolvedDispatchMode,
-      timeout_ms: resolvedTimeoutMs,
-    },
+    operation: 'dispatch.run.execute',
   });
+  const safeActor = validateActorName(input.actor, {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor: input.actor,
+    operation: 'dispatch.run.execute',
+  });
+  return withDispatchOperationAsync('dispatch.run.execute', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor: safeActor,
+  }, async () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.execute', safeRunId, [
+      'dispatch:run',
+    ]);
+    const existing = status(safeWorkspacePath, safeRunId);
+    if (!['queued', 'running'].includes(existing.status)) {
+      throw new ConflictError(
+        `Run ${safeRunId} is in terminal status "${existing.status}" and cannot be executed.`,
+        {
+          workspacePath: safeWorkspacePath,
+          runId: safeRunId,
+          actor: safeActor,
+          operation: 'dispatch.run.execute',
+        },
+      );
+    }
 
-  if (resolvedDispatchMode === 'self-assembly') {
-    const selfAssembly = await attemptSelfAssembly(workspacePath, existing, input);
-    appendRunLogs(workspacePath, runId, input.actor, selfAssembly.logs);
-    if (!selfAssembly.ok) {
-      appendDispatchRunAuditEvent(workspacePath, {
-        runId,
-        actor: input.actor,
-        kind: 'run-execution-error',
-        data: {
-          dispatch_mode: resolvedDispatchMode,
-          error: selfAssembly.error,
-          stage: 'self-assembly',
-        },
-      });
-      return markRun(workspacePath, runId, input.actor, 'failed', {
-        error: selfAssembly.error,
-        contextPatch: {
-          dispatch_mode: resolvedDispatchMode,
-          self_assembly_failed: true,
-        },
+    const adapter = resolveDispatchAdapter(existing.adapter);
+    if (!adapter.execute) {
+      throw new ConflictError(`Dispatch adapter "${existing.adapter}" does not implement execute().`, {
+        workspacePath: safeWorkspacePath,
+        runId: safeRunId,
+        actor: safeActor,
+        operation: 'dispatch.run.execute',
       });
     }
-  }
 
-  if (existing.status === 'queued') {
-    setStatus(workspacePath, runId, input.actor, 'running', `Run started on adapter "${existing.adapter}".`);
-  }
-
-  try {
-    const execution = await withExecutionTimeout(
-      adapter.execute({
-        workspacePath,
-        runId,
-        actor: input.actor,
-        objective: existing.objective,
-        context: existing.context,
-        agents: input.agents,
-        maxSteps: input.maxSteps,
-        stepDelayMs: input.stepDelayMs,
-        space: input.space,
-        createCheckpoint: input.createCheckpoint,
-        isCancelled: () => status(workspacePath, runId).status === 'cancelled',
-      }),
-      resolvedTimeoutMs,
-      runId,
+    const resolvedDispatchMode = input.dispatchMode
+      ?? normalizeDispatchMode(existing.context?.dispatch_mode)
+      ?? 'direct';
+    const resolvedTimeoutMs = normalizeExecutionTimeoutMs(
+      input.timeoutMs ?? readOptionalNumber(existing.context?.run_timeout_ms),
     );
-
-    appendRunLogs(workspacePath, runId, input.actor, execution.logs);
-    const finalStatus = execution.status;
-    if (finalStatus === 'queued' || finalStatus === 'running') {
-      throw new Error(`Adapter returned invalid terminal status "${finalStatus}" for execute().`);
+    let beforeGitState: ReturnType<typeof captureWorkspaceGitState> = null;
+    try {
+      beforeGitState = captureWorkspaceGitState(safeWorkspacePath);
+    } catch (error) {
+      logDispatchWarning('Unable to capture pre-run git state; continuing without git evidence.', error, {
+        runId: safeRunId,
+        actor: safeActor,
+      });
     }
-    const afterGitState = captureWorkspaceGitState(workspacePath);
-    const evidence = collectDispatchExecutionEvidence({
-      runId,
-      execution,
-      beforeGitState,
-      afterGitState,
-    });
-    appendDispatchRunAuditEvent(workspacePath, {
-      runId,
-      actor: input.actor,
-      kind: 'run-evidence-collected',
+
+    appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+      runId: safeRunId,
+      actor: safeActor,
+      kind: 'run-execution-started',
       data: {
-        items: evidence.items,
-        summary: evidence.summary,
+        adapter: existing.adapter,
+        dispatch_mode: resolvedDispatchMode,
+        timeout_ms: resolvedTimeoutMs,
       },
-    });
-    appendDispatchRunAuditEvent(workspacePath, {
-      runId,
-      actor: input.actor,
-      kind: 'run-execution-finished',
-      data: {
-        status: finalStatus,
-        evidence_count: evidence.summary.count,
-      },
+    }, {
+      runId: safeRunId,
+      actor: safeActor,
+      operation: 'dispatch.run.execute',
     });
 
-    return markRun(workspacePath, runId, input.actor, finalStatus, {
-      output: execution.output,
-      error: execution.error,
-      contextPatch: {
-        ...(execution.metrics ? { adapter_metrics: execution.metrics } : {}),
-        dispatch_mode: resolvedDispatchMode,
-        evidence_chain: evidence.summary,
-      },
-    });
-  } catch (error) {
-    const message = errorMessage(error);
-    const statusValue = status(workspacePath, runId);
-    if (statusValue.status === 'cancelled') {
-      appendDispatchRunAuditEvent(workspacePath, {
-        runId,
-        actor: input.actor,
+    if (resolvedDispatchMode === 'self-assembly') {
+      const selfAssembly = await attemptSelfAssembly(safeWorkspacePath, existing, {
+        ...input,
+        actor: safeActor,
+      });
+      appendRunLogs(safeWorkspacePath, safeRunId, safeActor, selfAssembly.logs);
+      if (!selfAssembly.ok) {
+        appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+          runId: safeRunId,
+          actor: safeActor,
+          kind: 'run-execution-error',
+          data: {
+            dispatch_mode: resolvedDispatchMode,
+            error: selfAssembly.error,
+            stage: 'self-assembly',
+          },
+        }, {
+          runId: safeRunId,
+          actor: safeActor,
+          operation: 'dispatch.run.execute.self-assembly',
+        });
+        return markRun(safeWorkspacePath, safeRunId, safeActor, 'failed', {
+          error: selfAssembly.error,
+          contextPatch: {
+            dispatch_mode: resolvedDispatchMode,
+            self_assembly_failed: true,
+          },
+        });
+      }
+    }
+
+    if (existing.status === 'queued') {
+      setStatus(safeWorkspacePath, safeRunId, safeActor, 'running', `Run started on adapter "${existing.adapter}".`);
+    }
+
+    try {
+      const execution = await withExecutionTimeout(
+        adapter.execute({
+          workspacePath: safeWorkspacePath,
+          runId: safeRunId,
+          actor: safeActor,
+          objective: existing.objective,
+          context: existing.context,
+          agents: input.agents,
+          maxSteps: input.maxSteps,
+          stepDelayMs: input.stepDelayMs,
+          space: input.space,
+          createCheckpoint: input.createCheckpoint,
+          isCancelled: () => status(safeWorkspacePath, safeRunId).status === 'cancelled',
+        }),
+        resolvedTimeoutMs,
+        safeRunId,
+      );
+
+      appendRunLogs(safeWorkspacePath, safeRunId, safeActor, execution.logs);
+      const finalStatus = execution.status;
+      if (finalStatus === 'queued' || finalStatus === 'running') {
+        throw new ConflictError(`Adapter returned invalid terminal status "${finalStatus}" for execute().`, {
+          workspacePath: safeWorkspacePath,
+          runId: safeRunId,
+          actor: safeActor,
+          operation: 'dispatch.run.execute',
+        });
+      }
+      let evidenceSummary: DispatchRun['evidenceChain'] | undefined;
+      try {
+        const afterGitState = captureWorkspaceGitState(safeWorkspacePath);
+        const evidence = collectDispatchExecutionEvidence({
+          runId: safeRunId,
+          execution,
+          beforeGitState,
+          afterGitState,
+        });
+        evidenceSummary = evidence.summary;
+        appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+          runId: safeRunId,
+          actor: safeActor,
+          kind: 'run-evidence-collected',
+          data: {
+            items: evidence.items,
+            summary: evidence.summary,
+          },
+        }, {
+          runId: safeRunId,
+          actor: safeActor,
+          operation: 'dispatch.run.execute.evidence',
+        });
+      } catch (error) {
+        logDispatchWarning('Evidence collection failed; completing run without evidence chain.', error, {
+          runId: safeRunId,
+          actor: safeActor,
+        });
+        appendRunLogs(safeWorkspacePath, safeRunId, safeActor, [{
+          ts: new Date().toISOString(),
+          level: 'warn',
+          message: `Evidence collection failed: ${errorMessage(error)}`,
+        }]);
+      }
+      appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+        runId: safeRunId,
+        actor: safeActor,
         kind: 'run-execution-finished',
         data: {
-          status: 'cancelled',
-          reason: 'execution cancelled',
+          status: finalStatus,
+          evidence_count: evidenceSummary?.count ?? 0,
+        },
+      }, {
+        runId: safeRunId,
+        actor: safeActor,
+        operation: 'dispatch.run.execute',
+      });
+
+      return markRun(safeWorkspacePath, safeRunId, safeActor, finalStatus, {
+        output: execution.output,
+        error: execution.error,
+        contextPatch: {
+          ...(execution.metrics ? { adapter_metrics: execution.metrics } : {}),
+          dispatch_mode: resolvedDispatchMode,
+          ...(evidenceSummary ? { evidence_chain: evidenceSummary } : {}),
         },
       });
-      return statusValue;
-    }
-    const kind = message.includes('timed out')
-      ? 'run-execution-timeout'
-      : 'run-execution-error';
-    appendDispatchRunAuditEvent(workspacePath, {
-      runId,
-      actor: input.actor,
-      kind,
-      data: {
+    } catch (error) {
+      const message = errorMessage(error);
+      const statusValue = status(safeWorkspacePath, safeRunId);
+      if (statusValue.status === 'cancelled') {
+        appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+          runId: safeRunId,
+          actor: safeActor,
+          kind: 'run-execution-finished',
+          data: {
+            status: 'cancelled',
+            reason: 'execution cancelled',
+          },
+        }, {
+          runId: safeRunId,
+          actor: safeActor,
+          operation: 'dispatch.run.execute',
+        });
+        return statusValue;
+      }
+      const kind = message.includes('timed out')
+        ? 'run-execution-timeout'
+        : 'run-execution-error';
+      appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+        runId: safeRunId,
+        actor: safeActor,
+        kind,
+        data: {
+          error: message,
+        },
+      }, {
+        runId: safeRunId,
+        actor: safeActor,
+        operation: 'dispatch.run.execute',
+      });
+      return markRun(safeWorkspacePath, safeRunId, safeActor, 'failed', {
         error: message,
-      },
-    });
-    return markRun(workspacePath, runId, input.actor, 'failed', {
-      error: message,
-      contextPatch: {
-        dispatch_mode: resolvedDispatchMode,
-      },
-    });
-  }
+        contextPatch: {
+          dispatch_mode: resolvedDispatchMode,
+        },
+      });
+    }
+  });
 }
 
 export async function createAndExecuteRun(
@@ -634,10 +1141,16 @@ export async function createAndExecuteRun(
   createInput: DispatchCreateInput,
   executeInput: Omit<DispatchExecuteInput, 'actor'> = {},
 ): Promise<DispatchRun> {
-  const run = createRun(workspacePath, createInput);
-  return executeRun(workspacePath, run.id, {
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.create-execute');
+  return withDispatchOperationAsync('dispatch.run.create-execute', {
+    workspacePath: safeWorkspacePath,
     actor: createInput.actor,
-    ...executeInput,
+  }, async () => {
+    const run = createRun(safeWorkspacePath, createInput);
+    return executeRun(safeWorkspacePath, run.id, {
+      actor: createInput.actor,
+      ...executeInput,
+    });
   });
 }
 
@@ -646,51 +1159,173 @@ export async function retryRun(
   runId: string,
   input: DispatchRetryInput,
 ): Promise<DispatchRun> {
-  assertDispatchMutationAuthorized(workspacePath, input.actor, 'dispatch.run.retry', runId, [
-    'dispatch:run',
-  ]);
-  const source = status(workspacePath, runId);
-  if (source.status !== 'failed') {
-    throw new Error(`Run ${runId} is in status "${source.status}". Only failed runs can be retried.`);
-  }
-  const priorAttempt = readOptionalNumber(source.context?.retry_attempt) ?? 0;
-  const retryAttempt = Math.trunc(priorAttempt) + 1;
-  const retried = createRun(workspacePath, {
-    actor: input.actor,
-    adapter: input.adapter ?? source.adapter,
-    objective: input.objective ?? source.objective,
-    context: {
-      ...(source.context ?? {}),
-      ...(input.contextPatch ?? {}),
-      retry_of_run_id: source.id,
-      retry_attempt: retryAttempt,
-      retry_requested_by: input.actor,
-      retry_requested_at: new Date().toISOString(),
-    },
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.retry');
+  const safeRunId = validateRunId(runId, {
+    workspacePath: safeWorkspacePath,
+    runId,
+    operation: 'dispatch.run.retry',
   });
-  appendDispatchRunAuditEvent(workspacePath, {
-    runId: source.id,
+  const safeActor = validateActorName(input.actor, {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
     actor: input.actor,
-    kind: 'run-retried',
-    data: {
-      retried_run_id: retried.id,
-      retry_attempt: retryAttempt,
-    },
+    operation: 'dispatch.run.retry',
   });
-  if (input.execute === false) {
-    return retried;
-  }
-  return executeRun(workspacePath, retried.id, {
-    actor: input.actor,
-    agents: input.agents,
-    maxSteps: input.maxSteps,
-    stepDelayMs: input.stepDelayMs,
-    space: input.space,
-    createCheckpoint: input.createCheckpoint,
-    timeoutMs: input.timeoutMs,
-    dispatchMode: input.dispatchMode,
-    selfAssemblyAgent: input.selfAssemblyAgent,
-    selfAssemblyOptions: input.selfAssemblyOptions,
+  return withDispatchOperationAsync('dispatch.run.retry', {
+    workspacePath: safeWorkspacePath,
+    runId: safeRunId,
+    actor: safeActor,
+  }, async () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.retry', safeRunId, [
+      'dispatch:run',
+    ]);
+    const source = status(safeWorkspacePath, safeRunId);
+    if (source.status !== 'failed') {
+      throw new ConflictError(`Run ${safeRunId} is in status "${source.status}". Only failed runs can be retried.`, {
+        workspacePath: safeWorkspacePath,
+        runId: safeRunId,
+        actor: safeActor,
+        operation: 'dispatch.run.retry',
+      });
+    }
+    const priorAttempt = readOptionalNumber(source.context?.retry_attempt) ?? 0;
+    const retryAttempt = Math.trunc(priorAttempt) + 1;
+    const retried = createRun(safeWorkspacePath, {
+      actor: safeActor,
+      adapter: input.adapter ?? source.adapter,
+      objective: input.objective ?? source.objective,
+      context: {
+        ...(source.context ?? {}),
+        ...(input.contextPatch ?? {}),
+        retry_of_run_id: source.id,
+        retry_attempt: retryAttempt,
+        retry_requested_by: safeActor,
+        retry_requested_at: new Date().toISOString(),
+      },
+    });
+    appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+      runId: source.id,
+      actor: safeActor,
+      kind: 'run-retried',
+      data: {
+        retried_run_id: retried.id,
+        retry_attempt: retryAttempt,
+      },
+    }, {
+      runId: source.id,
+      actor: safeActor,
+      operation: 'dispatch.run.retry',
+    });
+    if (input.execute === false) {
+      return retried;
+    }
+    return executeRun(safeWorkspacePath, retried.id, {
+      actor: safeActor,
+      agents: input.agents,
+      maxSteps: input.maxSteps,
+      stepDelayMs: input.stepDelayMs,
+      space: input.space,
+      createCheckpoint: input.createCheckpoint,
+      timeoutMs: input.timeoutMs,
+      dispatchMode: input.dispatchMode,
+      selfAssemblyAgent: input.selfAssemblyAgent,
+      selfAssemblyOptions: input.selfAssemblyOptions,
+    });
+  });
+}
+
+export function recoverDispatchState(workspacePath: string, actor: string): DispatchStateRecoveryResult {
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.state.recover');
+  const safeActor = validateActorName(actor, {
+    workspacePath: safeWorkspacePath,
+    actor,
+    operation: 'dispatch.state.recover',
+  });
+  return withDispatchOperation('dispatch.state.recover', {
+    workspacePath: safeWorkspacePath,
+    actor: safeActor,
+  }, () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.state.recover', '.workgraph/dispatch-runs', [
+      'dispatch:run',
+      'policy:manage',
+    ]);
+    const nowIso = new Date().toISOString();
+    const warnings: string[] = [];
+    let removedCorruptRuns = 0;
+    const repairedRuns = withRunsMutation(safeWorkspacePath, (state) => {
+      const repaired: DispatchRun[] = [];
+      const healthyRuns: DispatchRun[] = [];
+      for (const rawRun of state.runs) {
+        try {
+          const run = hydrateRun(rawRun);
+          if (!run.id || !run.id.startsWith('run_')) {
+            removedCorruptRuns += 1;
+            warnings.push('Dropped corrupt run entry with missing/invalid run ID.');
+            continue;
+          }
+          let changed = false;
+          if (run.status === 'running' && !run.leaseExpires) {
+            run.status = 'queued';
+            run.updatedAt = nowIso;
+            run.logs.push({
+              ts: nowIso,
+              level: 'warn',
+              message: 'Recovered run with missing lease by re-queueing it.',
+            });
+            changed = true;
+          }
+          if (run.status === 'running' && run.leaseExpires) {
+            const leaseMs = Date.parse(run.leaseExpires);
+            if (!Number.isFinite(leaseMs) || leaseMs <= Date.now()) {
+              run.status = 'queued';
+              run.updatedAt = nowIso;
+              clearLease(run);
+              run.logs.push({
+                ts: nowIso,
+                level: 'warn',
+                message: 'Recovered run with expired/invalid lease by re-queueing it.',
+              });
+              changed = true;
+            }
+          }
+          if (changed) repaired.push(run);
+          healthyRuns.push(run);
+        } catch {
+          removedCorruptRuns += 1;
+          warnings.push('Dropped an unreadable dispatch run record while repairing state.');
+        }
+      }
+      state.runs = healthyRuns;
+      return repaired;
+    });
+    for (const run of repairedRuns) {
+      appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+        runId: run.id,
+        actor: safeActor,
+        kind: 'run-status-changed',
+        data: {
+          to_status: run.status,
+          reason: 'state-recovery',
+        },
+      }, {
+        runId: run.id,
+        actor: safeActor,
+        operation: 'dispatch.state.recover',
+      });
+      appendLedgerEventSafe(safeWorkspacePath, safeActor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+        status: run.status,
+        recovered: true,
+      });
+      ensureRunPrimitiveSafe(safeWorkspacePath, run, safeActor);
+      syncRunPrimitiveSafe(safeWorkspacePath, run, safeActor);
+    }
+    return {
+      repairedAt: nowIso,
+      scannedRuns: loadRuns(safeWorkspacePath).runs.length,
+      repairedRuns,
+      removedCorruptRuns,
+      warnings,
+    };
   });
 }
 
@@ -704,13 +1339,21 @@ function appendRunLogs(
     'dispatch:run',
   ]);
   if (logEntries.length === 0) return;
-  const state = loadRuns(workspacePath);
-  const run = state.runs.find((entry) => entry.id === runId);
-  if (!run) throw new Error(`Run not found: ${runId}`);
-  run.logs.push(...logEntries);
-  run.updatedAt = new Date().toISOString();
-  saveRuns(workspacePath, state);
-  appendDispatchRunAuditEvent(workspacePath, {
+  const run = withRunsMutation(workspacePath, (state) => {
+    const target = state.runs.find((entry) => entry.id === runId);
+    if (!target) {
+      throw new ResourceNotFoundError(`Run not found: ${runId}`, {
+        workspacePath,
+        runId,
+        actor,
+        operation: 'dispatch.run.logs',
+      });
+    }
+    target.logs.push(...logEntries);
+    target.updatedAt = new Date().toISOString();
+    return target;
+  });
+  appendDispatchRunAuditEventSafe(workspacePath, {
     runId: run.id,
     actor,
     kind: 'run-logs-appended',
@@ -718,11 +1361,15 @@ function appendRunLogs(
       count: logEntries.length,
       levels: [...new Set(logEntries.map((entry) => entry.level))],
     },
+  }, {
+    runId: run.id,
+    actor,
+    operation: 'dispatch.run.logs',
   });
-  ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
+  appendLedgerEventSafe(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
     log_append_count: logEntries.length,
   });
-  syncRunPrimitive(workspacePath, run, actor);
+  syncRunPrimitiveSafe(workspacePath, run, actor);
 }
 
 function setStatus(
@@ -735,35 +1382,47 @@ function setStatus(
   assertDispatchMutationAuthorized(workspacePath, actor, 'dispatch.run.status', runId, [
     'dispatch:run',
   ]);
-  const state = loadRuns(workspacePath);
-  const run = state.runs.find((entry) => entry.id === runId);
-  if (!run) throw new Error(`Run not found: ${runId}`);
-  const previousStatus = run.status;
-  assertRunStatusTransition(run.status, statusValue, runId);
-  const now = new Date().toISOString();
-  run.status = statusValue;
-  if (statusValue === 'running') {
-    applyLease(run, now);
-  } else {
-    clearLease(run);
-  }
-  run.updatedAt = now;
-  run.logs.push({ ts: now, level: 'info', message: logMessage });
-  saveRuns(workspacePath, state);
-  appendDispatchRunAuditEvent(workspacePath, {
-    runId: run.id,
-    actor,
-    kind: 'run-status-changed',
-    data: {
-      from_status: previousStatus,
-      to_status: statusValue,
-      lease_expires: run.leaseExpires,
-    },
+  const run = withRunsMutation(workspacePath, (state) => {
+    const target = state.runs.find((entry) => entry.id === runId);
+    if (!target) {
+      throw new ResourceNotFoundError(`Run not found: ${runId}`, {
+        workspacePath,
+        runId,
+        actor,
+        operation: 'dispatch.run.status',
+      });
+    }
+    const previousStatus = target.status;
+    assertRunStatusTransition(target.status, statusValue, runId);
+    const now = new Date().toISOString();
+    target.status = statusValue;
+    if (statusValue === 'running') {
+      applyLease(target, now);
+    } else {
+      clearLease(target);
+    }
+    target.updatedAt = now;
+    target.logs.push({ ts: now, level: 'info', message: logMessage });
+    appendDispatchRunAuditEventSafe(workspacePath, {
+      runId: target.id,
+      actor,
+      kind: 'run-status-changed',
+      data: {
+        from_status: previousStatus,
+        to_status: statusValue,
+        lease_expires: target.leaseExpires,
+      },
+    }, {
+      runId: target.id,
+      actor,
+      operation: 'dispatch.run.status',
+    });
+    appendLedgerEventSafe(workspacePath, actor, 'update', `.workgraph/runs/${target.id}`, 'run', {
+      status: target.status,
+    });
+    return target;
   });
-  ledger.append(workspacePath, actor, 'update', `.workgraph/runs/${run.id}`, 'run', {
-    status: run.status,
-  });
-  syncRunPrimitive(workspacePath, run, actor);
+  syncRunPrimitiveSafe(workspacePath, run, actor);
   return hydrateRunWithRuntimeMetadata(workspacePath, run);
 }
 
@@ -778,19 +1437,28 @@ function loadRuns(workspacePath: string): { version: number; runs: DispatchRun[]
     saveRuns(workspacePath, seeded);
     return seeded;
   }
-  const raw = fs.readFileSync(rPath, 'utf-8');
-  const parsed = JSON.parse(raw) as { version: number; runs: DispatchRun[] };
-  return {
-    version: parsed.version ?? 1,
-    runs: (parsed.runs ?? []).map(hydrateRun),
-  };
+  try {
+    const raw = fs.readFileSync(rPath, 'utf-8');
+    const parsed = JSON.parse(raw) as { version?: number; runs?: DispatchRun[] };
+    return {
+      version: parsed.version ?? 1,
+      runs: Array.isArray(parsed.runs) ? parsed.runs.map(hydrateRun) : [],
+    };
+  } catch (error) {
+    logDispatchWarning('Dispatch runs state is unreadable; seeding an empty run state.', error, {
+      target: rPath,
+    });
+    const seeded = { version: 1, runs: [] as DispatchRun[] };
+    saveRuns(workspacePath, seeded);
+    return seeded;
+  }
 }
 
 function saveRuns(workspacePath: string, value: { version: number; runs: DispatchRun[] }): void {
   const rPath = runsPath(workspacePath);
   const dir = path.dirname(rPath);
   if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(rPath, JSON.stringify(value, null, 2) + '\n', 'utf-8');
+  atomicWriteFile(rPath, JSON.stringify(value, null, 2) + '\n');
 }
 
 function getRun(workspacePath: string, runId: string): DispatchRun | null {
@@ -1163,7 +1831,10 @@ function assertRunStatusTransition(from: RunStatus, to: RunStatus, runId: string
   if (from === to) return;
   const allowed = RUN_STATUS_TRANSITIONS[from] ?? [];
   if (!allowed.includes(to)) {
-    throw new Error(`Invalid run transition for ${runId}: ${from} -> ${to}. Allowed: ${allowed.join(', ') || 'none'}.`);
+    throw new ConflictError(
+      `Invalid run transition for ${runId}: ${from} -> ${to}. Allowed: ${allowed.join(', ') || 'none'}.`,
+      { runId, operation: 'dispatch.run.status-transition' },
+    );
   }
 }
 
@@ -1173,7 +1844,9 @@ function resolveThreadRef(threadRef: string): string {
     ? raw.slice(2, -2)
     : raw;
   if (!unwrapped) {
-    throw new Error('Thread reference is required.');
+    throw new InputValidationError('Thread reference is required.', {
+      operation: 'dispatch.thread.claim',
+    });
   }
   if (unwrapped.includes('/')) {
     return unwrapped.endsWith('.md') ? unwrapped : `${unwrapped}.md`;
@@ -1197,4 +1870,23 @@ function assertDispatchMutationAuthorized(
       module: 'dispatch',
     },
   });
+}
+
+function logDispatchWarning(
+  message: string,
+  error: unknown,
+  context: {
+    runId?: string;
+    actor?: string;
+    target?: string;
+  } = {},
+): void {
+  const rendered = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+  const suffixParts = [
+    context.runId ? `run=${context.runId}` : undefined,
+    context.actor ? `actor=${context.actor}` : undefined,
+    context.target ? `target=${context.target}` : undefined,
+  ].filter(Boolean);
+  const suffix = suffixParts.length > 0 ? ` (${suffixParts.join(', ')})` : '';
+  process.stderr.write(`[workgraph][warn][dispatch] ${message}${suffix} -> ${rendered}\n`);
 }
