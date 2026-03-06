@@ -31,6 +31,9 @@ import {
   listWebhooks,
   registerWebhook,
 } from './server-webhooks.js';
+import {
+  ingestWebhookRequest,
+} from './server-webhook-gateway.js';
 
 const ledger = ledgerModule;
 const auth = authModule;
@@ -244,6 +247,47 @@ function registerRestRoutes(
   defaultActor: string,
   sseKeepaliveMs: number,
 ): void {
+  app.post('/webhooks/:source/:id', (req: any, res: any) => {
+    try {
+      const source = readNonEmptyString(req.params?.source);
+      const endpointId = readNonEmptyString(req.params?.id);
+      if (!source || !endpointId) {
+        res.status(400).json({
+          ok: false,
+          error: 'Webhook source and id are required.',
+        });
+        return;
+      }
+      const result = ingestWebhookRequest(workspacePath, {
+        source,
+        endpointId,
+        headers: toRecord(req.headers),
+        payload: toRecord(req.body),
+        rawBody: readRawWebhookBody(req),
+      });
+      if (result.challenge) {
+        res.status(result.statusCode).json({
+          ok: true,
+          challenge: result.challenge,
+        });
+        return;
+      }
+      res.status(result.statusCode).json({
+        ok: result.ok,
+        source: result.source,
+        endpointId: result.endpointId,
+        eventType: result.eventType,
+        deliveryId: result.deliveryId,
+        matchedRoutes: result.matchedRoutes,
+        triggeredRoutes: result.triggeredRoutes,
+        runIds: result.runIds,
+        errors: result.errors,
+      });
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
   app.get('/api/events', (req: any, res: any) => {
     try {
       const lastEventId = readNonEmptyString(req.headers?.['last-event-id'])
@@ -872,6 +916,16 @@ function safeDecodeURIComponent(value: string): string {
   } catch {
     return value;
   }
+}
+
+function readRawWebhookBody(req: any): string | undefined {
+  const rawBody = req?.rawBody;
+  if (typeof rawBody === 'string') return rawBody;
+  if (rawBody && Buffer.isBuffer(rawBody)) return rawBody.toString('utf-8');
+  const body = req?.body;
+  if (typeof body === 'string') return body;
+  if (body && Buffer.isBuffer(body)) return body.toString('utf-8');
+  return undefined;
 }
 
 function safeStreamWrite(res: any, chunk: string): boolean {
