@@ -4,6 +4,8 @@ export * as ledger from './ledger.js';
 export * as auth from './auth.js';
 export * as store from './store.js';
 export * as thread from './thread.js';
+export * as mission from './mission.js';
+export * as missionOrchestrator from './mission-orchestrator.js';
 export * as capability from './capability.js';
 export {
   inviteThreadParticipant,

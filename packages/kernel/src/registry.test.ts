@@ -29,6 +29,7 @@ describe('registry', () => {
     expect(reg.types.person).toBeDefined();
     expect(reg.types.project).toBeDefined();
     expect(reg.types.client).toBeDefined();
+    expect(reg.types.mission).toBeDefined();
     expect(reg.types.conversation).toBeDefined();
     expect(reg.types['plan-step']).toBeDefined();
     expect(reg.types.skill).toBeDefined();

@@ -493,6 +493,31 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
       "destructiveHint": true,
       "idempotentHint": false,
     },
+    "description": "Approve a mission plan and move it to approved status.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "missionRef": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "missionRef",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_approve_mission",
+    "title": "Mission Approve",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
     "description": "Run autonomous collaboration cycles with drift checks.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -619,6 +644,73 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "workgraph_checkpoint_create",
     "title": "Checkpoint Create",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Create a mission primitive in planning status.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "constraints": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "description": {
+          "type": "string",
+        },
+        "goal": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "mid": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "owner": {
+          "type": "string",
+        },
+        "priority": {
+          "enum": [
+            "urgent",
+            "high",
+            "medium",
+            "low",
+          ],
+          "type": "string",
+        },
+        "project": {
+          "type": "string",
+        },
+        "space": {
+          "type": "string",
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "title",
+        "goal",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_create_mission",
+    "title": "Mission Create",
   },
   {
     "annotations": {
@@ -768,6 +860,171 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
   },
   {
     "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Apply mission intervention updates (priority/status/skip/append milestones).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "appendMilestones": {
+          "items": {
+            "properties": {
+              "deps": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "features": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    {
+                      "properties": {
+                        "deps": {
+                          "items": {
+                            "type": "string",
+                          },
+                          "type": "array",
+                        },
+                        "goal": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "priority": {
+                          "enum": [
+                            "urgent",
+                            "high",
+                            "medium",
+                            "low",
+                          ],
+                          "type": "string",
+                        },
+                        "tags": {
+                          "items": {
+                            "type": "string",
+                          },
+                          "type": "array",
+                        },
+                        "threadPath": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "title": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "title",
+                      ],
+                      "type": "object",
+                    },
+                  ],
+                },
+                "minItems": 1,
+                "type": "array",
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "title": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "validation": {
+                "properties": {
+                  "criteria": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "strategy": {
+                    "enum": [
+                      "automated",
+                      "manual",
+                      "hybrid",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "type": "object",
+              },
+            },
+            "required": [
+              "title",
+              "features",
+            ],
+            "type": "object",
+          },
+          "type": "array",
+        },
+        "missionRef": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "setPriority": {
+          "enum": [
+            "urgent",
+            "high",
+            "medium",
+            "low",
+          ],
+          "type": "string",
+        },
+        "setStatus": {
+          "enum": [
+            "planning",
+            "approved",
+            "active",
+            "validating",
+            "completed",
+            "failed",
+          ],
+          "type": "string",
+        },
+        "skipFeature": {
+          "properties": {
+            "milestoneId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "threadPath": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "milestoneId",
+            "threadPath",
+          ],
+          "type": "object",
+        },
+      },
+      "required": [
+        "missionRef",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_intervene_mission",
+    "title": "Mission Intervene",
+  },
+  {
+    "annotations": {
       "idempotentHint": true,
       "readOnlyHint": true,
     },
@@ -801,6 +1058,203 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "workgraph_ledger_reconcile",
     "title": "Ledger Reconcile",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Read aggregate mission progress across milestones and features.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "missionRef": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "missionRef",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_mission_progress",
+    "title": "Mission Progress",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Read one mission primitive and computed progress.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "missionRef": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "missionRef",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_mission_status",
+    "title": "Mission Status",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Define or update mission milestones and feature threads.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "constraints": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "estimatedCostUsd": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "estimatedRuns": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "goal": {
+          "type": "string",
+        },
+        "milestones": {
+          "items": {
+            "properties": {
+              "deps": {
+                "items": {
+                  "type": "string",
+                },
+                "type": "array",
+              },
+              "features": {
+                "items": {
+                  "anyOf": [
+                    {
+                      "minLength": 1,
+                      "type": "string",
+                    },
+                    {
+                      "properties": {
+                        "deps": {
+                          "items": {
+                            "type": "string",
+                          },
+                          "type": "array",
+                        },
+                        "goal": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "priority": {
+                          "enum": [
+                            "urgent",
+                            "high",
+                            "medium",
+                            "low",
+                          ],
+                          "type": "string",
+                        },
+                        "tags": {
+                          "items": {
+                            "type": "string",
+                          },
+                          "type": "array",
+                        },
+                        "threadPath": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                        "title": {
+                          "minLength": 1,
+                          "type": "string",
+                        },
+                      },
+                      "required": [
+                        "title",
+                      ],
+                      "type": "object",
+                    },
+                  ],
+                },
+                "minItems": 1,
+                "type": "array",
+              },
+              "id": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "title": {
+                "minLength": 1,
+                "type": "string",
+              },
+              "validation": {
+                "properties": {
+                  "criteria": {
+                    "items": {
+                      "type": "string",
+                    },
+                    "type": "array",
+                  },
+                  "strategy": {
+                    "enum": [
+                      "automated",
+                      "manual",
+                      "hybrid",
+                    ],
+                    "type": "string",
+                  },
+                },
+                "type": "object",
+              },
+            },
+            "required": [
+              "title",
+              "features",
+            ],
+            "type": "object",
+          },
+          "minItems": 1,
+          "type": "array",
+        },
+        "missionRef": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "replaceMilestones": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "missionRef",
+        "milestones",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_plan_mission",
+    "title": "Mission Plan",
   },
   {
     "annotations": {
@@ -878,6 +1332,34 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "workgraph_query",
     "title": "Workgraph Query",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Start mission execution and run one orchestrator cycle.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "missionRef": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "runCycle": {
+          "type": "boolean",
+        },
+      },
+      "required": [
+        "missionRef",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_start_mission",
+    "title": "Mission Start",
   },
   {
     "annotations": {
