@@ -10,6 +10,7 @@ import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerCursorCommands } from './cli/commands/cursor.js';
 import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
+import { registerMissionCommands } from './cli/commands/mission.js';
 import { registerSafetyCommands } from './cli/commands/safety.js';
 import { registerPortabilityCommands } from './cli/commands/portability.js';
 import { registerFederationCommands } from './cli/commands/federation.js';
@@ -2325,6 +2326,7 @@ registerSafetyCommands(program, DEFAULT_ACTOR);
 registerPortabilityCommands(program);
 registerFederationCommands(program, threadCmd, DEFAULT_ACTOR);
 registerCapabilityCommands(program, DEFAULT_ACTOR);
+registerMissionCommands(program, DEFAULT_ACTOR);
 
 // ============================================================================
 // onboarding

@@ -3,6 +3,7 @@ import { z } from 'zod';
 import {
   graph as graphModule,
   ledger as ledgerModule,
+  mission as missionModule,
   orientation as orientationModule,
   query as queryModule,
   registry as registryModule,
@@ -16,6 +17,7 @@ import { type WorkgraphMcpServerOptions } from '../types.js';
 
 const graph = graphModule;
 const ledger = ledgerModule;
+const mission = missionModule;
 const orientation = orientationModule;
 const query = queryModule;
 const registry = registryModule;
@@ -159,6 +161,59 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
             fields,
           },
           `Primitive schema for ${typeDef.name}.`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_mission_status',
+    {
+      title: 'Mission Status',
+      description: 'Read one mission primitive and computed progress.',
+      inputSchema: {
+        missionRef: z.string().min(1),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const missionInstance = mission.missionStatus(options.workspacePath, args.missionRef);
+        const progress = mission.missionProgress(options.workspacePath, missionInstance.path);
+        return okResult(
+          { mission: missionInstance, progress },
+          `Mission ${missionInstance.path} is ${String(missionInstance.fields.status)}.`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_mission_progress',
+    {
+      title: 'Mission Progress',
+      description: 'Read aggregate mission progress across milestones and features.',
+      inputSchema: {
+        missionRef: z.string().min(1),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const progress = mission.missionProgress(options.workspacePath, args.missionRef);
+        return okResult(
+          progress,
+          `Mission progress ${progress.mid}: ${progress.percentComplete}% (${progress.doneFeatures}/${progress.totalFeatures} features).`,
         );
       } catch (error) {
         return errorResult(error);

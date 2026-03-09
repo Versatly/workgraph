@@ -161,6 +161,90 @@ export const THREAD_STATUS_TRANSITIONS: Record<ThreadStatus, ThreadStatus[]> = {
 };
 
 // ---------------------------------------------------------------------------
+// Mission lifecycle
+// ---------------------------------------------------------------------------
+
+export type MissionStatus =
+  | 'planning'
+  | 'approved'
+  | 'active'
+  | 'validating'
+  | 'completed'
+  | 'failed';
+
+export type MilestoneStatus =
+  | 'open'
+  | 'active'
+  | 'validating'
+  | 'passed'
+  | 'failed';
+
+export interface MilestoneValidationPlan {
+  strategy: 'automated' | 'manual' | 'hybrid';
+  criteria: string[];
+  run_id?: string;
+  run_status?: RunStatus;
+  validated_at?: string;
+}
+
+export interface Milestone {
+  id: string;
+  title: string;
+  status: MilestoneStatus;
+  deps?: string[];
+  features: string[];
+  validation?: MilestoneValidationPlan;
+  started_at?: string;
+  completed_at?: string;
+  failed_at?: string;
+}
+
+export interface MissionPlan {
+  goal: string;
+  constraints?: string[];
+  estimated_runs?: number;
+  estimated_cost_usd?: number | null;
+}
+
+export interface Mission {
+  mid: string;
+  title: string;
+  description?: string;
+  status: MissionStatus;
+  priority: 'urgent' | 'high' | 'medium' | 'low';
+  owner?: string;
+  project?: string;
+  space?: string;
+  plan?: MissionPlan;
+  milestones: Milestone[];
+  started_at?: string;
+  completed_at?: string;
+  total_runs: number;
+  total_cost_usd: number;
+  runs_by_adapter?: Record<string, number>;
+  tags?: string[];
+  created: string;
+  updated: string;
+}
+
+export const MISSION_STATUS_TRANSITIONS: Record<MissionStatus, MissionStatus[]> = {
+  planning: ['approved', 'failed'],
+  approved: ['planning', 'active', 'failed'],
+  active: ['validating', 'failed'],
+  validating: ['active', 'completed', 'failed'],
+  completed: [],
+  failed: ['planning', 'approved', 'active'],
+};
+
+export const MILESTONE_STATUS_TRANSITIONS: Record<MilestoneStatus, MilestoneStatus[]> = {
+  open: ['active', 'failed'],
+  active: ['validating', 'failed'],
+  validating: ['passed', 'failed'],
+  passed: [],
+  failed: ['open', 'active'],
+};
+
+// ---------------------------------------------------------------------------
 // Conversation + plan-step lifecycle
 // ---------------------------------------------------------------------------
 

@@ -67,6 +67,8 @@ describe('workgraph mcp server', () => {
       expect(toolNames).toContain('workgraph_ledger_reconcile');
       expect(toolNames).toContain('workgraph_thread_claim');
       expect(toolNames).toContain('workgraph_dispatch_execute');
+      expect(toolNames).toContain('workgraph_create_mission');
+      expect(toolNames).toContain('workgraph_mission_status');
 
       const statusTool = await client.callTool({
         name: 'workgraph_status',
@@ -206,6 +208,13 @@ describe('workgraph mcp server', () => {
         'workgraph_dispatch_stop',
         'workgraph_trigger_engine_cycle',
         'workgraph_autonomy_run',
+        'workgraph_create_mission',
+        'workgraph_plan_mission',
+        'workgraph_approve_mission',
+        'workgraph_start_mission',
+        'workgraph_intervene_mission',
+        'workgraph_mission_status',
+        'workgraph_mission_progress',
         'wg_post_message',
         'wg_ask',
         'wg_spawn_thread',

@@ -482,6 +482,10 @@ function capabilitiesForStoreMutation(
         : ['thread:update', 'thread:manage', 'thread:complete', 'policy:manage'];
     case 'run':
       return ['dispatch:run', 'policy:manage'];
+    case 'mission':
+      return mutation === 'create'
+        ? ['mission:create', 'mission:manage', 'policy:manage']
+        : ['mission:update', 'mission:manage', 'policy:manage'];
     case 'policy':
       return ['policy:manage'];
     case 'policy-gate':

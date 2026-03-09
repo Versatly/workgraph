@@ -3,6 +3,8 @@ import { z } from 'zod';
 import {
   autonomy as autonomyModule,
   dispatch as dispatchModule,
+  mission as missionModule,
+  missionOrchestrator as missionOrchestratorModule,
   orientation as orientationModule,
   thread as threadModule,
   triggerEngine as triggerEngineModule,
@@ -13,11 +15,235 @@ import { type WorkgraphMcpServerOptions } from '../types.js';
 
 const autonomy = autonomyModule;
 const dispatch = dispatchModule;
+const mission = missionModule;
+const missionOrchestrator = missionOrchestratorModule;
 const orientation = orientationModule;
 const thread = threadModule;
 const triggerEngine = triggerEngineModule;
 
+const missionFeatureInputSchema = z.union([
+  z.string().min(1),
+  z.object({
+    title: z.string().min(1),
+    goal: z.string().min(1).optional(),
+    threadPath: z.string().min(1).optional(),
+    priority: z.enum(['urgent', 'high', 'medium', 'low']).optional(),
+    deps: z.array(z.string()).optional(),
+    tags: z.array(z.string()).optional(),
+  }),
+]);
+
+const missionMilestoneInputSchema = z.object({
+  id: z.string().min(1).optional(),
+  title: z.string().min(1),
+  deps: z.array(z.string()).optional(),
+  features: z.array(missionFeatureInputSchema).min(1),
+  validation: z.object({
+    strategy: z.enum(['automated', 'manual', 'hybrid']).optional(),
+    criteria: z.array(z.string()).optional(),
+  }).optional(),
+});
+
 export function registerWriteTools(server: McpServer, options: WorkgraphMcpServerOptions): void {
+  server.registerTool(
+    'workgraph_create_mission',
+    {
+      title: 'Mission Create',
+      description: 'Create a mission primitive in planning status.',
+      inputSchema: {
+        title: z.string().min(1),
+        goal: z.string().min(1),
+        actor: z.string().optional(),
+        mid: z.string().min(1).optional(),
+        description: z.string().optional(),
+        priority: z.enum(['urgent', 'high', 'medium', 'low']).optional(),
+        owner: z.string().optional(),
+        project: z.string().optional(),
+        space: z.string().optional(),
+        constraints: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['mission:create', 'mcp:write'], {
+          action: 'mcp.mission.create',
+          target: 'missions',
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const created = mission.createMission(options.workspacePath, args.title, args.goal, actor, {
+          mid: args.mid,
+          description: args.description,
+          priority: args.priority,
+          owner: args.owner,
+          project: args.project,
+          space: args.space,
+          constraints: args.constraints,
+          tags: args.tags,
+        });
+        return okResult({ mission: created }, `Created mission ${created.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_plan_mission',
+    {
+      title: 'Mission Plan',
+      description: 'Define or update mission milestones and feature threads.',
+      inputSchema: {
+        missionRef: z.string().min(1),
+        actor: z.string().optional(),
+        goal: z.string().optional(),
+        constraints: z.array(z.string()).optional(),
+        estimatedRuns: z.number().int().min(0).optional(),
+        estimatedCostUsd: z.number().min(0).nullable().optional(),
+        replaceMilestones: z.boolean().optional(),
+        milestones: z.array(missionMilestoneInputSchema).min(1),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['mission:update', 'thread:create', 'mcp:write'], {
+          action: 'mcp.mission.plan',
+          target: args.missionRef,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = mission.planMission(options.workspacePath, args.missionRef, {
+          goal: args.goal,
+          constraints: args.constraints,
+          estimated_runs: args.estimatedRuns,
+          estimated_cost_usd: args.estimatedCostUsd,
+          replaceMilestones: args.replaceMilestones,
+          milestones: args.milestones,
+        }, actor);
+        return okResult({ mission: updated }, `Planned mission ${updated.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_approve_mission',
+    {
+      title: 'Mission Approve',
+      description: 'Approve a mission plan and move it to approved status.',
+      inputSchema: {
+        missionRef: z.string().min(1),
+        actor: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['mission:update', 'mcp:write'], {
+          action: 'mcp.mission.approve',
+          target: args.missionRef,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = mission.approveMission(options.workspacePath, args.missionRef, actor);
+        return okResult({ mission: updated }, `Approved mission ${updated.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_start_mission',
+    {
+      title: 'Mission Start',
+      description: 'Start mission execution and run one orchestrator cycle.',
+      inputSchema: {
+        missionRef: z.string().min(1),
+        actor: z.string().optional(),
+        runCycle: z.boolean().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['mission:update', 'dispatch:run', 'mcp:write'], {
+          action: 'mcp.mission.start',
+          target: args.missionRef,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = mission.startMission(options.workspacePath, args.missionRef, actor);
+        const cycle = args.runCycle === false
+          ? null
+          : missionOrchestrator.runMissionOrchestratorCycle(options.workspacePath, updated.path, actor);
+        return okResult({ mission: updated, cycle }, `Started mission ${updated.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_intervene_mission',
+    {
+      title: 'Mission Intervene',
+      description: 'Apply mission intervention updates (priority/status/skip/append milestones).',
+      inputSchema: {
+        missionRef: z.string().min(1),
+        actor: z.string().optional(),
+        reason: z.string().min(1),
+        setPriority: z.enum(['urgent', 'high', 'medium', 'low']).optional(),
+        setStatus: z.enum(['planning', 'approved', 'active', 'validating', 'completed', 'failed']).optional(),
+        skipFeature: z.object({
+          milestoneId: z.string().min(1),
+          threadPath: z.string().min(1),
+        }).optional(),
+        appendMilestones: z.array(missionMilestoneInputSchema).optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['mission:update', 'thread:update', 'mcp:write'], {
+          action: 'mcp.mission.intervene',
+          target: args.missionRef,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = mission.interveneMission(options.workspacePath, args.missionRef, {
+          reason: args.reason,
+          setPriority: args.setPriority,
+          setStatus: args.setStatus,
+          skipFeature: args.skipFeature,
+          appendMilestones: args.appendMilestones,
+        }, actor);
+        return okResult({ mission: updated }, `Intervened mission ${updated.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
   server.registerTool(
     'workgraph_thread_claim',
     {
