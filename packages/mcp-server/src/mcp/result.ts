@@ -29,6 +29,11 @@ export type CollaborationToolName =
   | 'wg_post_message'
   | 'wg_ask'
   | 'wg_spawn_thread'
+  | 'wg_create_thread'
+  | 'wg_thread_context_add'
+  | 'wg_thread_context_search'
+  | 'wg_thread_context_list'
+  | 'wg_thread_context_prune'
   | 'wg_heartbeat';
 
 export interface CollaborationToolError {

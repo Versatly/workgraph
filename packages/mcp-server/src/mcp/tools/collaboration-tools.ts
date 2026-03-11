@@ -5,6 +5,7 @@ import {
   agent as agentModule,
   conversation as conversationModule,
   store as storeModule,
+  threadContext as threadContextModule,
   thread as threadModule,
 } from '@versatly/workgraph-kernel';
 import { checkWriteGate, resolveActor } from '../auth.js';
@@ -19,6 +20,7 @@ import { type WorkgraphMcpServerOptions } from '../types.js';
 const agent = agentModule;
 const conversation = conversationModule;
 const store = storeModule;
+const threadContext = threadContextModule;
 const thread = threadModule;
 
 const MESSAGE_TYPES = ['message', 'note', 'decision', 'system', 'ask', 'reply'] as const;
@@ -240,6 +242,86 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
   );
 
   server.registerTool(
+    'wg_create_thread',
+    {
+      title: 'WorkGraph Create Thread',
+      description: 'Create a standalone top-level thread with optional idempotency key.',
+      inputSchema: {
+        actor: z.string().optional().describe('Actor identity for write attribution.'),
+        title: z.string().min(1).describe('New standalone thread title.'),
+        goal: z.string().min(1).describe('Thread goal/body seed.'),
+        priority: z.string().optional().describe('Optional priority override.'),
+        deps: z.array(z.string()).optional().describe('Optional dependency thread refs.'),
+        tags: z.array(z.string()).optional().describe('Optional thread tags.'),
+        contextRefs: z.array(z.string()).optional().describe('Optional context refs to seed on the new thread.'),
+        space: z.string().optional().describe('Optional space ref for the new thread.'),
+        idempotencyKey: z.string().optional().describe('Stable idempotency key for retry-safe thread creation.'),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        assertWriteAllowed(options, actor, ['thread:create', 'mcp:write'], {
+          action: 'mcp.collaboration.create-thread',
+          target: 'threads',
+        });
+        const idempotencyKey = normalizeOptionalString(args.idempotencyKey);
+        if (idempotencyKey) {
+          const existing = findCreatedThreadByKey(options.workspacePath, idempotencyKey);
+          if (existing) {
+            assertCreateReplayCompatible(existing, args);
+            return collaborationOkResult('wg_create_thread', actor, {
+              operation: 'replayed',
+              idempotency: {
+                key: idempotencyKey,
+                replayed: true,
+              },
+              thread: serializeThread(existing),
+            });
+          }
+        }
+        const created = thread.createThread(options.workspacePath, args.title, args.goal, actor, {
+          priority: args.priority,
+          deps: args.deps,
+          space: normalizeOptionalString(args.space),
+          context_refs: args.contextRefs,
+          tags: args.tags,
+        });
+        const withMetadata = store.update(
+          options.workspacePath,
+          created.path,
+          {
+            mcp_created_by: actor,
+            mcp_created_at: new Date().toISOString(),
+            ...(idempotencyKey ? { mcp_create_idempotency_key: idempotencyKey } : {}),
+          },
+          undefined,
+          actor,
+          {
+            skipAuthorization: true,
+            action: 'mcp.collaboration.create.store',
+            requiredCapabilities: ['thread:create', 'thread:manage'],
+          },
+        );
+        return collaborationOkResult('wg_create_thread', actor, {
+          operation: 'created',
+          idempotency: {
+            key: idempotencyKey,
+            replayed: false,
+          },
+          thread: serializeThread(withMetadata),
+        });
+      } catch (error) {
+        return collaborationErrorResult('wg_create_thread', error);
+      }
+    },
+  );
+
+  server.registerTool(
     'wg_spawn_thread',
     {
       title: 'WorkGraph Spawn Thread',
@@ -336,6 +418,173 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
         });
       } catch (error) {
         return collaborationErrorResult('wg_spawn_thread', error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_thread_context_add',
+    {
+      title: 'WorkGraph Thread Context Add',
+      description: 'Add a searchable context entry scoped to a specific thread.',
+      inputSchema: {
+        threadPath: z.string().min(1).describe('Target thread path (threads/<slug>.md).'),
+        actor: z.string().optional().describe('Actor identity for write attribution.'),
+        title: z.string().min(1).describe('Context entry title.'),
+        content: z.string().min(1).describe('Context markdown/body content.'),
+        source: z.string().optional().describe('Optional source reference (URL, doc ID, note).'),
+        relevance: z.number().min(0).max(1).optional().describe('Optional relevance score (0..1).'),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        assertWriteAllowed(options, actor, ['thread:update', 'mcp:write'], {
+          action: 'mcp.collaboration.thread-context.add',
+          target: normalizeThreadPath(args.threadPath),
+        });
+        const threadPath = assertThreadExists(options.workspacePath, args.threadPath);
+        const created = threadContext.addThreadContextEntry(options.workspacePath, threadPath, {
+          title: args.title,
+          content: args.content,
+          source: normalizeOptionalString(args.source),
+          addedBy: actor,
+          relevanceScore: args.relevance,
+        });
+        const summary = threadContext.summarizeThreadContext(options.workspacePath, threadPath, { topN: 3 });
+        return collaborationOkResult('wg_thread_context_add', actor, {
+          operation: 'created',
+          thread_path: threadPath,
+          context_entry: serializeThreadContextEntry(created),
+          summary: serializeThreadContextSummary(summary),
+        });
+      } catch (error) {
+        return collaborationErrorResult('wg_thread_context_add', error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_thread_context_search',
+    {
+      title: 'WorkGraph Thread Context Search',
+      description: 'Search a thread-specific context store using BM25 keyword ranking.',
+      inputSchema: {
+        threadPath: z.string().min(1).describe('Target thread path (threads/<slug>.md).'),
+        actor: z.string().optional().describe('Optional actor identity used for attribution/context.'),
+        query: z.string().min(1).describe('Keyword query string for BM25 search.'),
+        limit: z.number().int().min(1).max(100).optional().describe('Max search results to return.'),
+      },
+      annotations: {
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const threadPath = assertThreadExists(options.workspacePath, args.threadPath);
+        const results = threadContext.searchThreadContextEntries(
+          options.workspacePath,
+          threadPath,
+          args.query,
+          {
+            limit: args.limit,
+          },
+        );
+        const summary = threadContext.summarizeThreadContext(options.workspacePath, threadPath, { topN: 3 });
+        return collaborationOkResult('wg_thread_context_search', actor, {
+          operation: 'searched',
+          thread_path: threadPath,
+          query: args.query,
+          count: results.length,
+          results: results.map((entry) => serializeThreadContextSearchResult(entry)),
+          summary: serializeThreadContextSummary(summary),
+        });
+      } catch (error) {
+        return collaborationErrorResult('wg_thread_context_search', error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_thread_context_list',
+    {
+      title: 'WorkGraph Thread Context List',
+      description: 'List all context entries available for a thread.',
+      inputSchema: {
+        threadPath: z.string().min(1).describe('Target thread path (threads/<slug>.md).'),
+        actor: z.string().optional().describe('Optional actor identity used for attribution/context.'),
+      },
+      annotations: {
+        destructiveHint: false,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const threadPath = assertThreadExists(options.workspacePath, args.threadPath);
+        const entries = threadContext.listThreadContextEntries(options.workspacePath, threadPath);
+        const summary = threadContext.summarizeThreadContext(options.workspacePath, threadPath, { topN: 3 });
+        return collaborationOkResult('wg_thread_context_list', actor, {
+          operation: 'listed',
+          thread_path: threadPath,
+          count: entries.length,
+          entries: entries.map((entry) => serializeThreadContextEntry(entry)),
+          summary: serializeThreadContextSummary(summary),
+        });
+      } catch (error) {
+        return collaborationErrorResult('wg_thread_context_list', error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_thread_context_prune',
+    {
+      title: 'WorkGraph Thread Context Prune',
+      description: 'Prune stale and/or low-relevance thread context entries.',
+      inputSchema: {
+        threadPath: z.string().min(1).describe('Target thread path (threads/<slug>.md).'),
+        actor: z.string().optional().describe('Actor identity for write attribution.'),
+        maxAge: z.union([z.number().int().min(1), z.string().min(1)]).optional()
+          .describe('Optional age threshold in minutes or shorthand like 6h / 7d.'),
+        minRelevance: z.number().min(0).max(1).optional().describe('Optional minimum relevance to keep (0..1).'),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        assertWriteAllowed(options, actor, ['thread:update', 'mcp:write'], {
+          action: 'mcp.collaboration.thread-context.prune',
+          target: normalizeThreadPath(args.threadPath),
+        });
+        const threadPath = assertThreadExists(options.workspacePath, args.threadPath);
+        const maxAgeMinutes = parseMaxAgeMinutes(args.maxAge);
+        const result = threadContext.pruneThreadContextEntries(options.workspacePath, threadPath, {
+          ...(maxAgeMinutes !== undefined ? { maxAgeMinutes } : {}),
+          ...(typeof args.minRelevance === 'number' ? { minRelevance: args.minRelevance } : {}),
+        });
+        const summary = threadContext.summarizeThreadContext(options.workspacePath, threadPath, { topN: 3 });
+        return collaborationOkResult('wg_thread_context_prune', actor, {
+          operation: 'pruned',
+          thread_path: threadPath,
+          removed_count: result.removedCount,
+          kept_count: result.keptCount,
+          removed: result.removed,
+          summary: serializeThreadContextSummary(summary),
+        });
+      } catch (error) {
+        return collaborationErrorResult('wg_thread_context_prune', error);
       }
     },
   );
@@ -587,6 +836,49 @@ function findSpawnedThreadByKey(
   ) ?? null;
 }
 
+function findCreatedThreadByKey(workspacePath: string, idempotencyKey: string) {
+  return store.list(workspacePath, 'thread').find((entry) =>
+    !normalizeOptionalString(entry.fields.parent) &&
+    normalizeOptionalString(entry.fields.mcp_create_idempotency_key) === idempotencyKey
+  ) ?? null;
+}
+
+function assertCreateReplayCompatible(
+  existing: { fields: Record<string, unknown> },
+  input: {
+    title: string;
+    goal: string;
+    priority?: string;
+    space?: string;
+  },
+): void {
+  const existingTitle = normalizeOptionalString(existing.fields.title);
+  const existingGoal = normalizeOptionalString(existing.fields.goal);
+  const existingPriority = normalizeOptionalString(existing.fields.priority) ?? 'medium';
+  const existingSpace = normalizeOptionalString(existing.fields.space);
+  const requestedPriority = normalizeOptionalString(input.priority) ?? 'medium';
+  const requestedSpace = normalizeOptionalString(input.space);
+  if (
+    existingTitle !== input.title ||
+    existingGoal !== input.goal ||
+    existingPriority !== requestedPriority ||
+    existingSpace !== requestedSpace
+  ) {
+    throw new McpToolError(
+      'IDEMPOTENCY_CONFLICT',
+      'Create-thread idempotency key was reused with different thread payload.',
+      {
+        details: {
+          previous_title: existingTitle ?? null,
+          previous_goal: existingGoal ?? null,
+          previous_priority: existingPriority,
+          previous_space: existingSpace ?? null,
+        },
+      },
+    );
+  }
+}
+
 function assertPostReplayCompatible(
   existing: conversationModule.ConversationEventRecord,
   input: {
@@ -695,6 +987,79 @@ function serializeThread(entry: { path: string; fields: Record<string, unknown> 
     tags: asStringArray(entry.fields.tags),
     updated: normalizeOptionalString(entry.fields.updated) ?? null,
   };
+}
+
+function serializeThreadContextEntry(entry: threadContextModule.ThreadContextEntry) {
+  return {
+    path: entry.path,
+    title: entry.title,
+    source: entry.source ?? null,
+    added_by: entry.added_by,
+    added_at: entry.added_at,
+    relevance_score: entry.relevance_score,
+    content: entry.content,
+  };
+}
+
+function serializeThreadContextSearchResult(entry: threadContextModule.ThreadContextSearchResult) {
+  return {
+    path: entry.path,
+    title: entry.title,
+    source: entry.source ?? null,
+    added_by: entry.added_by,
+    added_at: entry.added_at,
+    relevance_score: entry.relevance_score,
+    bm25_score: entry.bm25_score,
+    snippet: entry.snippet,
+  };
+}
+
+function serializeThreadContextSummary(summary: threadContextModule.ThreadContextSummary) {
+  return {
+    thread_path: summary.threadPath,
+    thread_tid: summary.threadTid,
+    total_entries: summary.totalEntries,
+    top_entries: summary.topEntries.map((entry) => ({
+      path: entry.path,
+      title: entry.title,
+      source: entry.source ?? null,
+      added_at: entry.added_at,
+      relevance_score: entry.relevance_score,
+    })),
+  };
+}
+
+function parseMaxAgeMinutes(value: unknown): number | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value <= 0) {
+      throw new McpToolError('BAD_INPUT', 'maxAge must be a positive number of minutes.');
+    }
+    return Math.floor(value);
+  }
+  const raw = normalizeOptionalString(value);
+  if (!raw) {
+    throw new McpToolError('BAD_INPUT', 'maxAge must be a positive number of minutes or shorthand (e.g. 6h, 7d).');
+  }
+  const matched = raw.match(/^(\d+)\s*(m|min|mins|minute|minutes|h|hr|hrs|hour|hours|d|day|days)?$/i);
+  if (!matched) {
+    throw new McpToolError('BAD_INPUT', `Invalid maxAge "${raw}". Use minutes (number) or shorthand like 6h / 7d.`);
+  }
+  const amount = Number.parseInt(matched[1], 10);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    throw new McpToolError('BAD_INPUT', 'maxAge must be greater than zero.');
+  }
+  const unit = (matched[2] ?? 'm').toLowerCase();
+  if (unit === 'm' || unit === 'min' || unit === 'mins' || unit === 'minute' || unit === 'minutes') {
+    return amount;
+  }
+  if (unit === 'h' || unit === 'hr' || unit === 'hrs' || unit === 'hour' || unit === 'hours') {
+    return amount * 60;
+  }
+  if (unit === 'd' || unit === 'day' || unit === 'days') {
+    return amount * 60 * 24;
+  }
+  throw new McpToolError('BAD_INPUT', `Unsupported maxAge unit "${unit}".`);
 }
 
 function normalizeThreadPath(value: string): string {

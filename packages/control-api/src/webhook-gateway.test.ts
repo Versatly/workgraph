@@ -122,6 +122,122 @@ describe('webhook gateway HTTP endpoint', () => {
     }
   });
 
+  it('deduplicates GitHub webhook retries by delivery id', async () => {
+    registerWebhookGatewaySource(workspacePath, {
+      key: 'github-main',
+      provider: 'github',
+      secret: 'github-secret',
+      actor: 'github-bot',
+    });
+
+    const handle = await startWorkgraphServer({
+      workspacePath,
+      host: '127.0.0.1',
+      port: 0,
+    });
+    try {
+      const payload = JSON.stringify({
+        action: 'synchronize',
+        pull_request: {
+          number: 42,
+        },
+      });
+      const signature = signGithub(payload, 'github-secret');
+      const first = await fetch(`${handle.baseUrl}/webhook-gateway/github-main`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'pull_request',
+          'x-github-delivery': 'delivery-dup-1',
+          'x-hub-signature-256': signature,
+        },
+        body: payload,
+      });
+      const firstBody = await first.json() as Record<string, unknown>;
+      expect(first.status).toBe(202);
+      expect(firstBody.accepted).toBe(true);
+
+      const second = await fetch(`${handle.baseUrl}/webhook-gateway/github-main`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'pull_request',
+          'x-github-delivery': 'delivery-dup-1',
+          'x-hub-signature-256': signature,
+        },
+        body: payload,
+      });
+      const secondBody = await second.json() as Record<string, unknown>;
+      expect(second.status).toBe(200);
+      expect(secondBody.accepted).toBe(false);
+      expect(secondBody.reason).toBe('duplicate');
+      expect(secondBody.duplicateBy).toBe('deliveryId');
+
+      const recent = ledger.recent(workspacePath, 20);
+      const gatewayEntries = recent.filter((entry) => entry.target.includes('.workgraph/webhook-gateway/github-main/delivery-dup-1'));
+      expect(gatewayEntries).toHaveLength(1);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it('deduplicates GitHub webhook retries by payload digest', async () => {
+    registerWebhookGatewaySource(workspacePath, {
+      key: 'github-main',
+      provider: 'github',
+      secret: 'github-secret',
+      actor: 'github-bot',
+    });
+
+    const handle = await startWorkgraphServer({
+      workspacePath,
+      host: '127.0.0.1',
+      port: 0,
+    });
+    try {
+      const payload = JSON.stringify({
+        action: 'opened',
+        issue: {
+          number: 77,
+        },
+      });
+      const signature = signGithub(payload, 'github-secret');
+      const first = await fetch(`${handle.baseUrl}/webhook-gateway/github-main`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'issues',
+          'x-github-delivery': 'delivery-digest-1',
+          'x-hub-signature-256': signature,
+        },
+        body: payload,
+      });
+      expect(first.status).toBe(202);
+
+      const second = await fetch(`${handle.baseUrl}/webhook-gateway/github-main`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-github-event': 'issues',
+          'x-github-delivery': 'delivery-digest-2',
+          'x-hub-signature-256': signature,
+        },
+        body: payload,
+      });
+      const secondBody = await second.json() as Record<string, unknown>;
+      expect(second.status).toBe(200);
+      expect(secondBody.accepted).toBe(false);
+      expect(secondBody.reason).toBe('duplicate');
+      expect(secondBody.duplicateBy).toBe('payloadDigest');
+
+      const recent = ledger.recent(workspacePath, 20);
+      const gatewayEntries = recent.filter((entry) => entry.target.includes('.workgraph/webhook-gateway/github-main/'));
+      expect(gatewayEntries).toHaveLength(1);
+    } finally {
+      await handle.close();
+    }
+  });
+
   it('rejects invalid GitHub signatures', async () => {
     registerWebhookGatewaySource(workspacePath, {
       key: 'github-main',
