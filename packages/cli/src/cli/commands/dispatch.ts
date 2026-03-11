@@ -291,21 +291,28 @@ export function registerDispatchCommands(program: Command, defaultActor: string)
   addWorkspaceOption(
     dispatchCmd
       .command('reconcile')
-      .description('Requeue runs with expired leases')
+      .description('Reconcile dispatch leases and externally brokered runs')
       .option('-a, --actor <name>', 'Actor', defaultActor)
+      .option('--run-id <runId>', 'Optional run id to reconcile one externally brokered run')
       .option('--json', 'Emit structured JSON output'),
   ).action((opts) =>
     runCommand(
       opts,
-      () => {
+      async () => {
         const workspacePath = resolveWorkspacePath(opts);
-        return workgraph.dispatch.reconcileExpiredLeases(workspacePath, opts.actor);
+        return workgraph.reconciler.reconcileDispatchRuns(workspacePath, opts.actor, {
+          runId: opts.runId,
+        });
       },
       (result) => [
         `Reconciled at: ${result.reconciledAt}`,
-        `Inspected runs: ${result.inspectedRuns}`,
-        `Requeued runs: ${result.requeuedRuns.length}`,
-        ...result.requeuedRuns.map((run) => `- ${run.id}`),
+        `Lease-inspected runs: ${result.lease.inspectedRuns}`,
+        `Lease-requeued runs: ${result.lease.requeuedRuns.length}`,
+        ...result.lease.requeuedRuns.map((run) => `- lease requeued ${run.id}`),
+        `External-inspected runs: ${result.external.inspectedRuns}`,
+        `External-reconciled runs: ${result.external.reconciledRuns.length}`,
+        ...result.external.reconciledRuns.map((run) => `- external reconciled ${run.id} [${run.status}]`),
+        ...result.external.failures.map((failure) => `- external reconcile failed ${failure.runId}: ${failure.error}`),
       ],
     ),
   );
