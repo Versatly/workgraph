@@ -478,14 +478,15 @@ export type DispatchRunEvidenceType =
   | 'thread-ref'
   | 'reply-ref'
   | 'metric'
-  | 'error';
+  | 'error'
+  | 'external-correlation';
 
 export interface DispatchRunEvidenceItem {
   id: string;
   runId: string;
   ts: string;
   type: DispatchRunEvidenceType;
-  source: 'adapter-output' | 'adapter-error' | 'adapter-log' | 'adapter-metric' | 'git' | 'derived';
+  source: 'adapter-output' | 'adapter-error' | 'adapter-log' | 'adapter-metric' | 'adapter-external' | 'git' | 'derived';
   value: string;
   metadata?: Record<string, unknown>;
 }
@@ -493,10 +494,16 @@ export interface DispatchRunEvidenceItem {
 export type DispatchRunAuditEventKind =
   | 'run-created'
   | 'run-idempotency-hit'
+  | 'run-dispatch-attempted'
+  | 'run-dispatch-acknowledged'
+  | 'run-dispatch-failed'
   | 'run-status-changed'
   | 'run-marked'
   | 'run-followup'
   | 'run-heartbeat'
+  | 'run-cancel-requested'
+  | 'run-cancel-acknowledged'
+  | 'run-external-reconciled'
   | 'run-logs-appended'
   | 'run-execution-started'
   | 'run-execution-finished'
@@ -518,6 +525,30 @@ export interface DispatchRunAuditEvent {
   hash: string;
 }
 
+export interface DispatchRunExternalIdentity {
+  provider: string;
+  externalRunId: string;
+  externalAgentId?: string;
+  externalThreadId?: string;
+  correlationKeys?: string[];
+  metadata?: Record<string, unknown>;
+  lastKnownStatus?: RunStatus;
+  lastKnownAt?: string;
+}
+
+export interface DispatchRunDispatchTracking {
+  dispatchedAt?: string;
+  lastSentAt?: string;
+  outboundPayloadDigest?: string;
+  acknowledged?: boolean;
+  acknowledgedAt?: string;
+  retryCount: number;
+  lastReconciledAt?: string;
+  reconciliationError?: string;
+  cancellationRequestedAt?: string;
+  cancellationAcknowledgedAt?: string;
+}
+
 export interface DispatchRun {
   id: string;
   createdAt: string;
@@ -533,6 +564,8 @@ export interface DispatchRun {
   context?: Record<string, unknown>;
   output?: string;
   error?: string;
+  external?: DispatchRunExternalIdentity;
+  dispatchTracking?: DispatchRunDispatchTracking;
   followups: Array<{
     ts: string;
     actor: string;

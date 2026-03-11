@@ -3,16 +3,22 @@ import * as store from './store.js';
 import * as thread from './thread.js';
 import type {
   DispatchAdapter,
+  DispatchAdapterCancelInput,
   DispatchAdapterCreateInput,
+  DispatchAdapterDispatchInput,
   DispatchAdapterExecutionInput,
   DispatchAdapterExecutionResult,
+  DispatchAdapterExternalUpdate,
   DispatchAdapterLogEntry,
+  DispatchAdapterPollInput,
   DispatchAdapterRunStatus,
 } from './runtime-adapter-contracts.js';
+import type { RunStatus } from './types.js';
 
 const DEFAULT_MAX_STEPS = 200;
 const DEFAULT_STEP_DELAY_MS = 25;
 const DEFAULT_AGENT_COUNT = 3;
+const DEFAULT_EXTERNAL_TIMEOUT_MS = 30_000;
 
 export class CursorCloudAdapter implements DispatchAdapter {
   name = 'cursor-cloud';
@@ -38,6 +44,158 @@ export class CursorCloudAdapter implements DispatchAdapter {
 
   async logs(_runId: string): Promise<DispatchAdapterLogEntry[]> {
     return [];
+  }
+
+  async dispatch(input: DispatchAdapterDispatchInput): Promise<DispatchAdapterExternalUpdate> {
+    const config = resolveCursorBrokerConfig(input.context);
+    if (!config) {
+      throw new Error('cursor-cloud external broker requires cursor_cloud_api_base_url or cursor_cloud_dispatch_url.');
+    }
+    const now = new Date().toISOString();
+    const payload = {
+      runId: input.runId,
+      actor: input.actor,
+      objective: input.objective,
+      workspacePath: input.workspacePath,
+      context: input.context ?? {},
+      followups: input.followups ?? [],
+      external: input.external ?? null,
+      ts: now,
+    };
+    const response = await fetchJson(config.dispatchUrl, {
+      method: 'POST',
+      headers: buildCursorHeaders(config),
+      body: JSON.stringify(payload),
+      signal: input.abortSignal,
+    }, config.timeoutMs);
+    const externalRunId = readExternalRunId(response.json);
+    if (!response.ok || !externalRunId) {
+      throw new Error(`cursor-cloud dispatch failed (${response.status}): ${response.text || 'missing external run id'}`);
+    }
+    return {
+      acknowledged: true,
+      acknowledgedAt: now,
+      status: normalizeRunStatus(response.json?.status) ?? 'queued',
+      external: {
+        provider: 'cursor-cloud',
+        externalRunId,
+        externalAgentId: readString(response.json?.agentId) ?? readString(response.json?.agent_id),
+        externalThreadId: readString(response.json?.threadId) ?? readString(response.json?.thread_id),
+        correlationKeys: compactStrings([
+          input.runId,
+          readString(input.context?.cursor_correlation_key),
+          readString(response.json?.correlationKey),
+        ]),
+        metadata: {
+          response: response.json ?? response.text,
+        },
+      },
+      lastKnownAt: now,
+      logs: [
+        {
+          ts: now,
+          level: 'info',
+          message: `cursor-cloud dispatched external run ${externalRunId}.`,
+        },
+      ],
+      metrics: {
+        adapter: 'cursor-cloud',
+        httpStatus: response.status,
+      },
+      metadata: {
+        httpStatus: response.status,
+      },
+    };
+  }
+
+  async poll(input: DispatchAdapterPollInput): Promise<DispatchAdapterExternalUpdate | null> {
+    const config = resolveCursorBrokerConfig(input.context);
+    if (!config) return null;
+    const response = await fetchJson(resolveTemplate(config.statusUrlTemplate, input.external.externalRunId), {
+      method: 'GET',
+      headers: buildCursorHeaders(config),
+      signal: input.abortSignal,
+    }, config.timeoutMs);
+    if (!response.ok) {
+      throw new Error(`cursor-cloud poll failed (${response.status}): ${response.text || response.statusText}`);
+    }
+    return {
+      status: normalizeRunStatus(response.json?.status),
+      output: readString(response.json?.output),
+      error: readString(response.json?.error),
+      external: {
+        provider: 'cursor-cloud',
+        externalRunId: input.external.externalRunId,
+        externalAgentId: readString(response.json?.agentId) ?? readString(response.json?.agent_id) ?? input.external.externalAgentId,
+        externalThreadId: readString(response.json?.threadId) ?? readString(response.json?.thread_id) ?? input.external.externalThreadId,
+        correlationKeys: compactStrings([
+          ...(input.external.correlationKeys ?? []),
+          readString(response.json?.correlationKey),
+        ]),
+        metadata: {
+          response: response.json ?? response.text,
+        },
+      },
+      lastKnownAt: readString(response.json?.updatedAt) ?? readString(response.json?.updated_at) ?? new Date().toISOString(),
+      logs: [],
+      metadata: {
+        httpStatus: response.status,
+      },
+    };
+  }
+
+  async cancel(input: DispatchAdapterCancelInput): Promise<DispatchAdapterExternalUpdate> {
+    const config = resolveCursorBrokerConfig(input.context);
+    if (!config || !input.external?.externalRunId) {
+      return {
+        status: 'cancelled',
+        acknowledged: true,
+        acknowledgedAt: new Date().toISOString(),
+        external: input.external,
+      };
+    }
+    const now = new Date().toISOString();
+    const response = await fetchJson(resolveTemplate(config.cancelUrlTemplate, input.external.externalRunId), {
+      method: 'POST',
+      headers: buildCursorHeaders(config),
+      body: JSON.stringify({
+        runId: input.runId,
+        actor: input.actor,
+        objective: input.objective,
+        externalRunId: input.external.externalRunId,
+        ts: now,
+      }),
+      signal: input.abortSignal,
+    }, config.timeoutMs);
+    if (!response.ok) {
+      throw new Error(`cursor-cloud cancel failed (${response.status}): ${response.text || response.statusText}`);
+    }
+    return {
+      status: normalizeRunStatus(response.json?.status),
+      acknowledged: true,
+      acknowledgedAt: now,
+      external: {
+        provider: 'cursor-cloud',
+        externalRunId: input.external.externalRunId,
+        externalAgentId: input.external.externalAgentId,
+        externalThreadId: input.external.externalThreadId,
+        correlationKeys: input.external.correlationKeys,
+        metadata: {
+          response: response.json ?? response.text,
+        },
+      },
+      lastKnownAt: now,
+      metadata: {
+        httpStatus: response.status,
+      },
+    };
+  }
+
+  async health(): Promise<Record<string, unknown>> {
+    return {
+      adapter: this.name,
+      mode: 'dual',
+    };
   }
 
   async execute(input: DispatchAdapterExecutionInput): Promise<DispatchAdapterExecutionResult> {
@@ -278,6 +436,166 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+}
+
+interface CursorBrokerConfig {
+  dispatchUrl: string;
+  statusUrlTemplate: string;
+  cancelUrlTemplate: string;
+  token?: string;
+  headers: Record<string, string>;
+  timeoutMs: number;
+}
+
+async function fetchJson(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number,
+): Promise<{
+  ok: boolean;
+  status: number;
+  statusText: string;
+  text: string;
+  json: Record<string, unknown> | null;
+}> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, {
+      ...init,
+      signal: init.signal ?? controller.signal,
+    });
+    const text = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      text,
+      json: safeParseJson(text),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function resolveCursorBrokerConfig(context: Record<string, unknown> | undefined): CursorBrokerConfig | null {
+  const baseUrl = resolveUrl(
+    context?.cursor_cloud_api_base_url,
+    process.env.WORKGRAPH_CURSOR_CLOUD_API_BASE_URL,
+  );
+  const dispatchUrl = resolveUrl(
+    context?.cursor_cloud_dispatch_url,
+    baseUrl ? `${baseUrl}/runs` : undefined,
+  );
+  if (!dispatchUrl) return null;
+  const statusUrlTemplate = readString(context?.cursor_cloud_status_url_template)
+    ?? (baseUrl ? `${baseUrl}/runs/{externalRunId}` : undefined)
+    ?? `${dispatchUrl.replace(/\/+$/, '')}/{externalRunId}`;
+  const cancelUrlTemplate = readString(context?.cursor_cloud_cancel_url_template)
+    ?? (baseUrl ? `${baseUrl}/runs/{externalRunId}/cancel` : undefined)
+    ?? `${dispatchUrl.replace(/\/+$/, '')}/{externalRunId}/cancel`;
+  return {
+    dispatchUrl,
+    statusUrlTemplate,
+    cancelUrlTemplate,
+    token: readString(context?.cursor_cloud_api_token) ?? readString(process.env.WORKGRAPH_CURSOR_CLOUD_API_TOKEN),
+    headers: readHeaders(context?.cursor_cloud_headers),
+    timeoutMs: normalizeInt(readNumber(context?.cursor_cloud_timeout_ms), DEFAULT_EXTERNAL_TIMEOUT_MS, 1_000, 120_000),
+  };
+}
+
+function buildCursorHeaders(config: CursorBrokerConfig): Record<string, string> {
+  return {
+    'content-type': 'application/json',
+    ...config.headers,
+    ...(config.token ? { authorization: `Bearer ${config.token}` } : {}),
+  };
+}
+
+function resolveTemplate(template: string, externalRunId: string): string {
+  return template.replaceAll('{externalRunId}', externalRunId);
+}
+
+function readHeaders(value: unknown): Record<string, string> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const record = value as Record<string, unknown>;
+  const headers: Record<string, string> = {};
+  for (const [key, raw] of Object.entries(record)) {
+    if (!key) continue;
+    if (raw === undefined || raw === null) continue;
+    headers[key.toLowerCase()] = String(raw);
+  }
+  return headers;
+}
+
+function safeParseJson(value: string): Record<string, unknown> | null {
+  if (!value.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    return parsed as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
+function readExternalRunId(value: Record<string, unknown> | null): string | undefined {
+  return readString(value?.externalRunId)
+    ?? readString(value?.external_run_id)
+    ?? readString(value?.runId)
+    ?? readString(value?.run_id)
+    ?? readString(value?.id)
+    ?? readString(value?.agentId)
+    ?? readString(value?.agent_id);
+}
+
+function resolveUrl(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    const candidate = readString(value);
+    if (!candidate) continue;
+    try {
+      const url = new URL(candidate);
+      if (url.protocol === 'http:' || url.protocol === 'https:') {
+        return url.toString();
+      }
+    } catch {
+      continue;
+    }
+  }
+  return undefined;
+}
+
+function normalizeRunStatus(value: unknown): RunStatus | undefined {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (
+    normalized === 'queued'
+    || normalized === 'running'
+    || normalized === 'succeeded'
+    || normalized === 'failed'
+    || normalized === 'cancelled'
+  ) {
+    return normalized;
+  }
+  return undefined;
+}
+
+function compactStrings(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((entry): entry is string => Boolean(entry && entry.trim())).map((entry) => entry.trim()))];
+}
+
+function readString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function readNumber(value: unknown): number | undefined {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim().length > 0) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
 function renderSummary(data: {

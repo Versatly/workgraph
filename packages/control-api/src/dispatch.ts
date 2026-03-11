@@ -9,6 +9,8 @@ export const {
   markRun,
   heartbeat,
   reconcileExpiredLeases,
+  reconcileExternalRun,
+  pollExternalRuns,
   handoffRun,
   logs,
   listRuns,
@@ -21,5 +23,6 @@ export type DispatchClaimResult = ReturnType<typeof claimThread>;
 export type DispatchExecuteInput = Parameters<typeof executeRun>[2];
 export type DispatchHeartbeatInput = Parameters<typeof heartbeat>[2];
 export type DispatchReconcileResult = ReturnType<typeof reconcileExpiredLeases>;
+export type DispatchExternalReconcileInput = Parameters<typeof reconcileExternalRun>[1];
 export type DispatchHandoffInput = Parameters<typeof handoffRun>[2];
 export type DispatchHandoffResult = ReturnType<typeof handoffRun>;

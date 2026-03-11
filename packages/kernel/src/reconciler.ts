@@ -1,3 +1,4 @@
+import * as dispatch from './dispatch.js';
 import * as gate from './gate.js';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
@@ -12,6 +13,12 @@ import type {
 } from './types.js';
 
 const THREAD_STATUSES: ThreadStatus[] = ['open', 'active', 'blocked', 'done', 'cancelled'];
+
+export interface DispatchRunReconcileReport {
+  reconciledAt: string;
+  lease: dispatch.DispatchReconcileResult;
+  external: dispatch.DispatchPollExternalRunsResult;
+}
 
 export function reconcile(workspacePath: string): ReconcileReport {
   const violations: ReconcileIssue[] = [];
@@ -141,6 +148,27 @@ export function reconcile(workspacePath: string): ReconcileReport {
     warnings,
     ok: violations.length === 0,
   };
+}
+
+export async function reconcileDispatchRuns(
+  workspacePath: string,
+  actor: string,
+  options: { runId?: string } = {},
+): Promise<DispatchRunReconcileReport> {
+  const lease = dispatch.reconcileExpiredLeases(workspacePath, actor);
+  const external = await dispatch.pollExternalRuns(workspacePath, actor, options);
+  return {
+    reconciledAt: new Date().toISOString(),
+    lease,
+    external,
+  };
+}
+
+export function reconcileExternalRun(
+  workspacePath: string,
+  input: dispatch.DispatchExternalReconcileInput,
+): dispatch.DispatchExternalReconcileResult {
+  return dispatch.reconcileExternalRun(workspacePath, input);
 }
 
 function checkTerminalLockHistory(threadPath: string, history: LedgerEntry[]): ReconcileIssue[] {

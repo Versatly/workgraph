@@ -4,7 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import * as auth from './auth.js';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
@@ -16,8 +16,21 @@ import {
 } from './dispatch-run-audit.js';
 import {
   captureWorkspaceGitState,
+  collectDispatchExternalCorrelationEvidence,
   collectDispatchExecutionEvidence,
 } from './dispatch-run-evidence.js';
+import {
+  findDispatchBrokerState,
+  hydrateRunWithDispatchBrokerState,
+  isBrokeredRun,
+  listDispatchBrokerStates,
+  mergeDispatchTracking,
+  mergeExternalIdentity,
+  normalizeDispatchTracking,
+  normalizeExternalIdentity,
+  readDispatchBrokerState,
+  updateDispatchBrokerState,
+} from './dispatch/external-run-state.js';
 import { resolveDispatchAdapter } from './runtime-adapter-registry.js';
 import {
   ConflictError,
@@ -33,11 +46,19 @@ import {
   validateRunId,
   validateWorkspacePath,
 } from './validation.js';
-import type { DispatchAdapterLogEntry } from './runtime-adapter-contracts.js';
+import type {
+  DispatchAdapterCancelInput,
+  DispatchAdapterDispatchInput,
+  DispatchAdapterExternalIdentity,
+  DispatchAdapterExternalUpdate,
+  DispatchAdapterLogEntry,
+} from './runtime-adapter-contracts.js';
 import type {
   DispatchRun,
   DispatchRunAuditEvent,
+  DispatchRunDispatchTracking,
   DispatchRunEvidenceItem,
+  DispatchRunExternalIdentity,
   PrimitiveInstance,
   RunStatus,
 } from './types.js';
@@ -120,6 +141,43 @@ export interface DispatchStateRecoveryResult {
   repairedRuns: DispatchRun[];
   removedCorruptRuns: number;
   warnings: string[];
+}
+
+export interface DispatchExternalReconcileInput {
+  actor: string;
+  runId?: string;
+  provider?: string;
+  externalRunId?: string;
+  correlationKeys?: string[];
+  status?: RunStatus;
+  output?: string;
+  error?: string;
+  acknowledged?: boolean;
+  acknowledgedAt?: string;
+  external?: DispatchRunExternalIdentity;
+  metadata?: Record<string, unknown>;
+  logs?: DispatchAdapterLogEntry[];
+  source?: 'dispatch' | 'poll' | 'event' | 'cancel';
+  ts?: string;
+}
+
+export interface DispatchExternalReconcileResult {
+  reconciledAt: string;
+  matchedRunId?: string;
+  statusChanged: boolean;
+  previousStatus?: RunStatus;
+  currentStatus?: RunStatus;
+  run?: DispatchRun;
+}
+
+export interface DispatchPollExternalRunsResult {
+  reconciledAt: string;
+  inspectedRuns: number;
+  reconciledRuns: DispatchRun[];
+  failures: Array<{
+    runId: string;
+    error: string;
+  }>;
 }
 
 function withDispatchOperation<T>(
@@ -500,7 +558,13 @@ export function stop(workspacePath: string, runId: string, actor: string): Dispa
     workspacePath: safeWorkspacePath,
     runId: safeRunId,
     actor: safeActor,
-  }, () => setStatus(safeWorkspacePath, safeRunId, safeActor, 'cancelled', 'Run cancelled by operator.'));
+  }, () => {
+    const run = status(safeWorkspacePath, safeRunId);
+    if (wantsExternalBroker(run)) {
+      return requestBrokeredRunCancellation(safeWorkspacePath, run, safeActor);
+    }
+    return setStatus(safeWorkspacePath, safeRunId, safeActor, 'cancelled', 'Run cancelled by operator.');
+  });
 }
 
 export function markRun(
@@ -932,15 +996,6 @@ export async function executeRun(
     }
 
     const adapter = resolveDispatchAdapter(existing.adapter);
-    if (!adapter.execute) {
-      throw new ConflictError(`Dispatch adapter "${existing.adapter}" does not implement execute().`, {
-        workspacePath: safeWorkspacePath,
-        runId: safeRunId,
-        actor: safeActor,
-        operation: 'dispatch.run.execute',
-      });
-    }
-
     const resolvedDispatchMode = input.dispatchMode
       ?? normalizeDispatchMode(existing.context?.dispatch_mode)
       ?? 'direct';
@@ -1008,6 +1063,29 @@ export async function executeRun(
       }
     }
 
+    if (wantsExternalBroker(existing)) {
+      try {
+        if (existing.external?.externalRunId) {
+          if (adapter.poll) {
+            await pollExternalRuns(safeWorkspacePath, safeActor, { runId: safeRunId });
+          }
+          return status(safeWorkspacePath, safeRunId);
+        }
+        return await attemptExternalBrokerDispatch(safeWorkspacePath, existing, safeActor, adapter);
+      } catch (error) {
+        return failBrokeredRun(safeWorkspacePath, safeRunId, safeActor, errorMessage(error));
+      }
+    }
+
+    if (!adapter.execute) {
+      throw new ConflictError(`Dispatch adapter "${existing.adapter}" does not implement execute().`, {
+        workspacePath: safeWorkspacePath,
+        runId: safeRunId,
+        actor: safeActor,
+        operation: 'dispatch.run.execute',
+      });
+    }
+
     if (existing.status === 'queued') {
       setStatus(safeWorkspacePath, safeRunId, safeActor, 'running', `Run started on adapter "${existing.adapter}".`);
     }
@@ -1032,7 +1110,9 @@ export async function executeRun(
           space: input.space,
           createCheckpoint: input.createCheckpoint,
           isCancelled: () => abortController.signal.aborted || getRun(safeWorkspacePath, safeRunId)?.status === 'cancelled',
-          onHeartbeat: () => heartbeat(safeWorkspacePath, safeRunId, { actor: safeActor }),
+          onHeartbeat: () => {
+            heartbeat(safeWorkspacePath, safeRunId, { actor: safeActor });
+          },
           abortSignal: abortController.signal,
           heartbeatIntervalMs: resolvedHeartbeatIntervalMs,
         }),
@@ -1299,13 +1379,15 @@ export function recoverDispatchState(workspacePath: string, actor: string): Disp
       for (const rawRun of state.runs) {
         try {
           const run = hydrateRun(rawRun);
+          const brokerState = readDispatchBrokerState(safeWorkspacePath, run.id);
+          const brokered = hydrateRunWithDispatchBrokerState(run, brokerState);
           if (!run.id || !run.id.startsWith('run_')) {
             removedCorruptRuns += 1;
             warnings.push('Dropped corrupt run entry with missing/invalid run ID.');
             continue;
           }
           let changed = false;
-          if (run.status === 'running' && !run.leaseExpires) {
+          if (run.status === 'running' && !run.leaseExpires && !isBrokeredRun(brokered)) {
             run.status = 'queued';
             run.updatedAt = nowIso;
             run.logs.push({
@@ -1315,7 +1397,7 @@ export function recoverDispatchState(workspacePath: string, actor: string): Disp
             });
             changed = true;
           }
-          if (run.status === 'running' && run.leaseExpires) {
+          if (run.status === 'running' && run.leaseExpires && !isBrokeredRun(brokered)) {
             const leaseMs = Date.parse(run.leaseExpires);
             if (!Number.isFinite(leaseMs) || leaseMs <= Date.now()) {
               run.status = 'queued';
@@ -1508,7 +1590,8 @@ function getRun(workspacePath: string, runId: string): DispatchRun | null {
 }
 
 function ensureRunPrimitive(workspacePath: string, run: DispatchRun, actor: string): void {
-  const safeTitle = `${run.objective} (${run.id.slice(0, 8)})`;
+  const hydrated = hydrateRunWithRuntimeMetadata(workspacePath, run);
+  const safeTitle = `${hydrated.objective} (${hydrated.id.slice(0, 8)})`;
   const runPrimitivePath = `runs/${run.id}.md`;
   const existing = store.read(workspacePath, runPrimitivePath);
   if (existing) return;
@@ -1517,18 +1600,20 @@ function ensureRunPrimitive(workspacePath: string, run: DispatchRun, actor: stri
     'run',
     {
       title: safeTitle,
-      objective: run.objective,
-      runtime: run.adapter,
-      status: run.status,
-      run_id: run.id,
-      owner: run.actor,
-      lease_expires: run.leaseExpires,
-      lease_duration_minutes: run.leaseDurationMinutes,
-      last_heartbeat: latestHeartbeat(run),
-      heartbeat_timestamps: run.heartbeats ?? [],
+      objective: hydrated.objective,
+      runtime: hydrated.adapter,
+      status: hydrated.status,
+      run_id: hydrated.id,
+      owner: hydrated.actor,
+      lease_expires: hydrated.leaseExpires,
+      lease_duration_minutes: hydrated.leaseDurationMinutes,
+      last_heartbeat: latestHeartbeat(hydrated),
+      heartbeat_timestamps: hydrated.heartbeats ?? [],
+      ...(hydrated.external ? { external: sanitizeFrontmatterValue(hydrated.external) } : {}),
+      ...(hydrated.dispatchTracking ? { dispatch_tracking: sanitizeFrontmatterValue(hydrated.dispatchTracking) } : {}),
       tags: ['dispatch'],
     },
-    `## Objective\n\n${run.objective}\n`,
+    renderRunBody(hydrated),
     actor,
     { pathOverride: runPrimitivePath },
   );
@@ -1551,6 +1636,8 @@ function syncRunPrimitive(workspacePath: string, run: DispatchRun, actor: string
       lease_duration_minutes: hydrated.leaseDurationMinutes,
       last_heartbeat: latestHeartbeat(hydrated),
       heartbeat_timestamps: hydrated.heartbeats ?? [],
+      ...(hydrated.external ? { external: sanitizeFrontmatterValue(hydrated.external) } : {}),
+      ...(hydrated.dispatchTracking ? { dispatch_tracking: sanitizeFrontmatterValue(hydrated.dispatchTracking) } : {}),
     },
     renderRunBody(hydrated),
     actor,
@@ -1572,6 +1659,34 @@ function renderRunBody(run: DispatchRun): string {
     run.leaseExpires
       ? `expires: ${run.leaseExpires} (${run.leaseDurationMinutes ?? DEFAULT_LEASE_MINUTES} min lease)`
       : 'none',
+    '',
+    '## External correlation',
+    '',
+    ...(run.external
+      ? [
+          `provider: ${run.external.provider}`,
+          `external_run_id: ${run.external.externalRunId}`,
+          `last_known_status: ${run.external.lastKnownStatus ?? 'unknown'}`,
+          `last_known_at: ${run.external.lastKnownAt ?? 'unknown'}`,
+          ...(run.external.externalAgentId ? [`external_agent_id: ${run.external.externalAgentId}`] : []),
+          ...(run.external.externalThreadId ? [`external_thread_id: ${run.external.externalThreadId}`] : []),
+          ...((run.external.correlationKeys ?? []).length > 0
+            ? [`correlation_keys: ${(run.external.correlationKeys ?? []).join(', ')}`]
+            : []),
+        ]
+      : ['none']),
+    '',
+    '## Dispatch tracking',
+    '',
+    `dispatched_at: ${run.dispatchTracking?.dispatchedAt ?? 'n/a'}`,
+    `last_sent_at: ${run.dispatchTracking?.lastSentAt ?? 'n/a'}`,
+    `acknowledged: ${run.dispatchTracking?.acknowledged === true ? 'yes' : 'no'}`,
+    `acknowledged_at: ${run.dispatchTracking?.acknowledgedAt ?? 'n/a'}`,
+    `retry_count: ${run.dispatchTracking?.retryCount ?? 0}`,
+    `last_reconciled_at: ${run.dispatchTracking?.lastReconciledAt ?? 'n/a'}`,
+    `reconciliation_error: ${run.dispatchTracking?.reconciliationError ?? 'n/a'}`,
+    `cancellation_requested_at: ${run.dispatchTracking?.cancellationRequestedAt ?? 'n/a'}`,
+    `cancellation_acknowledged_at: ${run.dispatchTracking?.cancellationAcknowledgedAt ?? 'n/a'}`,
     '',
     '## Logs',
     '',
@@ -1629,11 +1744,14 @@ function hydrateRun(run: DispatchRun): DispatchRun {
     ...run,
     leaseDurationMinutes: normalizeLeaseMinutes(run.leaseDurationMinutes),
     heartbeats: Array.isArray(run.heartbeats) ? run.heartbeats : [],
+    external: normalizeExternalIdentity(run.external),
+    dispatchTracking: normalizeDispatchTracking(run.dispatchTracking),
   };
 }
 
 function hydrateRunWithRuntimeMetadata(workspacePath: string, run: DispatchRun): DispatchRun {
-  const base = hydrateRun(run);
+  const brokerState = readDispatchBrokerState(workspacePath, run.id);
+  const base = hydrateRunWithDispatchBrokerState(hydrateRun(run), brokerState);
   const trail = listDispatchRunAuditEvents(workspacePath, run.id);
   const evidenceCount = trail
     .filter((entry) => entry.kind === 'run-evidence-collected')
@@ -1670,6 +1788,765 @@ function listRunEvidenceFromTrail(trail: DispatchRunAuditEvent[]): DispatchRunEv
     }
   }
   return items;
+}
+
+async function attemptExternalBrokerDispatch(
+  workspacePath: string,
+  run: DispatchRun,
+  actor: string,
+  adapter: ReturnType<typeof resolveDispatchAdapter>,
+): Promise<DispatchRun> {
+  if (!adapter.dispatch) {
+    throw new ConflictError(`Dispatch adapter "${run.adapter}" does not implement dispatch().`, {
+      workspacePath,
+      runId: run.id,
+      actor,
+      operation: 'dispatch.run.external-dispatch',
+    });
+  }
+  const now = new Date().toISOString();
+  const dispatchInput: DispatchAdapterDispatchInput = {
+    workspacePath,
+    runId: run.id,
+    actor,
+    objective: run.objective,
+    context: run.context,
+    followups: run.followups,
+    external: normalizeDispatchAdapterExternalIdentity(run.external),
+  };
+  const payloadDigest = hashExternalDispatchPayload(dispatchInput);
+  const trackingBefore = normalizeDispatchTracking(run.dispatchTracking);
+  const tracking: DispatchRunDispatchTracking = {
+    ...trackingBefore,
+    dispatchedAt: trackingBefore.dispatchedAt ?? now,
+    lastSentAt: now,
+    outboundPayloadDigest: payloadDigest,
+    retryCount: trackingBefore.retryCount + 1,
+    reconciliationError: undefined,
+  };
+  persistBrokerState(workspacePath, run.id, {
+    external: run.external,
+    tracking,
+  });
+  appendDispatchRunAuditEventSafe(workspacePath, {
+    runId: run.id,
+    actor,
+    kind: 'run-dispatch-attempted',
+    data: {
+      adapter: run.adapter,
+      payload_digest: payloadDigest,
+      retry_count: tracking.retryCount,
+      dispatched_at: tracking.dispatchedAt,
+      last_sent_at: tracking.lastSentAt,
+    },
+  }, {
+    runId: run.id,
+    actor,
+    operation: 'dispatch.run.external-dispatch',
+  });
+
+  let dispatched: DispatchAdapterExternalUpdate;
+  try {
+    dispatched = await adapter.dispatch(dispatchInput);
+  } catch (error) {
+    persistBrokerState(workspacePath, run.id, {
+      tracking: {
+        ...tracking,
+        reconciliationError: errorMessage(error),
+      },
+    });
+    appendDispatchRunAuditEventSafe(workspacePath, {
+      runId: run.id,
+      actor,
+      kind: 'run-dispatch-failed',
+      data: {
+        adapter: run.adapter,
+        error: errorMessage(error),
+      },
+    }, {
+      runId: run.id,
+      actor,
+      operation: 'dispatch.run.external-dispatch',
+    });
+    throw error;
+  }
+
+  const external = mergeExternalIdentity(run.external, normalizeExternalFromUpdate(run.adapter, dispatched));
+  if (!external) {
+    throw new ConflictError(`Dispatch adapter "${run.adapter}" did not return an external run identifier.`, {
+      workspacePath,
+      runId: run.id,
+      actor,
+      operation: 'dispatch.run.external-dispatch',
+    });
+  }
+  const mergedTracking = mergeDispatchTracking(tracking, {
+    acknowledged: dispatched.acknowledged,
+    acknowledgedAt: dispatched.acknowledgedAt ?? (dispatched.acknowledged === true ? now : undefined),
+    lastReconciledAt: dispatched.status ? (dispatched.lastKnownAt ?? now) : undefined,
+  });
+  persistBrokerState(workspacePath, run.id, {
+    external: mergeExternalIdentity(external, {
+      provider: external.provider,
+      externalRunId: external.externalRunId,
+      lastKnownStatus: dispatched.status,
+      lastKnownAt: dispatched.lastKnownAt ?? now,
+      correlationKeys: external?.correlationKeys,
+      metadata: {
+        ...(external?.metadata ?? {}),
+        ...(dispatched.metadata ?? {}),
+      },
+    }),
+    tracking: mergedTracking,
+  });
+  if ((dispatched.logs ?? []).length > 0) {
+    appendRunLogs(workspacePath, run.id, actor, dispatched.logs ?? []);
+  }
+  recordExternalCorrelationEvidence(workspacePath, run.id, actor, external, mergedTracking, dispatched.metadata);
+  appendDispatchRunAuditEventSafe(workspacePath, {
+    runId: run.id,
+    actor,
+    kind: 'run-dispatch-acknowledged',
+    data: {
+      adapter: run.adapter,
+      acknowledged: dispatched.acknowledged === true,
+      acknowledged_at: mergedTracking.acknowledgedAt,
+      external: external ? serializeExternalIdentityForAudit(external) : undefined,
+      status: dispatched.status,
+    },
+  }, {
+    runId: run.id,
+    actor,
+    operation: 'dispatch.run.external-dispatch',
+  });
+  if (dispatched.status || dispatched.output || dispatched.error || dispatched.acknowledged || external) {
+    reconcileExternalRun(workspacePath, {
+      actor,
+      runId: run.id,
+      source: 'dispatch',
+      status: dispatched.status,
+      output: dispatched.output,
+      error: dispatched.error,
+      acknowledged: dispatched.acknowledged,
+      acknowledgedAt: dispatched.acknowledgedAt,
+      external: external
+        ? {
+            ...external,
+            ...(dispatched.status ? { lastKnownStatus: dispatched.status } : {}),
+            lastKnownAt: dispatched.lastKnownAt ?? now,
+          }
+        : undefined,
+      metadata: dispatched.metadata,
+      logs: [],
+      ts: dispatched.lastKnownAt ?? now,
+    });
+  }
+  return status(workspacePath, run.id);
+}
+
+function requestBrokeredRunCancellation(
+  workspacePath: string,
+  run: DispatchRun,
+  actor: string,
+): DispatchRun {
+  const adapter = resolveDispatchAdapter(run.adapter);
+  const now = new Date().toISOString();
+  const tracking = mergeDispatchTracking(run.dispatchTracking, {
+    cancellationRequestedAt: now,
+    reconciliationError: undefined,
+  });
+  persistBrokerState(workspacePath, run.id, {
+    external: run.external,
+    tracking,
+  });
+  appendDispatchRunAuditEventSafe(workspacePath, {
+    runId: run.id,
+    actor,
+    kind: 'run-cancel-requested',
+    data: {
+      adapter: run.adapter,
+      external: run.external ? serializeExternalIdentityForAudit(run.external) : undefined,
+      cancellation_requested_at: now,
+    },
+  }, {
+    runId: run.id,
+    actor,
+    operation: 'dispatch.run.stop',
+  });
+
+  const cancelInput: DispatchAdapterCancelInput = {
+    workspacePath,
+    runId: run.id,
+    actor,
+    objective: run.objective,
+    context: run.context,
+    external: normalizeDispatchAdapterExternalIdentity(run.external),
+  };
+  const cancelPromise: Promise<DispatchAdapterExternalUpdate> = adapter.cancel
+    ? adapter.cancel(cancelInput)
+    : adapter.stop(run.id, actor).then((value) => ({ status: value.status } as DispatchAdapterExternalUpdate));
+  void cancelPromise
+    .then((result) => {
+      if ((result.logs ?? []).length > 0) {
+        appendRunLogs(workspacePath, run.id, actor, result.logs ?? []);
+      }
+      reconcileExternalRun(workspacePath, {
+        actor,
+        runId: run.id,
+        source: 'cancel',
+        status: result.status,
+        output: result.output,
+        error: result.error,
+        acknowledged: result.acknowledged,
+        acknowledgedAt: result.acknowledgedAt,
+        external: mergeExternalIdentity(run.external, normalizeExternalFromUpdate(run.adapter, result)),
+        metadata: result.metadata,
+        ts: result.lastKnownAt ?? new Date().toISOString(),
+      });
+    })
+    .catch((error) => {
+      persistBrokerState(workspacePath, run.id, {
+        external: run.external,
+        tracking: mergeDispatchTracking(tracking, {
+          lastReconciledAt: new Date().toISOString(),
+          reconciliationError: errorMessage(error),
+        }),
+      });
+      appendDispatchRunAuditEventSafe(workspacePath, {
+        runId: run.id,
+        actor,
+        kind: 'run-dispatch-failed',
+        data: {
+          adapter: run.adapter,
+          stage: 'cancel',
+          error: errorMessage(error),
+        },
+      }, {
+        runId: run.id,
+        actor,
+        operation: 'dispatch.run.stop',
+      });
+    });
+  return status(workspacePath, run.id);
+}
+
+export function reconcileExternalRun(
+  workspacePath: string,
+  input: DispatchExternalReconcileInput,
+): DispatchExternalReconcileResult {
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.external-reconcile');
+  const safeActor = validateActorName(input.actor, {
+    workspacePath: safeWorkspacePath,
+    runId: input.runId,
+    actor: input.actor,
+    operation: 'dispatch.run.external-reconcile',
+  });
+  return withDispatchOperation('dispatch.run.external-reconcile', {
+    workspacePath: safeWorkspacePath,
+    runId: input.runId,
+    actor: safeActor,
+  }, () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.external-reconcile', input.runId ?? '.workgraph/dispatch-broker', [
+      'dispatch:run',
+    ]);
+    const normalizedInput = normalizeExternalReconcileInput(input);
+    const brokerState = findDispatchBrokerState(safeWorkspacePath, {
+      runId: normalizedInput.runId,
+      provider: normalizedInput.provider,
+      externalRunId: normalizedInput.externalRunId,
+      correlationKeys: normalizedInput.correlationKeys,
+    });
+    if (!brokerState) {
+      throw new ResourceNotFoundError('External run correlation not found.', {
+        workspacePath: safeWorkspacePath,
+        actor: safeActor,
+        operation: 'dispatch.run.external-reconcile',
+      });
+    }
+    const current = getRun(safeWorkspacePath, brokerState.runId);
+    if (!current) {
+      throw new ResourceNotFoundError(`Run not found: ${brokerState.runId}`, {
+        workspacePath: safeWorkspacePath,
+        runId: brokerState.runId,
+        actor: safeActor,
+        operation: 'dispatch.run.external-reconcile',
+      });
+    }
+    if ((normalizedInput.logs ?? []).length > 0) {
+      appendRunLogs(safeWorkspacePath, brokerState.runId, safeActor, normalizedInput.logs ?? []);
+    }
+    const nowIso = normalizedInput.ts ?? new Date().toISOString();
+    const nextExternal = mergeExternalIdentity(
+      mergeExternalIdentity(current.external, brokerState.external),
+      normalizedInput.external ?? (
+        normalizedInput.provider && normalizedInput.externalRunId
+          ? {
+              provider: normalizedInput.provider,
+              externalRunId: normalizedInput.externalRunId,
+              correlationKeys: normalizedInput.correlationKeys,
+              lastKnownStatus: normalizedInput.status,
+              lastKnownAt: nowIso,
+            }
+          : undefined
+      ),
+    );
+    const nextTracking = mergeDispatchTracking(
+      mergeDispatchTracking(current.dispatchTracking, brokerState.tracking),
+      {
+        acknowledged: normalizedInput.acknowledged,
+        acknowledgedAt: normalizedInput.acknowledgedAt,
+        lastReconciledAt: nowIso,
+        reconciliationError: undefined,
+        ...(normalizedInput.source === 'cancel' && normalizedInput.status === 'cancelled'
+          ? { cancellationAcknowledgedAt: nowIso }
+          : {}),
+      },
+    );
+    persistBrokerState(safeWorkspacePath, brokerState.runId, {
+      external: nextExternal,
+      tracking: nextTracking,
+    });
+    recordExternalCorrelationEvidence(
+      safeWorkspacePath,
+      brokerState.runId,
+      safeActor,
+      nextExternal,
+      nextTracking,
+      normalizedInput.metadata,
+    );
+
+    const previousStatus = current.status;
+    let nextStatus = current.status;
+    if (normalizedInput.status && canApplyExternalRunStatus(current.status, normalizedInput.status)) {
+      nextStatus = normalizedInput.status;
+    }
+    const statusChanged = withRunsMutation(safeWorkspacePath, (state) => {
+      const target = state.runs.find((candidate) => candidate.id === brokerState.runId);
+      if (!target) return false;
+      target.external = nextExternal;
+      target.dispatchTracking = nextTracking;
+      if (normalizedInput.output) target.output = normalizedInput.output;
+      if (normalizedInput.error) target.error = normalizedInput.error;
+      target.updatedAt = nowIso;
+      if (target.status !== nextStatus) {
+        target.status = nextStatus;
+        clearLease(target);
+        target.logs.push({
+          ts: nowIso,
+          level: 'info',
+          message: `External reconciliation (${normalizedInput.source}) set status to ${nextStatus}.`,
+        });
+        return true;
+      }
+      return false;
+    });
+    appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+      runId: brokerState.runId,
+      actor: safeActor,
+      kind: 'run-external-reconciled',
+      data: {
+        source: normalizedInput.source,
+        previous_status: previousStatus,
+        current_status: nextStatus,
+        acknowledged: nextTracking.acknowledged === true,
+        external: nextExternal ? serializeExternalIdentityForAudit(nextExternal) : undefined,
+      },
+    }, {
+      runId: brokerState.runId,
+      actor: safeActor,
+      operation: 'dispatch.run.external-reconcile',
+    });
+    if (normalizedInput.source === 'cancel' && nextStatus === 'cancelled') {
+      appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+        runId: brokerState.runId,
+        actor: safeActor,
+        kind: 'run-cancel-acknowledged',
+        data: {
+          cancelled_at: nowIso,
+          external: nextExternal ? serializeExternalIdentityForAudit(nextExternal) : undefined,
+        },
+      }, {
+        runId: brokerState.runId,
+        actor: safeActor,
+        operation: 'dispatch.run.external-reconcile',
+      });
+    }
+    if (statusChanged) {
+      appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+        runId: brokerState.runId,
+        actor: safeActor,
+        kind: 'run-status-changed',
+        data: {
+          from_status: previousStatus,
+          to_status: nextStatus,
+          reason: `external-reconcile:${normalizedInput.source}`,
+        },
+      }, {
+        runId: brokerState.runId,
+        actor: safeActor,
+        operation: 'dispatch.run.external-reconcile',
+      });
+      appendLedgerEventSafe(safeWorkspacePath, safeActor, 'update', `.workgraph/runs/${brokerState.runId}`, 'run', {
+        status: nextStatus,
+        external_reconcile: normalizedInput.source,
+      });
+    }
+    const reconciled = status(safeWorkspacePath, brokerState.runId);
+    syncRunPrimitiveSafe(safeWorkspacePath, reconciled, safeActor);
+    return {
+      reconciledAt: nowIso,
+      matchedRunId: brokerState.runId,
+      statusChanged,
+      previousStatus,
+      currentStatus: reconciled.status,
+      run: reconciled,
+    };
+  });
+}
+
+export async function pollExternalRuns(
+  workspacePath: string,
+  actor: string,
+  options: { runId?: string } = {},
+): Promise<DispatchPollExternalRunsResult> {
+  const safeWorkspacePath = validatedWorkspacePath(workspacePath, 'dispatch.run.external-poll');
+  const safeActor = validateActorName(actor, {
+    workspacePath: safeWorkspacePath,
+    runId: options.runId,
+    actor,
+    operation: 'dispatch.run.external-poll',
+  });
+  return withDispatchOperationAsync('dispatch.run.external-poll', {
+    workspacePath: safeWorkspacePath,
+    runId: options.runId,
+    actor: safeActor,
+  }, async () => {
+    assertDispatchMutationAuthorized(safeWorkspacePath, safeActor, 'dispatch.run.external-poll', options.runId ?? '.workgraph/dispatch-broker', [
+      'dispatch:run',
+    ]);
+    const candidateRuns = (options.runId
+      ? [status(safeWorkspacePath, options.runId)]
+      : listRuns(safeWorkspacePath)).filter((run) => !isTerminalRunStatus(run.status));
+    const brokered = candidateRuns.filter((run) => wantsExternalBroker(run));
+    const reconciledRuns: DispatchRun[] = [];
+    const failures: DispatchPollExternalRunsResult['failures'] = [];
+    for (const run of brokered) {
+      const adapter = resolveDispatchAdapter(run.adapter);
+      if (!adapter.poll || !run.external) continue;
+      try {
+        const polled = await adapter.poll({
+          workspacePath: safeWorkspacePath,
+          runId: run.id,
+          actor: safeActor,
+          objective: run.objective,
+          context: run.context,
+          external: normalizeDispatchAdapterExternalIdentity(run.external)!,
+        });
+        if (!polled) continue;
+        const reconciled = reconcileExternalRun(safeWorkspacePath, {
+          actor: safeActor,
+          runId: run.id,
+          source: 'poll',
+          status: polled.status,
+          output: polled.output,
+          error: polled.error,
+          acknowledged: polled.acknowledged,
+          acknowledgedAt: polled.acknowledgedAt,
+          external: mergeExternalIdentity(run.external, normalizeExternalFromUpdate(run.adapter, polled)),
+          metadata: polled.metadata,
+          logs: polled.logs,
+          ts: polled.lastKnownAt,
+        }).run;
+        if (reconciled) reconciledRuns.push(reconciled);
+      } catch (error) {
+        failures.push({
+          runId: run.id,
+          error: errorMessage(error),
+        });
+        persistBrokerState(safeWorkspacePath, run.id, {
+          external: run.external,
+          tracking: mergeDispatchTracking(run.dispatchTracking, {
+            lastReconciledAt: new Date().toISOString(),
+            reconciliationError: errorMessage(error),
+          }),
+        });
+      }
+    }
+    return {
+      reconciledAt: new Date().toISOString(),
+      inspectedRuns: brokered.length,
+      reconciledRuns,
+      failures,
+    };
+  });
+}
+
+function persistBrokerState(
+  workspacePath: string,
+  runId: string,
+  updates: {
+    external?: DispatchRunExternalIdentity;
+    tracking?: DispatchRunDispatchTracking;
+  },
+): void {
+  updateDispatchBrokerState(workspacePath, runId, (current) => ({
+    runId,
+    external: mergeExternalIdentity(current?.external, updates.external),
+    tracking: mergeDispatchTracking(current?.tracking, updates.tracking),
+    updatedAt: new Date().toISOString(),
+  }));
+}
+
+function recordExternalCorrelationEvidence(
+  workspacePath: string,
+  runId: string,
+  actor: string,
+  external: DispatchRunExternalIdentity | undefined,
+  tracking: DispatchRunDispatchTracking | undefined,
+  metadata?: Record<string, unknown>,
+): void {
+  try {
+    const evidence = collectDispatchExternalCorrelationEvidence({
+      runId,
+      external,
+      tracking,
+      metadata,
+    });
+    if (evidence.items.length === 0) return;
+    appendDispatchRunAuditEventSafe(workspacePath, {
+      runId,
+      actor,
+      kind: 'run-evidence-collected',
+      data: {
+        items: evidence.items,
+        summary: evidence.summary,
+      },
+    }, {
+      runId,
+      actor,
+      operation: 'dispatch.run.external-evidence',
+    });
+  } catch (error) {
+    logDispatchWarning('Failed to record external correlation evidence.', error, {
+      runId,
+      actor,
+    });
+  }
+}
+
+function failBrokeredRun(
+  workspacePath: string,
+  runId: string,
+  actor: string,
+  error: string,
+): DispatchRun {
+  const current = status(workspacePath, runId);
+  if (current.status !== 'queued') {
+    return markRun(workspacePath, runId, actor, 'failed', {
+      error,
+      contextPatch: {
+        external_broker_mode: true,
+      },
+    });
+  }
+  const now = new Date().toISOString();
+  const failed = withRunsMutation(workspacePath, (state) => {
+    const target = state.runs.find((entry) => entry.id === runId);
+    if (!target) {
+      throw new ResourceNotFoundError(`Run not found: ${runId}`, {
+        workspacePath,
+        runId,
+        actor,
+        operation: 'dispatch.run.external-fail',
+      });
+    }
+    target.status = 'failed';
+    target.error = error;
+    target.updatedAt = now;
+    clearLease(target);
+    target.logs.push({
+      ts: now,
+      level: 'error',
+      message: `External broker dispatch failed: ${error}`,
+    });
+    return target;
+  });
+  appendDispatchRunAuditEventSafe(workspacePath, {
+    runId,
+    actor,
+    kind: 'run-status-changed',
+    data: {
+      from_status: 'queued',
+      to_status: 'failed',
+      reason: 'external-dispatch-failed',
+    },
+  }, {
+    runId,
+    actor,
+    operation: 'dispatch.run.external-fail',
+  });
+  appendLedgerEventSafe(workspacePath, actor, 'update', `.workgraph/runs/${runId}`, 'run', {
+    status: 'failed',
+    external_dispatch_failed: true,
+  });
+  syncRunPrimitiveSafe(workspacePath, failed, actor);
+  return status(workspacePath, runId);
+}
+
+function normalizeExternalReconcileInput(input: DispatchExternalReconcileInput): DispatchExternalReconcileInput {
+  return {
+    ...input,
+    runId: readOptionalString(input.runId),
+    provider: readOptionalString(input.provider),
+    externalRunId: readOptionalString(input.externalRunId),
+    correlationKeys: (input.correlationKeys ?? []).map((entry) => String(entry).trim()).filter(Boolean),
+    status: normalizeRunStatusValue(input.status),
+    acknowledged: input.acknowledged === true ? true : undefined,
+    acknowledgedAt: readOptionalString(input.acknowledgedAt),
+    external: normalizeExternalIdentity(input.external),
+    metadata: isRecord(input.metadata) ? input.metadata : undefined,
+    source: input.source ?? 'event',
+    ts: readOptionalString(input.ts),
+    logs: Array.isArray(input.logs) ? input.logs : [],
+  };
+}
+
+function normalizeRunStatusValue(value: unknown): RunStatus | undefined {
+  const normalized = String(value ?? '').trim().toLowerCase();
+  if (
+    normalized === 'queued'
+    || normalized === 'running'
+    || normalized === 'succeeded'
+    || normalized === 'failed'
+    || normalized === 'cancelled'
+  ) {
+    return normalized;
+  }
+  return undefined;
+}
+
+function normalizeExternalFromUpdate(
+  fallbackProvider: string,
+  update: DispatchAdapterExternalUpdate,
+): DispatchRunExternalIdentity | undefined {
+  const external = normalizeDispatchAdapterExternalIdentity(update.external);
+  if (!external) return undefined;
+  return {
+    provider: external.provider || fallbackProvider,
+    externalRunId: external.externalRunId,
+    externalAgentId: external.externalAgentId,
+    externalThreadId: external.externalThreadId,
+    correlationKeys: external.correlationKeys,
+    metadata: external.metadata,
+    lastKnownStatus: update.status,
+    lastKnownAt: update.lastKnownAt,
+  };
+}
+
+function normalizeDispatchAdapterExternalIdentity(
+  external: DispatchRunExternalIdentity | DispatchAdapterExternalIdentity | undefined,
+): DispatchAdapterExternalIdentity | undefined {
+  const normalized = normalizeExternalIdentity(external as DispatchRunExternalIdentity | undefined);
+  if (!normalized) return undefined;
+  return {
+    provider: normalized.provider,
+    externalRunId: normalized.externalRunId,
+    externalAgentId: normalized.externalAgentId,
+    externalThreadId: normalized.externalThreadId,
+    correlationKeys: normalized.correlationKeys,
+    metadata: normalized.metadata,
+  };
+}
+
+function serializeExternalIdentityForAudit(external: DispatchRunExternalIdentity): Record<string, unknown> {
+  return {
+    provider: external.provider,
+    external_run_id: external.externalRunId,
+    external_agent_id: external.externalAgentId,
+    external_thread_id: external.externalThreadId,
+    correlation_keys: external.correlationKeys ?? [],
+    last_known_status: external.lastKnownStatus,
+    last_known_at: external.lastKnownAt,
+  };
+}
+
+function hashExternalDispatchPayload(input: DispatchAdapterDispatchInput): string {
+  return createStableHash({
+    workspacePath: input.workspacePath,
+    runId: input.runId,
+    actor: input.actor,
+    objective: input.objective,
+    context: input.context ?? {},
+    followups: input.followups ?? [],
+    external: input.external ?? null,
+  });
+}
+
+function canApplyExternalRunStatus(from: RunStatus, to: RunStatus): boolean {
+  if (from === to) return true;
+  if (isTerminalRunStatus(from)) return false;
+  if (from === 'queued') {
+    return to === 'running' || to === 'succeeded' || to === 'failed' || to === 'cancelled';
+  }
+  if (from === 'running') {
+    return to === 'succeeded' || to === 'failed' || to === 'cancelled';
+  }
+  return false;
+}
+
+function isTerminalRunStatus(status: RunStatus): boolean {
+  return status === 'succeeded' || status === 'failed' || status === 'cancelled';
+}
+
+function wantsExternalBroker(run: DispatchRun): boolean {
+  if (isBrokeredRun(run)) return true;
+  if (run.context?.external_broker_mode === true) return true;
+  if (run.adapter === 'cursor-cloud') {
+    return hasCursorExternalBrokerConfig(run.context);
+  }
+  return false;
+}
+
+function hasCursorExternalBrokerConfig(context: Record<string, unknown> | undefined): boolean {
+  return Boolean(
+    readOptionalString(context?.cursor_cloud_api_base_url)
+    || readOptionalString(context?.cursor_cloud_dispatch_url)
+    || readOptionalString(context?.cursor_cloud_status_url_template)
+    || readOptionalString(context?.cursor_cloud_cancel_url_template),
+  );
+}
+
+function createStableHash(value: unknown): string {
+  return createHash('sha256').update(stableStringify(value)).digest('hex');
+}
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map((entry) => stableStringify(entry)).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  const keys = Object.keys(record).sort((left, right) => left.localeCompare(right));
+  return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
+}
+
+function sanitizeFrontmatterValue<T>(value: T): T {
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => sanitizeFrontmatterValue(entry))
+      .filter((entry) => entry !== undefined) as T;
+  }
+  if (!value || typeof value !== 'object') {
+    return value;
+  }
+  const cleaned: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value as Record<string, unknown>)) {
+    if (entry === undefined) continue;
+    cleaned[key] = sanitizeFrontmatterValue(entry);
+  }
+  return cleaned as T;
 }
 
 async function attemptSelfAssembly(

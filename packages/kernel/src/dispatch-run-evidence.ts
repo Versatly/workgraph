@@ -2,7 +2,11 @@ import { spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { collectThreadEvidence } from './evidence.js';
 import type { DispatchAdapterExecutionResult } from './runtime-adapter-contracts.js';
-import type { DispatchRunEvidenceItem } from './types.js';
+import type {
+  DispatchRunDispatchTracking,
+  DispatchRunEvidenceItem,
+  DispatchRunExternalIdentity,
+} from './types.js';
 
 const PR_URL_PATTERN = /\bhttps?:\/\/github\.com\/[^/\s]+\/[^/\s]+\/pull\/\d+\b/gi;
 const MAX_EVIDENCE_TEXT_CHARS = 3_000;
@@ -22,6 +26,13 @@ export interface DispatchExecutionEvidenceResult {
     byType: Record<string, number>;
     lastCollectedAt: string;
   };
+}
+
+export interface DispatchExternalCorrelationEvidenceInput {
+  runId: string;
+  external?: DispatchRunExternalIdentity;
+  tracking?: DispatchRunDispatchTracking;
+  metadata?: Record<string, unknown>;
 }
 
 export function captureWorkspaceGitState(workspacePath: string): Set<string> | null {
@@ -44,6 +55,70 @@ export function captureWorkspaceGitState(workspacePath: string): Set<string> | n
     files.add(payload);
   }
   return files;
+}
+
+export function collectDispatchExternalCorrelationEvidence(
+  input: DispatchExternalCorrelationEvidenceInput,
+): DispatchExecutionEvidenceResult {
+  const now = new Date().toISOString();
+  const evidence: DispatchRunEvidenceItem[] = [];
+  if (input.external?.provider && input.external.externalRunId) {
+    evidence.push(createEvidence(
+      input.runId,
+      now,
+      'external-correlation',
+      'adapter-external',
+      `${input.external.provider}:${input.external.externalRunId}`,
+      {
+        provider: input.external.provider,
+        external_run_id: input.external.externalRunId,
+        external_agent_id: input.external.externalAgentId,
+        external_thread_id: input.external.externalThreadId,
+        correlation_keys: input.external.correlationKeys ?? [],
+        last_known_status: input.external.lastKnownStatus,
+        last_known_at: input.external.lastKnownAt,
+        metadata: input.external.metadata ?? {},
+      },
+    ));
+  }
+  if (input.tracking?.outboundPayloadDigest) {
+    evidence.push(createEvidence(
+      input.runId,
+      now,
+      'metric',
+      'adapter-external',
+      input.tracking.outboundPayloadDigest,
+      {
+        kind: 'outbound_payload_digest',
+        dispatched_at: input.tracking.dispatchedAt,
+        last_sent_at: input.tracking.lastSentAt,
+        acknowledged: input.tracking.acknowledged === true,
+        acknowledged_at: input.tracking.acknowledgedAt,
+        retry_count: input.tracking.retryCount,
+      },
+    ));
+  }
+  if (input.metadata && Object.keys(input.metadata).length > 0) {
+    evidence.push(createEvidence(
+      input.runId,
+      now,
+      'metric',
+      'adapter-external',
+      clampText(JSON.stringify(input.metadata)),
+      {
+        kind: 'external_metadata',
+      },
+    ));
+  }
+  const deduped = dedupeEvidence(evidence);
+  return {
+    items: deduped,
+    summary: {
+      count: deduped.length,
+      byType: buildTypeCounts(deduped),
+      lastCollectedAt: now,
+    },
+  };
 }
 
 export function collectDispatchExecutionEvidence(
