@@ -124,6 +124,13 @@ describe('workgraph mcp server', () => {
         },
       });
       expect(isToolError(claimed)).toBe(false);
+      const claimedPayload = getStructured<{
+        thread: { path: string };
+        context: { threadPath: string; totalEntries: number };
+      }>(claimed);
+      expect(claimedPayload.thread.path).toBe(coordinationThread.path);
+      expect(claimedPayload.context.threadPath).toBe(coordinationThread.path);
+      expect(claimedPayload.context.totalEntries).toBe(0);
 
       const done = await client.callTool({
         name: 'workgraph_thread_done',
@@ -217,7 +224,12 @@ describe('workgraph mcp server', () => {
         'workgraph_mission_progress',
         'wg_post_message',
         'wg_ask',
+        'wg_create_thread',
         'wg_spawn_thread',
+        'wg_thread_context_add',
+        'wg_thread_context_search',
+        'wg_thread_context_list',
+        'wg_thread_context_prune',
         'wg_heartbeat',
       ];
       for (const name of expectedTools) {
@@ -434,6 +446,95 @@ describe('workgraph mcp server', () => {
       }>(spawnReplay);
       expect(spawnReplayPayload.data.operation).toBe('replayed');
       expect(spawnReplayPayload.data.thread.path).toBe(spawnedPayload.data.thread.path);
+
+      const createdStandalone = await client.callTool({
+        name: 'wg_create_thread',
+        arguments: {
+          title: 'Standalone MCP task',
+          goal: 'Create a top-level thread without parent',
+          idempotencyKey: 'create-idem-key',
+          priority: 'high',
+          tags: ['standalone'],
+        },
+      });
+      expect(isToolError(createdStandalone)).toBe(false);
+      const createdStandalonePayload = getStructured<{
+        data: { operation: string; thread: { path: string; parent: string | null } };
+      }>(createdStandalone);
+      expect(createdStandalonePayload.data.operation).toBe('created');
+      expect(createdStandalonePayload.data.thread.parent).toBeNull();
+
+      const createReplay = await client.callTool({
+        name: 'wg_create_thread',
+        arguments: {
+          title: 'Standalone MCP task',
+          goal: 'Create a top-level thread without parent',
+          idempotencyKey: 'create-idem-key',
+          priority: 'high',
+          tags: ['standalone'],
+        },
+      });
+      expect(isToolError(createReplay)).toBe(false);
+      const createReplayPayload = getStructured<{
+        data: { operation: string; thread: { path: string } };
+      }>(createReplay);
+      expect(createReplayPayload.data.operation).toBe('replayed');
+      expect(createReplayPayload.data.thread.path).toBe(createdStandalonePayload.data.thread.path);
+
+      const contextAdded = await client.callTool({
+        name: 'wg_thread_context_add',
+        arguments: {
+          threadPath: createdStandalonePayload.data.thread.path,
+          title: 'Decision record',
+          content: 'Use delivery-id plus digest dedup in gateway.',
+          source: 'adr/2026-03-11',
+          relevance: 0.8,
+        },
+      });
+      expect(isToolError(contextAdded)).toBe(false);
+
+      const contextList = await client.callTool({
+        name: 'wg_thread_context_list',
+        arguments: {
+          threadPath: createdStandalonePayload.data.thread.path,
+        },
+      });
+      expect(isToolError(contextList)).toBe(false);
+      const contextListPayload = getStructured<{
+        data: { count: number; entries: Array<{ title: string }> };
+      }>(contextList);
+      expect(contextListPayload.data.count).toBe(1);
+      expect(contextListPayload.data.entries[0]?.title).toBe('Decision record');
+
+      const contextSearch = await client.callTool({
+        name: 'wg_thread_context_search',
+        arguments: {
+          threadPath: createdStandalonePayload.data.thread.path,
+          query: 'delivery dedup',
+          limit: 5,
+        },
+      });
+      expect(isToolError(contextSearch)).toBe(false);
+      const contextSearchPayload = getStructured<{
+        data: { count: number; results: Array<{ title: string; bm25_score: number }> };
+      }>(contextSearch);
+      expect(contextSearchPayload.data.count).toBe(1);
+      expect(contextSearchPayload.data.results[0]?.title).toBe('Decision record');
+      expect(contextSearchPayload.data.results[0]?.bm25_score ?? 0).toBeGreaterThan(0);
+
+      const contextPrune = await client.callTool({
+        name: 'wg_thread_context_prune',
+        arguments: {
+          threadPath: createdStandalonePayload.data.thread.path,
+          minRelevance: 0.9,
+        },
+      });
+      expect(isToolError(contextPrune)).toBe(false);
+      const contextPrunePayload = getStructured<{
+        data: { removed_count: number; kept_count: number };
+      }>(contextPrune);
+      expect(contextPrunePayload.data.removed_count).toBe(1);
+      expect(contextPrunePayload.data.kept_count).toBe(0);
 
       const heartbeatResult = await client.callTool({
         name: 'wg_heartbeat',

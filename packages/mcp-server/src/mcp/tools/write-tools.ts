@@ -6,6 +6,7 @@ import {
   mission as missionModule,
   missionOrchestrator as missionOrchestratorModule,
   orientation as orientationModule,
+  threadContext as threadContextModule,
   thread as threadModule,
   triggerEngine as triggerEngineModule,
 } from '@versatly/workgraph-kernel';
@@ -18,6 +19,7 @@ const dispatch = dispatchModule;
 const mission = missionModule;
 const missionOrchestrator = missionOrchestratorModule;
 const orientation = orientationModule;
+const threadContext = threadContextModule;
 const thread = threadModule;
 const triggerEngine = triggerEngineModule;
 
@@ -267,7 +269,14 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
         });
         if (!gate.allowed) return errorResult(gate.reason);
         const updated = thread.claim(options.workspacePath, args.threadPath, actor);
-        return okResult({ thread: updated }, `Claimed ${updated.path} as ${actor}.`);
+        const contextSummary = threadContext.summarizeThreadContext(options.workspacePath, updated.path, { topN: 3 });
+        return okResult(
+          {
+            thread: updated,
+            context: contextSummary,
+          },
+          `Claimed ${updated.path} as ${actor}.`,
+        );
       } catch (error) {
         return errorResult(error);
       }

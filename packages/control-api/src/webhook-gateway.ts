@@ -12,6 +12,10 @@ const DEFAULT_LOG_LIMIT = 50;
 const MAX_LOG_LIMIT = 1_000;
 const MAX_WEBHOOK_BODY_BYTES = 2 * 1024 * 1024;
 const SLACK_SIGNATURE_MAX_AGE_SECONDS = 60 * 5;
+const WEBHOOK_DEDUP_TTL_MS = 5 * 60_000;
+const WEBHOOK_DEDUP_MAX_ENTRIES = 1_000;
+
+const recentWebhookDedup = new Map<string, number>();
 
 export type WebhookGatewayProvider = 'github' | 'linear' | 'slack' | 'generic';
 type LogStatus = 'accepted' | 'rejected';
@@ -339,6 +343,41 @@ export function registerWebhookGatewayEndpoint(app: any, workspacePath: string):
         return;
       }
 
+      const duplicateBy = detectRecentWebhookDuplicate(
+        workspacePath,
+        source.key,
+        adapted.deliveryId,
+        payloadDigest,
+      );
+      if (duplicateBy) {
+        const duplicateLog: WebhookGatewayLogEntry = {
+          id: randomUUID(),
+          ts: new Date().toISOString(),
+          sourceKey: source.key,
+          provider: source.provider,
+          eventType: adapted.eventType,
+          actor,
+          status: 'accepted',
+          statusCode: 200,
+          signatureVerified: verification.verified,
+          message: `Duplicate webhook ignored (${duplicateBy}).`,
+          deliveryId: adapted.deliveryId,
+          payloadDigest,
+        };
+        appendWebhookGatewayLog(workspacePath, duplicateLog);
+        writeWebhookGatewayHttpResponse(res, 200, {
+          ok: true,
+          accepted: false,
+          reason: 'duplicate',
+          duplicateBy,
+          source: source.key,
+          provider: source.provider,
+          eventType: adapted.eventType,
+          deliveryId: adapted.deliveryId,
+        });
+        return;
+      }
+
       appendWebhookGatewayLedgerEvent(workspacePath, source, {
         eventType: adapted.eventType,
         deliveryId: adapted.deliveryId,
@@ -376,6 +415,57 @@ export function registerWebhookGatewayEndpoint(app: any, workspacePath: string):
       });
     }
   });
+}
+
+function detectRecentWebhookDuplicate(
+  workspacePath: string,
+  sourceKey: string,
+  deliveryId: string,
+  payloadDigest: string,
+): 'deliveryId' | 'payloadDigest' | null {
+  const nowMs = Date.now();
+  evictExpiredWebhookDedupEntries(nowMs);
+  const deliveryKey = `${workspacePath}|${sourceKey}|delivery|${deliveryId}`;
+  if (isWebhookDedupHit(deliveryKey, nowMs)) {
+    return 'deliveryId';
+  }
+  const payloadKey = `${workspacePath}|${sourceKey}|digest|${payloadDigest}`;
+  if (isWebhookDedupHit(payloadKey, nowMs)) {
+    return 'payloadDigest';
+  }
+  rememberWebhookDedupKey(deliveryKey, nowMs);
+  rememberWebhookDedupKey(payloadKey, nowMs);
+  return null;
+}
+
+function isWebhookDedupHit(key: string, nowMs: number): boolean {
+  const expiresAt = recentWebhookDedup.get(key);
+  if (!expiresAt) return false;
+  if (expiresAt <= nowMs) {
+    recentWebhookDedup.delete(key);
+    return false;
+  }
+  // Re-insert to refresh LRU order while keeping original expiration.
+  recentWebhookDedup.delete(key);
+  recentWebhookDedup.set(key, expiresAt);
+  return true;
+}
+
+function rememberWebhookDedupKey(key: string, nowMs: number): void {
+  recentWebhookDedup.set(key, nowMs + WEBHOOK_DEDUP_TTL_MS);
+  while (recentWebhookDedup.size > WEBHOOK_DEDUP_MAX_ENTRIES) {
+    const oldest = recentWebhookDedup.keys().next().value as string | undefined;
+    if (!oldest) break;
+    recentWebhookDedup.delete(oldest);
+  }
+}
+
+function evictExpiredWebhookDedupEntries(nowMs: number): void {
+  for (const [key, expiresAt] of recentWebhookDedup.entries()) {
+    if (expiresAt <= nowMs) {
+      recentWebhookDedup.delete(key);
+    }
+  }
 }
 
 function readWebhookGatewayStore(workspacePath: string): WebhookGatewayStoreFile {
