@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WorkGraph Control Plane</title>
+    <link rel="stylesheet" href="/control-plane/style.css" />
+  </head>
+  <body>
+    <header>
+      <h1>WorkGraph Operator Control Plane</h1>
+      <p class="muted">Operator-facing projections for dispatch, transport, federation, triggers, autonomy, and missions.</p>
+    </header>
+    <main>
+      <div class="cards">
+        <div class="card"><h2><a href="/control-plane/run-health">Run Health</a></h2><p>Active runs, stale runs, and failed reconciliations.</p></div>
+        <div class="card"><h2><a href="/control-plane/risk-dashboard">Risk Dashboard</a></h2><p>Blocked threads, escalations, and policy violations.</p></div>
+        <div class="card"><h2><a href="/control-plane/mission-progress">Mission Progress</a></h2><p>Mission completion and milestones.</p></div>
+        <div class="card"><h2><a href="/control-plane/transport-health">Transport Health</a></h2><p>Outbox depth, dead-letter state, and delivery success.</p></div>
+        <div class="card"><h2><a href="/control-plane/federation-status">Federation Status</a></h2><p>Remote workspace compatibility and sync status.</p></div>
+        <div class="card"><h2><a href="/control-plane/trigger-health">Trigger Health</a></h2><p>Trigger states, cooldowns, and errors.</p></div>
+        <div class="card"><h2><a href="/control-plane/autonomy-health">Autonomy Health</a></h2><p>Autonomy daemon status and heartbeat.</p></div>
+      </div>
+    </main>
+  </body>
+</html>

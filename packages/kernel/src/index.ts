@@ -83,3 +83,4 @@ export * as environment from './environment.js';
 export * as exportImport from './export-import.js';
 export * as federation from './federation.js';
 export * as transport from './transport/index.js';
+export * as projections from './projections/index.js';
