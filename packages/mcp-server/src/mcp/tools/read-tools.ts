@@ -1,6 +1,7 @@
 import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
+  federation as federationModule,
   graph as graphModule,
   ledger as ledgerModule,
   mission as missionModule,
@@ -16,6 +17,7 @@ import { resolveActor } from '../auth.js';
 import { errorResult, okResult, renderStatusSummary } from '../result.js';
 import { type WorkgraphMcpServerOptions } from '../types.js';
 
+const federation = federationModule;
 const graph = graphModule;
 const ledger = ledgerModule;
 const mission = missionModule;
@@ -374,6 +376,87 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
       try {
         const records = transport.listTransportDeadLetters(options.workspacePath);
         return okResult({ records, count: records.length }, `Transport dead-letter queue has ${records.length} record(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_federation_status',
+    {
+      title: 'Federation Status',
+      description: 'Read workspace federation identity and remote handshake status.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const status = federation.federationStatus(options.workspacePath);
+        return okResult(status, `Federation status loaded for ${status.remotes.length} remote(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_federation_resolve_ref',
+    {
+      title: 'Federation Resolve Ref',
+      description: 'Resolve one typed or legacy federated reference with authority and staleness metadata.',
+      inputSchema: {
+        ref: z.union([z.string().min(1), z.object({}).passthrough()]),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = federation.resolveFederatedRef(options.workspacePath, args.ref as any);
+        return okResult(
+          resolved,
+          `Resolved federated ref to ${resolved.source}:${resolved.instance.path} (authority=${resolved.authority}).`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_federation_search',
+    {
+      title: 'Federation Search',
+      description: 'Search local and remote workspaces through read-only federation capability negotiation.',
+      inputSchema: {
+        query: z.string().min(1),
+        type: z.string().optional(),
+        limit: z.number().int().min(0).max(1000).optional(),
+        remoteIds: z.array(z.string()).optional(),
+        includeLocal: z.boolean().optional(),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const result = federation.searchFederated(options.workspacePath, args.query, {
+          type: args.type,
+          limit: args.limit,
+          remoteIds: args.remoteIds,
+          includeLocal: args.includeLocal,
+        });
+        return okResult(
+          result,
+          `Federation search returned ${result.results.length} result(s) with ${result.errors.length} remote error(s).`,
+        );
       } catch (error) {
         return errorResult(error);
       }
