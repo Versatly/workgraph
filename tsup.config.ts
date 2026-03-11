@@ -14,7 +14,6 @@ export default defineConfig({
   splitting: false,
   noExternal: [
     '@versatly/workgraph-kernel',
-    '@versatly/workgraph-policy',
     '@versatly/workgraph-cli',
     '@versatly/workgraph-mcp-server',
     '@versatly/workgraph-control-api',

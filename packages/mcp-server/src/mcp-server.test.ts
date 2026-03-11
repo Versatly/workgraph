@@ -67,6 +67,8 @@ describe('workgraph mcp server', () => {
       expect(toolNames).toContain('workgraph_ledger_reconcile');
       expect(toolNames).toContain('workgraph_thread_claim');
       expect(toolNames).toContain('workgraph_dispatch_execute');
+      expect(toolNames).toContain('workgraph_trigger_create');
+      expect(toolNames).toContain('workgraph_trigger_fire');
       expect(toolNames).toContain('workgraph_create_mission');
       expect(toolNames).toContain('workgraph_mission_status');
 
@@ -113,7 +115,7 @@ describe('workgraph mcp server', () => {
 
       policy.upsertParty(workspacePath, 'agent-mcp', {
         roles: ['operator'],
-        capabilities: ['mcp:write', 'thread:claim', 'thread:done', 'dispatch:run'],
+        capabilities: ['mcp:write', 'thread:claim', 'thread:done', 'dispatch:run', 'policy:manage', 'promote:trigger'],
       });
 
       const claimed = await client.callTool({
@@ -165,6 +167,41 @@ describe('workgraph mcp server', () => {
       expect(isToolError(runExecuted)).toBe(false);
       const executedPayload = getStructured<{ run: { status: string } }>(runExecuted);
       expect(executedPayload.run.status).toBe('succeeded');
+
+      const triggerCreated = await client.callTool({
+        name: 'workgraph_trigger_create',
+        arguments: {
+          actor: 'agent-mcp',
+          name: 'MCP manual trigger',
+          type: 'manual',
+          condition: { type: 'manual' },
+          action: {
+            type: 'dispatch-run',
+            objective: 'Run from MCP trigger for {{target}}',
+          },
+        },
+      });
+      expect(isToolError(triggerCreated)).toBe(false);
+      const triggerPayload = getStructured<{ trigger: { path: string } }>(triggerCreated);
+
+      const triggerFired = await client.callTool({
+        name: 'workgraph_trigger_fire',
+        arguments: {
+          actor: 'agent-mcp',
+          triggerRef: triggerPayload.trigger.path,
+          eventKey: 'mcp-trigger-evt-1',
+          context: {
+            target: 'coordination',
+          },
+          execute: true,
+          maxSteps: 10,
+          stepDelayMs: 0,
+        },
+      });
+      expect(isToolError(triggerFired)).toBe(false);
+      const firedPayload = getStructured<{ run: { status: string; objective: string } }>(triggerFired);
+      expect(firedPayload.run.status).toBe('succeeded');
+      expect(firedPayload.run.objective).toContain('coordination');
     } finally {
       await client.close();
       await server.close();
@@ -174,7 +211,7 @@ describe('workgraph mcp server', () => {
   it('exposes primitive tool coverage with context/graph/dispatch aliases', async () => {
     policy.upsertParty(workspacePath, 'agent-mcp', {
       roles: ['operator'],
-      capabilities: ['mcp:write', 'thread:claim', 'thread:done', 'dispatch:run'],
+      capabilities: ['mcp:write', 'thread:claim', 'thread:done', 'dispatch:run', 'policy:manage', 'promote:trigger'],
     });
 
     const server = createWorkgraphMcpServer({
@@ -213,6 +250,10 @@ describe('workgraph mcp server', () => {
         'workgraph_dispatch_execute',
         'workgraph_dispatch_followup',
         'workgraph_dispatch_stop',
+        'workgraph_trigger_create',
+        'workgraph_trigger_update',
+        'workgraph_trigger_delete',
+        'workgraph_trigger_fire',
         'workgraph_trigger_engine_cycle',
         'workgraph_autonomy_run',
         'workgraph_create_mission',

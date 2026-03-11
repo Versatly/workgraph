@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import * as registry from './registry.js';
+import * as safety from './safety.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
 import * as triggerEngine from './trigger-engine.js';
@@ -171,6 +172,66 @@ describe('trigger engine', () => {
     expect(result?.reason).toContain('Manual trigger condition requires explicit');
   });
 
+  it('supports composite any/all trigger conditions', () => {
+    store.create(workspacePath, 'trigger', {
+      title: 'Any composite trigger',
+      status: 'active',
+      condition: {
+        type: 'any',
+        conditions: [
+          { type: 'manual' },
+          {
+            type: 'all',
+            conditions: [
+              { type: 'event', pattern: 'thread.*' },
+              { type: 'not', condition: { type: 'manual' } },
+            ],
+          },
+        ],
+      },
+      action: {
+        type: 'create-thread',
+        title: 'Any composite {{matched_event_latest_target}}',
+        goal: 'Created by any composite trigger',
+      },
+      cooldown: 0,
+    }, '# Trigger\n', 'system');
+
+    store.create(workspacePath, 'trigger', {
+      title: 'All composite trigger',
+      status: 'active',
+      condition: {
+        type: 'all',
+        conditions: [
+          { type: 'event', pattern: 'thread.*' },
+          { type: 'not', condition: { type: 'manual' } },
+        ],
+      },
+      action: {
+        type: 'create-thread',
+        title: 'All composite {{matched_event_latest_target}}',
+        goal: 'Created by all composite trigger',
+      },
+      cooldown: 0,
+    }, '# Trigger\n', 'system');
+
+    const initCycle = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+    expect(initCycle.fired).toBe(0);
+
+    const sourceThread = thread.createThread(workspacePath, 'Composite source', 'Drive composite conditions', 'agent-composite');
+    thread.claim(workspacePath, sourceThread.path, 'agent-composite');
+    thread.done(workspacePath, sourceThread.path, 'agent-composite', 'Composite done https://github.com/versatly/workgraph/pull/44');
+
+    const fireCycle = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+    expect(fireCycle.fired).toBe(2);
+    expect(store.list(workspacePath, 'thread').some((entry) =>
+      String(entry.fields.title).startsWith('Any composite'))
+    ).toBe(true);
+    expect(store.list(workspacePath, 'thread').some((entry) =>
+      String(entry.fields.title).startsWith('All composite'))
+    ).toBe(true);
+  });
+
   it('fires cascade triggers immediately when thread reaches done state', () => {
     const cascadeTrigger = store.create(workspacePath, 'trigger', {
       title: 'Cascade on completion',
@@ -195,6 +256,33 @@ describe('trigger engine', () => {
 
     const state = triggerEngine.loadTriggerState(workspacePath);
     expect(state.triggers[cascadeTrigger.path]?.fireCount).toBe(1);
+  });
+
+  it('blocks risky trigger actions when safety rails are engaged', () => {
+    safety.pauseSafetyOperations(workspacePath, 'system', 'Pause risky trigger actions');
+    store.create(workspacePath, 'trigger', {
+      title: 'Blocked shell cascade',
+      status: 'active',
+      condition: { type: 'thread-complete' },
+      cascade_on: ['thread-complete'],
+      action: {
+        type: 'shell',
+        command: 'node -e "require(\'node:fs\').writeFileSync(\'.workgraph/shell-trigger.txt\', \'shell-fired\')"',
+      },
+      cooldown: 0,
+    }, '# Trigger\n', 'system');
+
+    const sourceThread = thread.createThread(workspacePath, 'Safety source', 'Trip safety rails', 'agent-safety');
+    thread.claim(workspacePath, sourceThread.path, 'agent-safety');
+    thread.done(workspacePath, sourceThread.path, 'agent-safety', 'Safety done https://github.com/versatly/workgraph/pull/55');
+
+    const shellMarker = path.join(workspacePath, '.workgraph', 'shell-trigger.txt');
+    expect(fs.existsSync(shellMarker)).toBe(false);
+
+    const state = triggerEngine.loadTriggerState(workspacePath);
+    const blockedTriggerPath = 'triggers/blocked-shell-cascade.md';
+    expect(state.triggers[blockedTriggerPath]?.fireCount ?? 0).toBe(0);
+    expect(state.triggers[blockedTriggerPath]?.lastError).toContain('Safety rails blocked');
   });
 
   it('uses ledger offset cursors so same-timestamp events are not skipped', () => {

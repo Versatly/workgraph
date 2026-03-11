@@ -30,6 +30,9 @@ export interface DispatchAdapterExecutionInput {
   space?: string;
   createCheckpoint?: boolean;
   isCancelled?: () => boolean;
+  onHeartbeat?: () => Promise<void> | void;
+  abortSignal?: AbortSignal;
+  heartbeatIntervalMs?: number;
 }
 
 export interface DispatchAdapterExecutionResult {

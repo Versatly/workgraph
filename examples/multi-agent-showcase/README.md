@@ -37,7 +37,7 @@ The flow is intentionally end-to-end and reproducible from a fresh workspace. Ev
 From repo root:
 
 ```bash
-bash examples/multi-agent-showcase/run.sh --json
+node examples/multi-agent-showcase/run.mjs --json
 ```
 
 Optional arguments:
@@ -45,6 +45,12 @@ Optional arguments:
 - `--workspace <path>`: use a specific workspace directory
 - `--skip-build`: skip `pnpm run build` (useful in tests)
 - `--json`: emit machine-readable summary only
+
+Unix shells can still use the wrapper:
+
+```bash
+bash examples/multi-agent-showcase/run.sh --json
+```
 
 ## Script breakdown
 

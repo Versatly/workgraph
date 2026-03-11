@@ -8,6 +8,7 @@ import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';
+import * as safety from './safety.js';
 import * as store from './store.js';
 import { matchesCronSchedule, nextCronMatch, parseCronExpression, type CronSchedule } from './cron.js';
 import type { DispatchRun, PrimitiveInstance } from './types.js';
@@ -68,6 +69,18 @@ type TriggerCondition =
     }
   | {
       type: 'manual';
+    }
+  | {
+      type: 'all';
+      conditions: TriggerCondition[];
+    }
+  | {
+      type: 'any';
+      conditions: TriggerCondition[];
+    }
+  | {
+      type: 'not';
+      condition: TriggerCondition;
     };
 
 type TriggerAction =
@@ -287,10 +300,7 @@ export function runTriggerEngineCycle(
     ? allTriggers.filter((trigger) => triggerPathFilter.has(trigger.path))
     : allTriggers;
   const requiresLedgerRead = triggers.some((trigger) =>
-    isTriggerCycleEvaluable(trigger) && (
-      trigger.condition?.type === 'event'
-      || trigger.condition?.type === 'thread-complete'
-    )
+    isTriggerCycleEvaluable(trigger) && conditionRequiresLedgerRead(trigger.condition)
   );
   const ledgerEntries = requiresLedgerRead
     ? ledger.readAll(workspacePath)
@@ -826,14 +836,21 @@ function executeTriggerAction(
       };
     }
     case 'update-primitive': {
-      const targetPath = String(materializeTemplateValue(action.path, context));
-      const fields = materializeTemplateValue(action.fields ?? {}, context) as Record<string, unknown>;
-      const body = action.body === undefined
-        ? undefined
-        : String(materializeTemplateValue(action.body, context));
-      const updated = store.update(workspacePath, targetPath, fields, body, actor);
+      const updated = runTriggerActionWithSafetyRails(
+        workspacePath,
+        actor,
+        'trigger.action.update-primitive',
+        () => {
+          const targetPath = String(materializeTemplateValue(action.path, context));
+          const fields = materializeTemplateValue(action.fields ?? {}, context) as Record<string, unknown>;
+          const body = action.body === undefined
+            ? undefined
+            : String(materializeTemplateValue(action.body, context));
+          return store.update(workspacePath, targetPath, fields, body, actor);
+        },
+      );
       appendTriggerFireLedger(workspacePath, actor, trigger, action.type, eventKey, {
-        target_path: targetPath,
+        target_path: updated.path,
       });
       return {
         action: action.type,
@@ -842,21 +859,29 @@ function executeTriggerAction(
     }
     case 'shell': {
       const command = String(materializeTemplateValue(action.command, context));
-      const timeoutMs = normalizeInt(action.timeoutMs, DEFAULT_SHELL_TIMEOUT_MS, 1);
-      const shellResult = spawnSync(command, {
-        shell: true,
-        cwd: workspacePath,
-        encoding: 'utf-8',
-        timeout: timeoutMs,
-      });
-      if (shellResult.error) {
-        throw new Error(`Shell trigger command failed: ${shellResult.error.message}`);
-      }
-      if ((shellResult.status ?? 1) !== 0) {
-        throw new Error(
-          `Shell trigger command exited with ${shellResult.status}: ${command}\n${shellResult.stderr || shellResult.stdout || ''}`,
-        );
-      }
+      const shellResult = runTriggerActionWithSafetyRails(
+        workspacePath,
+        actor,
+        'trigger.action.shell',
+        () => {
+          const timeoutMs = normalizeInt(action.timeoutMs, DEFAULT_SHELL_TIMEOUT_MS, 1);
+          const result = spawnSync(command, {
+            shell: true,
+            cwd: workspacePath,
+            encoding: 'utf-8',
+            timeout: timeoutMs,
+          });
+          if (result.error) {
+            throw new Error(`Shell trigger command failed: ${result.error.message}`);
+          }
+          if ((result.status ?? 1) !== 0) {
+            throw new Error(
+              `Shell trigger command exited with ${result.status}: ${command}\n${result.stderr || result.stdout || ''}`,
+            );
+          }
+          return result;
+        },
+      );
       appendTriggerFireLedger(workspacePath, actor, trigger, action.type, eventKey, {
         command,
         exit_code: shellResult.status ?? 0,
@@ -934,6 +959,39 @@ function appendTriggerFireLedger(
   });
 }
 
+function runTriggerActionWithSafetyRails<T>(
+  workspacePath: string,
+  actor: string,
+  operation: string,
+  action: () => T,
+): T {
+  const decision = safety.evaluateSafety(workspacePath, {
+    actor,
+    operation,
+    consume: true,
+  });
+  if (!decision.allowed) {
+    throw new Error(`Safety rails blocked "${operation}": ${decision.reasons.join('; ')}`);
+  }
+  try {
+    const result = action();
+    safety.recordOperationOutcome(workspacePath, {
+      actor,
+      operation,
+      success: true,
+    });
+    return result;
+  } catch (error) {
+    safety.recordOperationOutcome(workspacePath, {
+      actor,
+      operation,
+      success: false,
+      error: errorMessage(error),
+    });
+    throw error;
+  }
+}
+
 function buildDispatchIdempotencyKey(triggerPath: string, eventKey: string, objective: string): string {
   return createHash('sha256')
     .update(`${triggerPath}:${eventKey}:${objective}`)
@@ -954,6 +1012,90 @@ function evaluateTriggerCondition(input: {
   const condition = input.trigger.condition;
   if (!condition) {
     return { matched: false, reason: 'Missing condition.' };
+  }
+
+  return evaluateConditionNode(input, condition);
+}
+
+function evaluateConditionNode(input: {
+  workspacePath: string;
+  trigger: NormalizedTrigger;
+  runtime: TriggerRuntimeState;
+  now: Date;
+  ledgerEntries: ReturnType<typeof ledger.readAll>;
+}, condition: TriggerCondition): TriggerConditionDecision {
+  if (condition.type === 'all') {
+    const workingRuntime = cloneTriggerRuntimeState(input.runtime);
+    const reasons: string[] = [];
+    let latestEventKey: string | undefined;
+    let mergedContext: Record<string, unknown> = {};
+    for (const child of condition.conditions) {
+      const decision = evaluateConditionNode({
+        ...input,
+        runtime: workingRuntime,
+      }, child);
+      reasons.push(decision.reason);
+      if (!decision.matched) {
+        Object.assign(input.runtime, workingRuntime);
+        return {
+          matched: false,
+          reason: `all(${reasons.join(' && ')})`,
+        };
+      }
+      latestEventKey = decision.eventKey ?? latestEventKey;
+      mergedContext = {
+        ...mergedContext,
+        ...(decision.context ?? {}),
+      };
+    }
+    Object.assign(input.runtime, workingRuntime);
+    return {
+      matched: true,
+      reason: `all(${reasons.join(' && ')})`,
+      eventKey: latestEventKey,
+      context: mergedContext,
+    };
+  }
+  if (condition.type === 'any') {
+    const workingRuntime = cloneTriggerRuntimeState(input.runtime);
+    const reasons: string[] = [];
+    for (const child of condition.conditions) {
+      const decision = evaluateConditionNode({
+        ...input,
+        runtime: workingRuntime,
+      }, child);
+      reasons.push(decision.reason);
+      if (decision.matched) {
+        Object.assign(input.runtime, workingRuntime);
+        return {
+          matched: true,
+          reason: `any(${decision.reason})`,
+          eventKey: decision.eventKey,
+          context: decision.context,
+        };
+      }
+    }
+    Object.assign(input.runtime, workingRuntime);
+    return {
+      matched: false,
+      reason: `any(${reasons.join(' || ')})`,
+    };
+  }
+  if (condition.type === 'not') {
+    const workingRuntime = cloneTriggerRuntimeState(input.runtime);
+    const decision = evaluateConditionNode({
+      ...input,
+      runtime: workingRuntime,
+    }, condition.condition);
+    Object.assign(input.runtime, workingRuntime);
+    return {
+      matched: !decision.matched,
+      reason: `not(${decision.reason})`,
+      ...(decision.matched ? {} : {
+        eventKey: decision.eventKey,
+        context: decision.context,
+      }),
+    };
   }
 
   switch (condition.type) {
@@ -1314,6 +1456,27 @@ function parseTriggerCondition(raw: unknown, triggerType: 'cron' | 'webhook' | '
   const obj = raw as Record<string, unknown>;
   const type = String(obj.type ?? '').toLowerCase();
 
+  if (type === 'all' || type === 'any') {
+    const conditions = Array.isArray(obj.conditions)
+      ? obj.conditions
+        .map((entry) => parseTriggerCondition(entry, 'event'))
+        .filter((entry): entry is TriggerCondition => !!entry)
+      : [];
+    if (conditions.length === 0) return null;
+    return {
+      type,
+      conditions,
+    };
+  }
+  if (type === 'not') {
+    const condition = parseTriggerCondition(obj.condition, 'event');
+    if (!condition) return null;
+    return {
+      type: 'not',
+      condition,
+    };
+  }
+
   if (type === 'cron' || obj.cron !== undefined || obj.expression !== undefined) {
     const expression = String(obj.expression ?? obj.cron ?? '').trim();
     if (!expression) return null;
@@ -1541,6 +1704,10 @@ function getOrCreateRuntimeState(state: TriggerStateData, triggerPath: string): 
   return state.triggers[triggerPath]!;
 }
 
+function cloneTriggerRuntimeState(runtime: TriggerRuntimeState): TriggerRuntimeState {
+  return JSON.parse(JSON.stringify(runtime)) as TriggerRuntimeState;
+}
+
 function evaluateCooldown(
   runtime: TriggerRuntimeState,
   now: Date,
@@ -1558,6 +1725,22 @@ function evaluateCooldown(
     blocked: true,
     reason: `Cooldown active (${Math.ceil(remainingMs / 1000)}s remaining).`,
   };
+}
+
+function conditionRequiresLedgerRead(condition: TriggerCondition | null): boolean {
+  if (!condition) return false;
+  switch (condition.type) {
+    case 'event':
+    case 'thread-complete':
+      return true;
+    case 'all':
+    case 'any':
+      return condition.conditions.some((entry) => conditionRequiresLedgerRead(entry));
+    case 'not':
+      return conditionRequiresLedgerRead(condition.condition);
+    default:
+      return false;
+  }
 }
 
 function computeNextFireAt(
@@ -1601,6 +1784,12 @@ function describeCondition(trigger: NormalizedTrigger): string {
   }
   if (!trigger.condition) return 'invalid';
   switch (trigger.condition.type) {
+    case 'all':
+      return `all(${trigger.condition.conditions.map(describeConditionNode).join(', ')})`;
+    case 'any':
+      return `any(${trigger.condition.conditions.map(describeConditionNode).join(', ')})`;
+    case 'not':
+      return `not(${describeConditionNode(trigger.condition.condition)})`;
     case 'cron':
       return `cron(${trigger.condition.expression})`;
     case 'event':
@@ -1609,6 +1798,29 @@ function describeCondition(trigger: NormalizedTrigger): string {
       return `file-watch(${trigger.condition.glob})`;
     case 'thread-complete':
       return `thread-complete(${trigger.condition.threadPath ?? '*'})`;
+    case 'manual':
+      return 'manual(explicit fire only)';
+    default:
+      return 'invalid';
+  }
+}
+
+function describeConditionNode(condition: TriggerCondition): string {
+  switch (condition.type) {
+    case 'all':
+      return `all(${condition.conditions.map(describeConditionNode).join(', ')})`;
+    case 'any':
+      return `any(${condition.conditions.map(describeConditionNode).join(', ')})`;
+    case 'not':
+      return `not(${describeConditionNode(condition.condition)})`;
+    case 'cron':
+      return `cron(${condition.expression})`;
+    case 'event':
+      return `event(${condition.pattern})`;
+    case 'file-watch':
+      return `file-watch(${condition.glob})`;
+    case 'thread-complete':
+      return `thread-complete(${condition.threadPath ?? '*'})`;
     case 'manual':
       return 'manual(explicit fire only)';
     default:

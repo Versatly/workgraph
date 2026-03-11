@@ -1,7 +1,6 @@
 export * from '@versatly/workgraph-kernel';
 
 export * as kernel from '@versatly/workgraph-kernel';
-export * as policy from '@versatly/workgraph-policy';
 export * as obsidianIntegration from '@versatly/workgraph-obsidian-integration';
 export * as runtimeAdapterCore from '@versatly/workgraph-runtime-adapter-core';
 export * as adapterCursorCloud from '@versatly/workgraph-adapter-cursor-cloud';

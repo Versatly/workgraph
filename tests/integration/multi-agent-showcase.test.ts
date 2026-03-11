@@ -14,9 +14,9 @@ describe('OBJ-09 multi-agent showcase', () => {
     const workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-obj09-showcase-'));
     try {
       const result = spawnSync(
-        'bash',
+        'node',
         [
-          path.resolve('examples/multi-agent-showcase/run.sh'),
+          path.resolve('examples/multi-agent-showcase/run.mjs'),
           '--workspace',
           workspacePath,
           '--skip-build',

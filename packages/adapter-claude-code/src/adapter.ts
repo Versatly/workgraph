@@ -1,6 +1,6 @@
 import {
-  ShellWorkerAdapter,
-} from '@versatly/workgraph-kernel';
+  ShellSubprocessAdapter,
+} from '@versatly/workgraph-runtime-adapter-core';
 import type {
   DispatchAdapter,
   DispatchAdapterCreateInput,
@@ -8,7 +8,7 @@ import type {
   DispatchAdapterExecutionResult,
   DispatchAdapterLogEntry,
   DispatchAdapterRunStatus,
-} from '@versatly/workgraph-kernel';
+} from '@versatly/workgraph-runtime-adapter-core';
 
 /**
  * Claude Code adapter backed by the shell worker transport.
@@ -18,26 +18,26 @@ import type {
  */
 export class ClaudeCodeAdapter implements DispatchAdapter {
   name = 'claude-code';
-  private readonly shellWorker = new ShellWorkerAdapter();
+  private readonly shellAdapter = new ShellSubprocessAdapter();
 
   async create(input: DispatchAdapterCreateInput): Promise<DispatchAdapterRunStatus> {
-    return this.shellWorker.create(input);
+    return this.shellAdapter.create(input);
   }
 
   async status(runId: string): Promise<DispatchAdapterRunStatus> {
-    return this.shellWorker.status(runId);
+    return this.shellAdapter.status(runId);
   }
 
   async followup(runId: string, actor: string, input: string): Promise<DispatchAdapterRunStatus> {
-    return this.shellWorker.followup(runId, actor, input);
+    return this.shellAdapter.followup(runId, actor, input);
   }
 
   async stop(runId: string, actor: string): Promise<DispatchAdapterRunStatus> {
-    return this.shellWorker.stop(runId, actor);
+    return this.shellAdapter.stop(runId, actor);
   }
 
   async logs(runId: string): Promise<DispatchAdapterLogEntry[]> {
-    return this.shellWorker.logs(runId);
+    return this.shellAdapter.logs(runId);
   }
 
   async execute(input: DispatchAdapterExecutionInput): Promise<DispatchAdapterExecutionResult> {
@@ -80,7 +80,7 @@ export class ClaudeCodeAdapter implements DispatchAdapter {
       shell_timeout_ms: input.context?.shell_timeout_ms ?? process.env.WORKGRAPH_CLAUDE_TIMEOUT_MS,
     };
 
-    const result = await this.shellWorker.execute({
+    const result = await this.shellAdapter.execute({
       ...input,
       context,
     });

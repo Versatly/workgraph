@@ -145,7 +145,7 @@ All milestones passed. Mission done. Ledger records full history.
 ### Changes to existing:
 - `packages/kernel/src/types.ts` — Add MissionStatus, MilestoneStatus, Mission types
 - `packages/kernel/src/store.ts` — Register `mission` primitive type
-- `packages/mcp-server/src/tools.ts` — Add MCP tools: `workgraph_create_mission`, `workgraph_approve_mission`, `workgraph_start_mission`, `workgraph_mission_status`, `workgraph_mission_progress`
+- `packages/mcp-server/src/mcp/tools/read-tools.ts` and `packages/mcp-server/src/mcp/tools/write-tools.ts` — MCP mission read/write tool registration
 - `packages/cli/` — Add `workgraph mission` subcommand group
 
 ### MCP Tools:

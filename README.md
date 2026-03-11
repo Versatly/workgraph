@@ -21,8 +21,9 @@ Agent-first workgraph workspace for multi-agent collaboration.
 - Obsidian Kanban board generation/sync (`workgraph board generate|sync`)
 - Wiki-link graph intelligence (`workgraph graph index|hygiene|neighborhood|impact|context|edges|export`)
 - Policy party registry and sensitive transition gates
-- Programmatic dispatch contract (`workgraph dispatch ...`) with explicit status transitions
-- Trigger dispatch bridge (`workgraph trigger fire ...`) with idempotency keying
+- Programmatic dispatch contract (`workgraph dispatch ...`) with explicit status transitions, lease heartbeats, and timeout-aware adapter cancellation
+- Programmable trigger engine with composable conditions, idempotent dispatch bridging, and safety-gated high-impact actions
+- MCP write surface for trigger CRUD/fire, dispatch, autonomy, and mission orchestration
 - JSON-friendly CLI for agent orchestration
 
 No memory-category scaffolding, no qmd dependency, no observational-memory pipeline.
@@ -108,23 +109,40 @@ under `packages/*` are the only implementation source of truth.
 
 Key workspace packages:
 
-- `packages/kernel`
-- `packages/cli`
-- `packages/sdk`
-- `packages/control-api`
-- `packages/runtime-adapter-core`
-- `packages/adapter-claude-code`
-- `packages/adapter-cursor-cloud`
-- `packages/mcp-server`
-- `packages/policy`
-- `packages/testkit`
-- `packages/search-qmd-adapter`
-- `packages/obsidian-integration`
-- `packages/skills`
+- `packages/kernel` — domain state machine and coordination core
+- `packages/cli` — command surface over kernel workflows
+- `packages/sdk` — curated public package surface
+- `packages/control-api` — REST, SSE, webhook gateway, and HTTP MCP hosting
+- `packages/runtime-adapter-core` — reusable dispatch contracts and generic transports
+- `packages/adapter-claude-code` — Claude Code-specific execution adapter
+- `packages/adapter-cursor-cloud` — Cursor Cloud-style execution adapter
+- `packages/mcp-server` — stdio + HTTP MCP transport and tool registration
+- `packages/testkit` — contract fixtures and schema validation helpers
+- `packages/search-qmd-adapter` — search compatibility seam
+- `packages/obsidian-integration` — editor-facing projections and exports
+- `packages/skills` — package-level skill distribution surface
+
+Package ownership and layering are documented in `docs/PACKAGE_BOUNDARIES.md`.
 
 Migration notes: see `docs/MIGRATION.md`.
 Live workspace repair runbook: see `docs/INVARIANT_REPAIR_PLAYBOOK.md`.
 Realtime control-api SSE contract: see `docs/SSE_EVENTS.md`.
+
+### Reliability and autonomy hardening
+
+Recent hardening focused on making unattended operation safer rather than just
+adding more commands:
+
+- dispatch runs now maintain leases while executing and propagate timeout/cancel
+  intent into adapter execution contracts
+- autonomy cycles now repair dispatch state, reconcile expired leases, recover
+  thread claim/reference drift, and run mission orchestration passes as part of
+  the same control loop
+- trigger actions can now express composable boolean conditions (`all` / `any`
+  / `not`) and route risky `shell` / `update-primitive` actions through safety
+  rails
+- MCP now exposes trigger create/update/delete/fire tools in addition to the
+  trigger engine cycle surface
 
 ### Development workflow (contributors)
 

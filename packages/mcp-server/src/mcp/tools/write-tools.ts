@@ -8,6 +8,7 @@ import {
   orientation as orientationModule,
   threadContext as threadContextModule,
   thread as threadModule,
+  trigger as triggerModule,
   triggerEngine as triggerEngineModule,
 } from '@versatly/workgraph-kernel';
 import { checkWriteGate, resolveActor } from '../auth.js';
@@ -21,6 +22,7 @@ const missionOrchestrator = missionOrchestratorModule;
 const orientation = orientationModule;
 const threadContext = threadContextModule;
 const thread = threadModule;
+const trigger = triggerModule;
 const triggerEngine = triggerEngineModule;
 
 const missionFeatureInputSchema = z.union([
@@ -45,6 +47,13 @@ const missionMilestoneInputSchema = z.object({
     criteria: z.array(z.string()).optional(),
   }).optional(),
 });
+
+const triggerConditionSchema = z.union([
+  z.string(),
+  z.object({}).passthrough(),
+]);
+
+const triggerContextSchema = z.object({}).passthrough();
 
 export function registerWriteTools(server: McpServer, options: WorkgraphMcpServerOptions): void {
   server.registerTool(
@@ -488,6 +497,195 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
         if (!gate.allowed) return errorResult(gate.reason);
         const run = dispatch.stop(options.workspacePath, args.runId, actor);
         return okResult({ run }, `Stopped run ${run.id}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_trigger_create',
+    {
+      title: 'Trigger Create',
+      description: 'Create a trigger primitive with programmable condition/action payloads.',
+      inputSchema: {
+        actor: z.string().optional(),
+        name: z.string().min(1),
+        type: z.enum(['cron', 'webhook', 'event', 'manual']),
+        condition: triggerConditionSchema.optional(),
+        action: triggerConditionSchema.optional(),
+        enabled: z.boolean().optional(),
+        cooldown: z.number().int().min(0).optional(),
+        body: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        path: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'promote:trigger', 'mcp:write'], {
+          action: 'mcp.trigger.create',
+          target: 'triggers',
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const created = trigger.createTrigger(options.workspacePath, {
+          actor,
+          name: args.name,
+          type: args.type,
+          condition: args.condition,
+          action: args.action,
+          enabled: args.enabled,
+          cooldown: args.cooldown,
+          body: args.body,
+          tags: args.tags,
+          path: args.path,
+        });
+        return okResult({ trigger: created }, `Created trigger ${created.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_trigger_update',
+    {
+      title: 'Trigger Update',
+      description: 'Update trigger metadata or programmable condition/action payloads.',
+      inputSchema: {
+        actor: z.string().optional(),
+        triggerRef: z.string().min(1),
+        name: z.string().optional(),
+        type: z.enum(['cron', 'webhook', 'event', 'manual']).optional(),
+        condition: triggerConditionSchema.optional(),
+        action: triggerConditionSchema.optional(),
+        enabled: z.boolean().optional(),
+        cooldown: z.number().int().min(0).optional(),
+        body: z.string().optional(),
+        tags: z.array(z.string()).optional(),
+        lastFired: z.string().nullable().optional(),
+        nextFireAt: z.string().nullable().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'promote:trigger', 'mcp:write'], {
+          action: 'mcp.trigger.update',
+          target: args.triggerRef,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = trigger.updateTrigger(options.workspacePath, args.triggerRef, {
+          actor,
+          name: args.name,
+          type: args.type,
+          condition: args.condition,
+          action: args.action,
+          enabled: args.enabled,
+          cooldown: args.cooldown,
+          body: args.body,
+          tags: args.tags,
+          lastFired: args.lastFired,
+          nextFireAt: args.nextFireAt,
+        });
+        return okResult({ trigger: updated }, `Updated trigger ${updated.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_trigger_delete',
+    {
+      title: 'Trigger Delete',
+      description: 'Delete a trigger primitive.',
+      inputSchema: {
+        actor: z.string().optional(),
+        triggerRef: z.string().min(1),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write'], {
+          action: 'mcp.trigger.delete',
+          target: args.triggerRef,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        trigger.deleteTrigger(options.workspacePath, args.triggerRef, actor);
+        return okResult({ deleted: true, triggerRef: args.triggerRef }, `Deleted trigger ${args.triggerRef}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_trigger_fire',
+    {
+      title: 'Trigger Fire',
+      description: 'Manually fire a trigger into a dispatch run, optionally executing it immediately.',
+      inputSchema: {
+        actor: z.string().optional(),
+        triggerRef: z.string().min(1),
+        eventKey: z.string().optional(),
+        objective: z.string().optional(),
+        adapter: z.string().optional(),
+        context: triggerContextSchema.optional(),
+        execute: z.boolean().optional(),
+        retryFailed: z.boolean().optional(),
+        agents: z.array(z.string()).optional(),
+        maxSteps: z.number().int().min(1).max(5000).optional(),
+        stepDelayMs: z.number().int().min(0).max(5000).optional(),
+        space: z.string().optional(),
+        createCheckpoint: z.boolean().optional(),
+        timeoutMs: z.number().int().min(1).max(60 * 60_000).optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write'], {
+          action: 'mcp.trigger.fire',
+          target: args.triggerRef,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const fired = await trigger.fireTriggerAndExecute(options.workspacePath, args.triggerRef, {
+          actor,
+          eventKey: args.eventKey,
+          objective: args.objective,
+          adapter: args.adapter,
+          context: args.context,
+          execute: args.execute,
+          retryFailed: args.retryFailed,
+          executeInput: {
+            agents: args.agents,
+            maxSteps: args.maxSteps,
+            stepDelayMs: args.stepDelayMs,
+            space: args.space,
+            createCheckpoint: args.createCheckpoint,
+            timeoutMs: args.timeoutMs,
+          },
+        });
+        return okResult(fired, `Fired trigger ${fired.triggerPath} into run ${fired.run.id}.`);
       } catch (error) {
         return errorResult(error);
       }

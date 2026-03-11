@@ -45,6 +45,7 @@ import type {
 const RUNS_FILE = '.workgraph/dispatch-runs.json';
 const DEFAULT_LEASE_MINUTES = 30;
 const DEFAULT_EXECUTE_TIMEOUT_MS = 10 * 60_000;
+const DEFAULT_LEASE_HEARTBEAT_INTERVAL_MS = 60_000;
 const RUNS_LOCK_SCOPE = 'dispatch-runs-state';
 
 export interface DispatchCreateInput {
@@ -946,6 +947,11 @@ export async function executeRun(
     const resolvedTimeoutMs = normalizeExecutionTimeoutMs(
       input.timeoutMs ?? readOptionalNumber(existing.context?.run_timeout_ms),
     );
+    const resolvedHeartbeatIntervalMs = normalizeLeaseHeartbeatIntervalMs(
+      readOptionalNumber(existing.context?.run_lease_heartbeat_ms),
+      existing.leaseDurationMinutes,
+    );
+    const abortController = new AbortController();
     let beforeGitState: ReturnType<typeof captureWorkspaceGitState> = null;
     try {
       beforeGitState = captureWorkspaceGitState(safeWorkspacePath);
@@ -1006,6 +1012,12 @@ export async function executeRun(
       setStatus(safeWorkspacePath, safeRunId, safeActor, 'running', `Run started on adapter "${existing.adapter}".`);
     }
 
+    const stopLeaseHeartbeat = startRunLeaseHeartbeat(
+      safeWorkspacePath,
+      safeRunId,
+      safeActor,
+      resolvedHeartbeatIntervalMs,
+    );
     try {
       const execution = await withExecutionTimeout(
         adapter.execute({
@@ -1019,13 +1031,37 @@ export async function executeRun(
           stepDelayMs: input.stepDelayMs,
           space: input.space,
           createCheckpoint: input.createCheckpoint,
-          isCancelled: () => status(safeWorkspacePath, safeRunId).status === 'cancelled',
+          isCancelled: () => abortController.signal.aborted || getRun(safeWorkspacePath, safeRunId)?.status === 'cancelled',
+          onHeartbeat: () => heartbeat(safeWorkspacePath, safeRunId, { actor: safeActor }),
+          abortSignal: abortController.signal,
+          heartbeatIntervalMs: resolvedHeartbeatIntervalMs,
         }),
         resolvedTimeoutMs,
         safeRunId,
+        async () => {
+          abortController.abort();
+          await safeStopAdapterExecution(adapter, safeRunId, safeActor);
+        },
       );
 
       appendRunLogs(safeWorkspacePath, safeRunId, safeActor, execution.logs);
+      const currentRun = status(safeWorkspacePath, safeRunId);
+      if (currentRun.status === 'cancelled') {
+        appendDispatchRunAuditEventSafe(safeWorkspacePath, {
+          runId: safeRunId,
+          actor: safeActor,
+          kind: 'run-execution-finished',
+          data: {
+            status: 'cancelled',
+            reason: 'execution result ignored after cancellation',
+          },
+        }, {
+          runId: safeRunId,
+          actor: safeActor,
+          operation: 'dispatch.run.execute',
+        });
+        return currentRun;
+      }
       const finalStatus = execution.status;
       if (finalStatus === 'queued' || finalStatus === 'running') {
         throw new ConflictError(`Adapter returned invalid terminal status "${finalStatus}" for execute().`, {
@@ -1089,6 +1125,7 @@ export async function executeRun(
         contextPatch: {
           ...(execution.metrics ? { adapter_metrics: execution.metrics } : {}),
           dispatch_mode: resolvedDispatchMode,
+          lease_heartbeat_ms: resolvedHeartbeatIntervalMs,
           ...(evidenceSummary ? { evidence_chain: evidenceSummary } : {}),
         },
       });
@@ -1130,8 +1167,12 @@ export async function executeRun(
         error: message,
         contextPatch: {
           dispatch_mode: resolvedDispatchMode,
+          lease_heartbeat_ms: resolvedHeartbeatIntervalMs,
         },
       });
+    } finally {
+      stopLeaseHeartbeat();
+      abortController.abort();
     }
   });
 }
@@ -1753,10 +1794,20 @@ function normalizeExecutionTimeoutMs(value: unknown): number {
   return Math.trunc(Math.min(60 * 60_000, Math.max(1_000, numeric)));
 }
 
+function normalizeLeaseHeartbeatIntervalMs(value: unknown, leaseDurationMinutes: number | undefined): number {
+  const numeric = readOptionalNumber(value);
+  if (numeric !== undefined && Number.isFinite(numeric) && numeric > 0) {
+    return Math.trunc(Math.min(60 * 60_000, Math.max(100, numeric)));
+  }
+  const leaseMs = normalizeLeaseMinutes(leaseDurationMinutes) * 60_000;
+  return Math.trunc(Math.min(DEFAULT_LEASE_HEARTBEAT_INTERVAL_MS, Math.max(1_000, leaseMs / 3)));
+}
+
 async function withExecutionTimeout<T>(
   promise: Promise<T>,
   timeoutMs: number,
   runId: string,
+  onTimeout?: () => Promise<void> | void,
 ): Promise<T> {
   let timeoutHandle: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -1764,6 +1815,7 @@ async function withExecutionTimeout<T>(
       promise,
       new Promise<T>((_resolve, reject) => {
         timeoutHandle = setTimeout(() => {
+          void Promise.resolve(onTimeout?.()).catch(() => undefined);
           reject(new Error(`Dispatch execution timed out after ${timeoutMs}ms for run ${runId}.`));
         }, timeoutMs);
       }),
@@ -1801,6 +1853,40 @@ function normalizeLeaseMinutes(value: unknown): number {
     return Math.trunc(value);
   }
   return DEFAULT_LEASE_MINUTES;
+}
+
+function startRunLeaseHeartbeat(
+  workspacePath: string,
+  runId: string,
+  actor: string,
+  intervalMs: number,
+): () => void {
+  let stopped = false;
+  const tick = () => {
+    if (stopped) return;
+    const run = getRun(workspacePath, runId);
+    if (!run || run.status !== 'running') return;
+    void Promise.resolve(heartbeat(workspacePath, runId, { actor })).catch(() => undefined);
+  };
+  tick();
+  const timer = setInterval(tick, intervalMs);
+  timer.unref();
+  return () => {
+    stopped = true;
+    clearInterval(timer);
+  };
+}
+
+async function safeStopAdapterExecution(
+  adapter: ReturnType<typeof resolveDispatchAdapter>,
+  runId: string,
+  actor: string,
+): Promise<void> {
+  try {
+    await adapter.stop(runId, actor);
+  } catch {
+    // Best-effort stop should never mask the original timeout/cancellation path.
+  }
 }
 
 function applyLease(run: DispatchRun, nowIso: string, requestedLeaseMinutes?: number): void {

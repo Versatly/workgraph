@@ -291,11 +291,12 @@ export function startMission(workspacePath: string, missionRef: string, actor: s
 }
 
 export function missionStatus(workspacePath: string, missionRef: string): PrimitiveInstance {
-  return requireMission(workspacePath, missionRef);
+  const mission = requireMission(workspacePath, missionRef);
+  return normalizeMissionReadModel(workspacePath, mission);
 }
 
 export function missionProgress(workspacePath: string, missionRef: string): MissionProgressReport {
-  const mission = requireMission(workspacePath, missionRef);
+  const mission = normalizeMissionReadModel(workspacePath, requireMission(workspacePath, missionRef));
   const missionState = asMission(mission);
   const milestoneSummaries: MissionProgressMilestoneSummary[] = [];
   let totalFeatures = 0;
@@ -666,6 +667,49 @@ function asMission(mission: PrimitiveInstance): Mission {
     tags: asStringArray(mission.fields.tags),
     created: normalizeOptionalString(mission.fields.created) ?? new Date(0).toISOString(),
     updated: normalizeOptionalString(mission.fields.updated) ?? new Date(0).toISOString(),
+  };
+}
+
+function normalizeMissionReadModel(workspacePath: string, mission: PrimitiveInstance): PrimitiveInstance {
+  const missionState = asMission(mission);
+  if (missionState.status !== 'completed') {
+    return mission;
+  }
+
+  let changed = false;
+  const normalizedMilestones = missionState.milestones.map((milestone) => {
+    if (milestone.status === 'passed') {
+      return milestone;
+    }
+
+    changed = true;
+    return {
+      ...milestone,
+      status: 'passed' as const,
+      completed_at: milestone.completed_at ?? missionState.completed_at ?? missionState.updated,
+      ...(milestone.validation
+        ? {
+            validation: {
+              ...milestone.validation,
+              run_status: milestone.validation.run_status ?? 'succeeded',
+              validated_at: milestone.validation.validated_at ?? missionState.completed_at ?? missionState.updated,
+            },
+          }
+        : {}),
+    };
+  });
+
+  if (!changed) {
+    return mission;
+  }
+
+  return {
+    ...mission,
+    fields: {
+      ...mission.fields,
+      milestones: sanitizeForYaml(normalizedMilestones),
+    },
+    body: renderMissionBody(missionState.plan, normalizedMilestones),
   };
 }
 

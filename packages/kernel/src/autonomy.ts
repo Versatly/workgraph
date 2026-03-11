@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import * as dispatch from './dispatch.js';
+import * as missionOrchestrator from './mission-orchestrator.js';
 import * as thread from './thread.js';
 import * as triggerEngine from './trigger-engine.js';
 
@@ -24,6 +25,9 @@ export interface AutonomyCycleReport {
   cycle: number;
   readyThreads: number;
   triggerActions: number;
+  missionActions: number;
+  repairedRuns: number;
+  requeuedRuns: number;
   runId?: string;
   runStatus?: string;
   driftOk: boolean;
@@ -48,6 +52,15 @@ export async function runAutonomyLoop(
   let idleCycles = 0;
 
   for (let cycle = 1; cycle <= maxCycles; cycle++) {
+    const dispatchRecovery = dispatch.recoverDispatchState(workspacePath, options.actor);
+    const leaseReconcile = dispatch.reconcileExpiredLeases(workspacePath, options.actor);
+    const threadRecovery = thread.recoverThreadState(workspacePath, options.actor, {
+      staleClaimLimit: 100,
+    });
+    const preExecutionMissionCycles = missionOrchestrator.runMissionOrchestratorForActiveMissions(
+      workspacePath,
+      options.actor,
+    );
     const triggerResult = options.executeTriggers === false
       ? null
       : triggerEngine.runTriggerEngineCycle(workspacePath, {
@@ -84,14 +97,36 @@ export async function runAutonomyLoop(
       runStatus = run.status;
     }
 
+    const postExecutionMissionCycles = missionOrchestrator.runMissionOrchestratorForActiveMissions(
+      workspacePath,
+      options.actor,
+    );
+    const missionActions = [...preExecutionMissionCycles, ...postExecutionMissionCycles]
+      .reduce((total, entry) => total + entry.actions.length, 0);
+    const driftIssues =
+      dispatchRecovery.repairedRuns.length +
+      dispatchRecovery.removedCorruptRuns +
+      dispatchRecovery.warnings.length +
+      leaseReconcile.requeuedRuns.length +
+      threadRecovery.leaseState.repaired +
+      threadRecovery.leaseState.removed +
+      threadRecovery.leaseState.issues.length +
+      threadRecovery.staleClaims.reaped.length +
+      threadRecovery.staleClaims.skipped.length +
+      threadRecovery.brokenReferences.length +
+      (triggerResult?.errors ?? 0);
+
     const report: AutonomyCycleReport = {
       cycle,
       readyThreads: readyNow.length,
       triggerActions: triggerResult?.fired ?? 0,
+      missionActions,
+      repairedRuns: dispatchRecovery.repairedRuns.length,
+      requeuedRuns: leaseReconcile.requeuedRuns.length,
       runId,
       runStatus,
-      driftOk: true,
-      driftIssues: triggerResult?.errors ?? 0,
+      driftOk: driftIssues === 0,
+      driftIssues,
     };
     cycles.push(report);
     writeHeartbeat(options.heartbeatFile, {
@@ -121,12 +156,12 @@ export async function runAutonomyLoop(
   writeHeartbeat(options.heartbeatFile, {
     ts: new Date().toISOString(),
     finalReadyThreads,
-    finalDriftOk: true,
+    finalDriftOk: cycles.every((entry) => entry.driftOk),
   });
   return {
     cycles,
     finalReadyThreads,
-    finalDriftOk: true,
+    finalDriftOk: cycles.every((entry) => entry.driftOk),
   };
 }
 

@@ -136,4 +136,65 @@ describe('mission lifecycle', () => {
       'threads/mission-release-app-v2/api.md',
     ]);
   });
+
+  it('normalizes completed mission milestones on the read path', () => {
+    const created = mission.createMission(
+      workspacePath,
+      'Research A2A',
+      'Document the integration shape',
+      'agent-research',
+    );
+    mission.planMission(workspacePath, created.path, {
+      milestones: [
+        {
+          id: 'ms-1',
+          title: 'Research',
+          features: ['Read spec'],
+          validation: {
+            strategy: 'automated',
+            criteria: ['write summary'],
+          },
+        },
+        {
+          id: 'ms-2',
+          title: 'Design',
+          features: ['Design bridge'],
+        },
+      ],
+    }, 'agent-research');
+
+    const rawMission = store.read(workspacePath, created.path);
+    expect(rawMission).not.toBeNull();
+    const rawMilestones = rawMission?.fields.milestones as Array<{ status: string }>;
+    expect(rawMilestones.map((entry) => entry.status)).toEqual(['open', 'open']);
+
+    store.list(workspacePath, 'thread').forEach((featureThread) => {
+      store.update(workspacePath, featureThread.path, { status: 'done' }, undefined, 'system', {
+        skipAuthorization: true,
+      });
+    });
+
+    store.update(workspacePath, created.path, {
+      status: 'completed',
+      completed_at: '2026-03-10T05:00:00.000Z',
+    }, undefined, 'system', {
+      skipAuthorization: true,
+    });
+
+    const normalized = mission.missionStatus(workspacePath, created.path);
+    const normalizedMilestones = normalized.fields.milestones as Array<{
+      status: string;
+      completed_at?: string;
+      validation?: { run_status?: string; validated_at?: string };
+    }>;
+    expect(normalizedMilestones.map((entry) => entry.status)).toEqual(['passed', 'passed']);
+    expect(normalizedMilestones[0]?.validation?.run_status).toBe('succeeded');
+    expect(normalizedMilestones[0]?.validation?.validated_at).toBe('2026-03-10T05:00:00.000Z');
+    expect(normalized.body).toContain('status: passed');
+
+    const progress = mission.missionProgress(workspacePath, created.path);
+    expect(progress.passedMilestones).toBe(2);
+    expect(progress.doneFeatures).toBe(2);
+    expect(progress.percentComplete).toBe(100);
+  });
 });

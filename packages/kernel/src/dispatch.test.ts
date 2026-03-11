@@ -197,6 +197,64 @@ describe('dispatch core module', () => {
     expect(finished.logs.some((entry) => entry.message.includes('adapter execution complete'))).toBe(true);
   });
 
+  it('keeps the lease alive while a long adapter execution is in flight', async () => {
+    registerDispatchAdapter('test-long-exec', () =>
+      makeAdapter(async () => {
+        await sleep(30);
+        return {
+          status: 'succeeded',
+          output: 'finished slowly',
+          logs: [],
+        };
+      }),
+    );
+
+    const run = createRun(workspacePath, {
+      actor: 'agent-keepalive',
+      adapter: 'test-long-exec',
+      objective: 'Lease keepalive objective',
+      context: {
+        run_lease_heartbeat_ms: 5,
+      },
+    });
+    const finished = await executeRun(workspacePath, run.id, {
+      actor: 'agent-keepalive',
+      timeoutMs: 500,
+    });
+
+    expect(finished.status).toBe('succeeded');
+    expect((finished.heartbeats ?? []).length).toBeGreaterThan(0);
+    expect(finished.context?.lease_heartbeat_ms).toBe(100);
+  });
+
+  it('aborts adapter execution when dispatch timeout fires', async () => {
+    let aborted = false;
+    registerDispatchAdapter('test-timeout-abort', () =>
+      makeAdapter(async (input) => new Promise<DispatchAdapterExecutionResult>((_resolve) => {
+        input.abortSignal?.addEventListener('abort', () => {
+          aborted = true;
+        }, { once: true });
+      })),
+    );
+
+    const run = createRun(workspacePath, {
+      actor: 'agent-timeout',
+      adapter: 'test-timeout-abort',
+      objective: 'Timeout objective',
+      context: {
+        run_lease_heartbeat_ms: 5,
+      },
+    });
+    const finished = await executeRun(workspacePath, run.id, {
+      actor: 'agent-timeout',
+      timeoutMs: 25,
+    });
+
+    expect(finished.status).toBe('failed');
+    expect(finished.error).toContain('timed out');
+    expect(aborted).toBe(true);
+  });
+
   it('supports createAndExecuteRun convenience helper', async () => {
     registerDispatchAdapter('test-create-and-exec', () =>
       makeAdapter(async () => ({
@@ -340,4 +398,10 @@ function makeAdapter(
     },
     ...(executeImpl ? { execute: executeImpl } : {}),
   };
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

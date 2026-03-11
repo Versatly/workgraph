@@ -10,7 +10,7 @@ import type {
   DispatchAdapterExecutionResult,
   DispatchAdapterLogEntry,
   DispatchAdapterRunStatus,
-} from '@versatly/workgraph-kernel';
+} from '@versatly/workgraph-runtime-adapter-core';
 
 const orientation = orientationModule;
 const store = storeModule;

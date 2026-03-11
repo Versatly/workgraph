@@ -15,7 +15,6 @@
     "@versatly/workgraph-kernel": "workspace:*",
     "@versatly/workgraph-mcp-server": "workspace:*",
     "@versatly/workgraph-obsidian-integration": "workspace:*",
-    "@versatly/workgraph-policy": "workspace:*",
     "@versatly/workgraph-runtime-adapter-core": "workspace:*",
     "@versatly/workgraph-search-qmd-adapter": "workspace:*",
     "@versatly/workgraph-skills": "workspace:*"
