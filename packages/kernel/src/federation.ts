@@ -1,6 +1,29 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import YAML from 'yaml';
+import {
+  DEFAULT_FEDERATION_CAPABILITIES,
+  FEDERATION_PROTOCOL_VERSION,
+  asRecord,
+  buildFederatedPrimitiveRef,
+  buildLegacyFederationLink,
+  deriveWorkspaceId,
+  normalizeCapabilitySet,
+  normalizeFederatedPrimitiveRef,
+  normalizeFederationWorkspaceIdentity,
+  normalizeOptionalString,
+  normalizePrimitivePath,
+  normalizeProtocolVersion,
+  normalizeTransportKind,
+  normalizeTrustLevel,
+  parseFederatedRef,
+  primitiveSlugFromPath,
+  primitiveTypeFromPath,
+  type FederatedPrimitiveRef,
+  type FederationTransportKind,
+  type FederationTrustLevel,
+  type FederationWorkspaceIdentity,
+} from './federation-helpers.js';
 import * as query from './query.js';
 import * as store from './store.js';
 import type { PrimitiveInstance } from './types.js';
@@ -9,11 +32,17 @@ const FEDERATION_CONFIG_FILE = '.workgraph/federation.yaml';
 
 export interface RemoteWorkspaceRef {
   id: string;
+  workspaceId: string;
   name: string;
   path: string;
   enabled: boolean;
   tags: string[];
+  protocolVersion: string;
+  capabilities: string[];
+  trustLevel: FederationTrustLevel;
+  transport: FederationTransportKind;
   addedAt: string;
+  lastHandshakeAt?: string;
   lastSyncedAt?: string;
   lastSyncStatus?: 'synced' | 'error';
   lastSyncError?: string;
@@ -22,6 +51,7 @@ export interface RemoteWorkspaceRef {
 export interface FederationConfig {
   version: number;
   updatedAt: string;
+  workspace: FederationWorkspaceIdentity;
   remotes: RemoteWorkspaceRef[];
 }
 
@@ -51,6 +81,7 @@ export interface LinkFederatedThreadResult {
   thread: PrimitiveInstance;
   created: boolean;
   link: string;
+  ref: FederatedPrimitiveRef;
 }
 
 export interface FederatedSearchOptions {
@@ -63,6 +94,9 @@ export interface FederatedSearchOptions {
 export interface FederatedSearchResultItem {
   workspaceId: string;
   workspacePath: string;
+  protocolVersion: string;
+  trustLevel: FederationTrustLevel;
+  stale: boolean;
   instance: PrimitiveInstance;
 }
 
@@ -84,11 +118,15 @@ export interface SyncFederationOptions {
 
 export interface FederationSyncRemoteResult {
   id: string;
+  workspaceId: string;
   workspacePath: string;
   enabled: boolean;
   status: 'synced' | 'skipped' | 'error';
   threadCount: number;
   openThreadCount: number;
+  protocolVersion?: string;
+  capabilities?: string[];
+  trustLevel?: FederationTrustLevel;
   syncedAt?: string;
   error?: string;
 }
@@ -100,6 +138,38 @@ export interface FederationSyncResult {
   remotes: FederationSyncRemoteResult[];
 }
 
+export interface FederationHandshakeResult {
+  remote: RemoteWorkspaceRef;
+  identity: FederationWorkspaceIdentity;
+  compatible: boolean;
+  supportsRead: boolean;
+  supportsSearch: boolean;
+  error?: string;
+}
+
+export interface FederationResolveResult {
+  ref: FederatedPrimitiveRef;
+  source: 'local' | 'remote';
+  authority: 'local' | 'remote';
+  workspaceId: string;
+  workspacePath: string;
+  protocolVersion: string;
+  trustLevel: FederationTrustLevel;
+  stale: boolean;
+  capabilityCheck: {
+    supportsRead: boolean;
+    supportsSearch: boolean;
+  };
+  instance: PrimitiveInstance;
+  warning?: string;
+}
+
+export interface FederationStatusResult {
+  workspace: FederationWorkspaceIdentity;
+  configPath: string;
+  remotes: FederationHandshakeResult[];
+}
+
 export function federationConfigPath(workspacePath: string): string {
   return path.join(workspacePath, FEDERATION_CONFIG_FILE);
 }
@@ -107,12 +177,12 @@ export function federationConfigPath(workspacePath: string): string {
 export function loadFederationConfig(workspacePath: string): FederationConfig {
   const configPath = federationConfigPath(workspacePath);
   if (!fs.existsSync(configPath)) {
-    return defaultFederationConfig();
+    return defaultFederationConfig(workspacePath);
   }
   try {
     const raw = fs.readFileSync(configPath, 'utf-8');
     const parsed = YAML.parse(raw) as unknown;
-    return normalizeFederationConfig(parsed);
+    return normalizeFederationConfig(workspacePath, parsed);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Failed to parse federation config at ${configPath}: ${message}`);
@@ -120,7 +190,7 @@ export function loadFederationConfig(workspacePath: string): FederationConfig {
 }
 
 export function saveFederationConfig(workspacePath: string, config: FederationConfig): FederationConfig {
-  const normalized = normalizeFederationConfig(config);
+  const normalized = normalizeFederationConfig(workspacePath, config);
   const configPath = federationConfigPath(workspacePath);
   const configDir = path.dirname(configPath);
   if (!fs.existsSync(configDir)) {
@@ -135,7 +205,7 @@ export function ensureFederationConfig(workspacePath: string): FederationConfig 
   if (fs.existsSync(configPath)) {
     return loadFederationConfig(workspacePath);
   }
-  const created = defaultFederationConfig();
+  const created = defaultFederationConfig(workspacePath);
   return saveFederationConfig(workspacePath, created);
 }
 
@@ -150,6 +220,15 @@ export function listRemoteWorkspaces(
     : config.remotes.filter((remote) => remote.enabled);
 }
 
+export function federationStatus(workspacePath: string): FederationStatusResult {
+  const config = ensureFederationConfig(workspacePath);
+  return {
+    workspace: config.workspace,
+    configPath: federationConfigPath(workspacePath),
+    remotes: config.remotes.map((remote) => handshakeRemoteWorkspace(workspacePath, remote)),
+  };
+}
+
 export function addRemoteWorkspace(
   workspacePath: string,
   input: AddRemoteWorkspaceInput,
@@ -162,6 +241,7 @@ export function addRemoteWorkspace(
   }
 
   const config = ensureFederationConfig(workspacePath);
+  const remoteIdentity = readRemoteWorkspaceIdentity(remotePath);
   const now = new Date().toISOString();
   const index = config.remotes.findIndex((remote) => remote.id === workspaceId);
   const previous = index >= 0 ? config.remotes[index] : undefined;
@@ -170,11 +250,17 @@ export function addRemoteWorkspace(
     : normalizeTags(input.tags);
   const remote: RemoteWorkspaceRef = {
     id: workspaceId,
+    workspaceId: previous?.workspaceId ?? remoteIdentity.workspaceId,
     name: normalizeOptionalString(input.name) ?? previous?.name ?? workspaceId,
     path: remotePath,
     enabled: input.enabled ?? previous?.enabled ?? true,
     tags: nextTags,
+    protocolVersion: previous?.protocolVersion ?? remoteIdentity.protocolVersion,
+    capabilities: previous?.capabilities ?? remoteIdentity.capabilities,
+    trustLevel: previous?.trustLevel ?? 'read-only',
+    transport: previous?.transport ?? 'local-path',
     addedAt: previous?.addedAt ?? now,
+    lastHandshakeAt: previous?.lastHandshakeAt ?? now,
     lastSyncedAt: previous?.lastSyncedAt,
     lastSyncStatus: previous?.lastSyncStatus,
     lastSyncError: previous?.lastSyncError,
@@ -257,15 +343,36 @@ export function linkThreadToRemoteWorkspace(
   if (!fs.existsSync(remote.path)) {
     throw new Error(`Federated workspace path not found for "${remoteId}": ${remote.path}`);
   }
+  const handshake = handshakeRemoteWorkspace(workspacePath, remote);
+  if (!handshake.compatible) {
+    throw new Error(handshake.error ?? `Remote workspace "${remoteId}" is not protocol-compatible.`);
+  }
+  if (!handshake.supportsRead) {
+    throw new Error(`Remote workspace "${remoteId}" does not advertise read capabilities for thread resolution.`);
+  }
   const remoteThread = store.read(remote.path, targetThreadPath);
   if (!remoteThread || remoteThread.type !== 'thread') {
     throw new Error(`Remote thread not found in "${remoteId}": ${targetThreadPath}`);
   }
 
-  const link = `federation://${remoteId}/${targetThreadPath}`;
+  const link = buildLegacyFederationLink(remote.id, targetThreadPath);
+  const ref = buildFederatedPrimitiveRef({
+    workspaceId: handshake.identity.workspaceId,
+    primitiveType: remoteThread.type,
+    primitivePath: targetThreadPath,
+    protocolVersion: handshake.identity.protocolVersion,
+    transport: remote.transport,
+    remoteAlias: remote.id,
+  });
   const existingLinks = readStringArray(localThread.fields.federation_links);
+  const existingRefs = readFederatedRefs(localThread.fields.federation_refs);
   const created = !existingLinks.includes(link);
   const links = created ? [...existingLinks, link] : existingLinks;
+  const refs = created
+    ? [...existingRefs, ref]
+    : existingRefs.some((entry) => entry.workspaceId === ref.workspaceId && entry.primitivePath === ref.primitivePath)
+      ? existingRefs
+      : [...existingRefs, ref];
   const body = created
     ? appendThreadFederationLink(localThread.body, link, remote.name)
     : undefined;
@@ -273,7 +380,10 @@ export function linkThreadToRemoteWorkspace(
   const updated = store.update(
     workspacePath,
     localThread.path,
-    { federation_links: links },
+    {
+      federation_links: links,
+      federation_refs: refs,
+    },
     body,
     actor,
     {
@@ -286,6 +396,7 @@ export function linkThreadToRemoteWorkspace(
     thread: updated,
     created,
     link,
+    ref,
   };
 }
 
@@ -315,6 +426,9 @@ export function searchFederated(
       results.push({
         workspaceId: 'local',
         workspacePath: path.resolve(workspacePath).replace(/\\/g, '/'),
+        protocolVersion: loadFederationConfig(workspacePath).workspace.protocolVersion,
+        trustLevel: 'local',
+        stale: false,
         instance,
       });
     }
@@ -322,6 +436,13 @@ export function searchFederated(
 
   for (const remote of remotes) {
     try {
+      const handshake = handshakeRemoteWorkspace(workspacePath, remote);
+      if (!handshake.compatible) {
+        throw new Error(handshake.error ?? `Remote workspace ${remote.id} is not protocol-compatible.`);
+      }
+      if (!handshake.supportsSearch) {
+        throw new Error(`Remote workspace ${remote.id} does not support federated search.`);
+      }
       if (!fs.existsSync(remote.path)) {
         throw new Error(`Remote workspace path not found: ${remote.path}`);
       }
@@ -332,6 +453,9 @@ export function searchFederated(
         results.push({
           workspaceId: remote.id,
           workspacePath: remote.path,
+          protocolVersion: handshake.identity.protocolVersion,
+          trustLevel: handshake.identity.trustLevel,
+          stale: isRemoteResultStale(remote, instance),
           instance,
         });
       }
@@ -353,6 +477,73 @@ export function searchFederated(
   };
 }
 
+export function resolveFederatedRef(
+  workspacePath: string,
+  ref: string | FederatedPrimitiveRef,
+): FederationResolveResult {
+  const parsedRef = typeof ref === 'string'
+    ? parseFederatedRef(ref)
+    : normalizeFederatedPrimitiveRef(ref);
+  if (!parsedRef) {
+    throw new Error('Invalid federated ref. Expected legacy federation:// link or typed federated ref.');
+  }
+  const config = ensureFederationConfig(workspacePath);
+  const remote = config.remotes.find((entry) =>
+    entry.id === parsedRef.remoteAlias
+    || entry.id === parsedRef.workspaceId
+    || entry.workspaceId === parsedRef.workspaceId);
+  if (!remote) {
+    throw new Error(`Federated workspace not configured for ref workspace id "${parsedRef.workspaceId}".`);
+  }
+  const localWinner = findLocalAuthorityWinner(workspacePath, parsedRef);
+  if (localWinner) {
+    return {
+      ref: parsedRef,
+      source: 'local',
+      authority: 'local',
+      workspaceId: config.workspace.workspaceId,
+      workspacePath: path.resolve(workspacePath).replace(/\\/g, '/'),
+      protocolVersion: config.workspace.protocolVersion,
+      trustLevel: config.workspace.trustLevel,
+      stale: false,
+      capabilityCheck: {
+        supportsRead: true,
+        supportsSearch: true,
+      },
+      instance: localWinner,
+      warning: `Local primitive "${localWinner.path}" overrides remote authority for slug "${parsedRef.primitiveSlug}".`,
+    };
+  }
+  const handshake = handshakeRemoteWorkspace(workspacePath, remote);
+  if (!handshake.compatible) {
+    throw new Error(handshake.error ?? `Remote workspace "${remote.id}" is not protocol-compatible.`);
+  }
+  if (!handshake.supportsRead) {
+    throw new Error(`Remote workspace "${remote.id}" does not support federated ref resolution.`);
+  }
+  const remoteInstance = resolveRemotePrimitive(remote.path, parsedRef);
+  if (!remoteInstance) {
+    throw new Error(`Remote primitive not found for ${parsedRef.primitiveType}:${parsedRef.primitiveSlug} in "${remote.id}".`);
+  }
+  const stale = isRemoteResultStale(remote, remoteInstance);
+  return {
+    ref: parsedRef,
+    source: 'remote',
+    authority: 'remote',
+    workspaceId: handshake.identity.workspaceId,
+    workspacePath: remote.path,
+    protocolVersion: handshake.identity.protocolVersion,
+    trustLevel: handshake.identity.trustLevel,
+    stale,
+    capabilityCheck: {
+      supportsRead: handshake.supportsRead,
+      supportsSearch: handshake.supportsSearch,
+    },
+    instance: remoteInstance,
+    ...(stale ? { warning: `Remote primitive "${remoteInstance.path}" may be stale relative to last federation sync.` } : {}),
+  };
+}
+
 export function syncFederation(
   workspacePath: string,
   actor: string,
@@ -368,22 +559,30 @@ export function syncFederation(
     if (!selected) {
       remotesResult.push({
         id: remote.id,
+        workspaceId: remote.workspaceId,
         workspacePath: remote.path,
         enabled: remote.enabled,
         status: 'skipped',
         threadCount: 0,
         openThreadCount: 0,
+        protocolVersion: remote.protocolVersion,
+        capabilities: remote.capabilities,
+        trustLevel: remote.trustLevel,
       });
       return remote;
     }
     if (!remote.enabled && options.includeDisabled !== true) {
       remotesResult.push({
         id: remote.id,
+        workspaceId: remote.workspaceId,
         workspacePath: remote.path,
         enabled: remote.enabled,
         status: 'skipped',
         threadCount: 0,
         openThreadCount: 0,
+        protocolVersion: remote.protocolVersion,
+        capabilities: remote.capabilities,
+        trustLevel: remote.trustLevel,
       });
       return remote;
     }
@@ -392,19 +591,32 @@ export function syncFederation(
       if (!fs.existsSync(remote.path)) {
         throw new Error(`Remote workspace path not found: ${remote.path}`);
       }
+      const handshake = handshakeRemoteWorkspace(workspacePath, remote);
+      if (!handshake.compatible) {
+        throw new Error(handshake.error ?? `Remote workspace ${remote.id} is not protocol-compatible.`);
+      }
       const threads = store.list(remote.path, 'thread');
       const openThreadCount = threads.filter((thread) => String(thread.fields.status ?? '') === 'open').length;
       remotesResult.push({
         id: remote.id,
+        workspaceId: handshake.identity.workspaceId,
         workspacePath: remote.path,
         enabled: remote.enabled,
         status: 'synced',
         threadCount: threads.length,
         openThreadCount,
+        protocolVersion: handshake.identity.protocolVersion,
+        capabilities: handshake.identity.capabilities,
+        trustLevel: handshake.identity.trustLevel,
         syncedAt: now,
       });
       return {
         ...remote,
+        workspaceId: handshake.identity.workspaceId,
+        protocolVersion: handshake.identity.protocolVersion,
+        capabilities: handshake.identity.capabilities,
+        trustLevel: handshake.identity.trustLevel,
+        lastHandshakeAt: now,
         lastSyncedAt: now,
         lastSyncStatus: 'synced' as const,
         lastSyncError: undefined,
@@ -413,16 +625,21 @@ export function syncFederation(
       const message = error instanceof Error ? error.message : String(error);
       remotesResult.push({
         id: remote.id,
+        workspaceId: remote.workspaceId,
         workspacePath: remote.path,
         enabled: remote.enabled,
         status: 'error',
         threadCount: 0,
         openThreadCount: 0,
+        protocolVersion: remote.protocolVersion,
+        capabilities: remote.capabilities,
+        trustLevel: remote.trustLevel,
         syncedAt: now,
         error: message,
       });
       return {
         ...remote,
+        lastHandshakeAt: now,
         lastSyncedAt: now,
         lastSyncStatus: 'error' as const,
         lastSyncError: message,
@@ -443,15 +660,16 @@ export function syncFederation(
   };
 }
 
-function defaultFederationConfig(now: string = new Date().toISOString()): FederationConfig {
+function defaultFederationConfig(workspacePath: string, now: string = new Date().toISOString()): FederationConfig {
   return {
-    version: 1,
+    version: 2,
     updatedAt: now,
+    workspace: normalizeFederationWorkspaceIdentity(undefined, workspacePath),
     remotes: [],
   };
 }
 
-function normalizeFederationConfig(value: unknown): FederationConfig {
+function normalizeFederationConfig(workspacePath: string, value: unknown): FederationConfig {
   const root = asRecord(value);
   const now = new Date().toISOString();
   const remotes = asArray(root.remotes)
@@ -460,10 +678,11 @@ function normalizeFederationConfig(value: unknown): FederationConfig {
     .sort((a, b) => a.id.localeCompare(b.id));
   const version = typeof root.version === 'number' && Number.isFinite(root.version)
     ? Math.max(1, Math.floor(root.version))
-    : 1;
+    : 2;
   return {
     version,
     updatedAt: normalizeOptionalString(root.updatedAt) ?? now,
+    workspace: normalizeFederationWorkspaceIdentity(root.workspace, workspacePath),
     remotes,
   };
 }
@@ -476,11 +695,17 @@ function normalizeRemoteWorkspaceRef(value: unknown): RemoteWorkspaceRef | null 
   const now = new Date().toISOString();
   return {
     id: normalizeIdentifier(id, 'remote.id'),
+    workspaceId: normalizeOptionalString(raw.workspaceId) ?? normalizeOptionalString(raw.workspace_id) ?? normalizeIdentifier(id, 'remote.id'),
     name: normalizeOptionalString(raw.name) ?? normalizeIdentifier(id, 'remote.id'),
     path: normalizeRemoteWorkspacePath(workspacePath),
     enabled: asBoolean(raw.enabled, true),
     tags: normalizeTags(asArray(raw.tags).map((entry) => String(entry))),
+    protocolVersion: normalizeProtocolVersion(raw.protocolVersion ?? raw.protocol_version),
+    capabilities: normalizeCapabilitySet(raw.capabilities),
+    trustLevel: normalizeTrustLevel(raw.trustLevel ?? raw.trust_level, 'read-only'),
+    transport: normalizeTransportKind(raw.transport, 'local-path'),
     addedAt: normalizeOptionalString(raw.addedAt) ?? now,
+    lastHandshakeAt: normalizeOptionalString(raw.lastHandshakeAt ?? raw.last_handshake_at),
     lastSyncedAt: normalizeOptionalString(raw.lastSyncedAt),
     lastSyncStatus: normalizeSyncStatus(raw.lastSyncStatus),
     lastSyncError: normalizeOptionalString(raw.lastSyncError),
@@ -548,12 +773,6 @@ function normalizeTags(values: unknown): string[] {
   return [...seen].sort((a, b) => a.localeCompare(b));
 }
 
-function normalizeOptionalString(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
-}
-
 function appendThreadFederationLink(body: string, link: string, remoteName: string): string {
   const currentBody = String(body ?? '');
   if (currentBody.includes(link)) return currentBody;
@@ -575,9 +794,106 @@ function readStringArray(value: unknown): string[] {
     .filter((entry) => entry.length > 0);
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
-  return value as Record<string, unknown>;
+function readFederatedRefs(value: unknown): FederatedPrimitiveRef[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((entry) => normalizeFederatedPrimitiveRef(entry))
+    .filter((entry): entry is FederatedPrimitiveRef => entry !== null);
+}
+
+function readRemoteWorkspaceIdentity(workspacePath: string): FederationWorkspaceIdentity {
+  const configPath = federationConfigPath(workspacePath);
+  if (!fs.existsSync(configPath)) {
+    return {
+      workspaceId: deriveWorkspaceId(workspacePath),
+      protocolVersion: FEDERATION_PROTOCOL_VERSION,
+      capabilities: [...DEFAULT_FEDERATION_CAPABILITIES],
+      trustLevel: 'read-only',
+    };
+  }
+  try {
+    const raw = YAML.parse(fs.readFileSync(configPath, 'utf-8')) as unknown;
+    const root = asRecord(raw);
+    return normalizeFederationWorkspaceIdentity(root.workspace, workspacePath, 'read-only');
+  } catch {
+    return {
+      workspaceId: deriveWorkspaceId(workspacePath),
+      protocolVersion: FEDERATION_PROTOCOL_VERSION,
+      capabilities: [...DEFAULT_FEDERATION_CAPABILITIES],
+      trustLevel: 'read-only',
+    };
+  }
+}
+
+function handshakeRemoteWorkspace(
+  workspacePath: string,
+  remote: RemoteWorkspaceRef,
+): FederationHandshakeResult {
+  const local = ensureFederationConfig(workspacePath).workspace;
+  if (!fs.existsSync(remote.path)) {
+    return {
+      remote,
+      identity: {
+        workspaceId: remote.workspaceId,
+        protocolVersion: remote.protocolVersion,
+        capabilities: remote.capabilities,
+        trustLevel: remote.trustLevel,
+      },
+      compatible: false,
+      supportsRead: false,
+      supportsSearch: false,
+      error: `Remote workspace path not found: ${remote.path}`,
+    };
+  }
+  const identity = readRemoteWorkspaceIdentity(remote.path);
+  const compatible = identity.protocolVersion === local.protocolVersion;
+  const supportsRead = identity.capabilities.includes('resolve-ref') && (
+    identity.capabilities.includes('read-primitive') || identity.capabilities.includes('read-thread')
+  );
+  const supportsSearch = identity.capabilities.includes('search');
+  return {
+    remote,
+    identity,
+    compatible,
+    supportsRead,
+    supportsSearch,
+    ...(compatible ? {} : {
+      error: `Protocol mismatch for remote "${remote.id}": local=${local.protocolVersion} remote=${identity.protocolVersion}.`,
+    }),
+  };
+}
+
+function resolveRemotePrimitive(
+  workspacePath: string,
+  ref: FederatedPrimitiveRef,
+): PrimitiveInstance | null {
+  if (ref.primitivePath) {
+    const direct = store.read(workspacePath, ref.primitivePath);
+    if (direct) return direct;
+  }
+  const instances = store.list(workspacePath, ref.primitiveType);
+  return instances.find((instance) => primitiveSlugFromPath(instance.path) === ref.primitiveSlug) ?? null;
+}
+
+function findLocalAuthorityWinner(
+  workspacePath: string,
+  ref: FederatedPrimitiveRef,
+): PrimitiveInstance | null {
+  return resolveRemotePrimitive(workspacePath, {
+    ...ref,
+    workspaceId: 'local',
+  });
+}
+
+function isRemoteResultStale(
+  remote: RemoteWorkspaceRef,
+  instance: PrimitiveInstance,
+): boolean {
+  if (!remote.lastSyncedAt) return true;
+  const syncedAt = Date.parse(remote.lastSyncedAt);
+  const updatedAt = Date.parse(String(instance.fields.updated ?? instance.fields.created ?? ''));
+  if (!Number.isFinite(syncedAt) || !Number.isFinite(updatedAt)) return true;
+  return updatedAt > syncedAt;
 }
 
 function asArray(value: unknown): unknown[] {
