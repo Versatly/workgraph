@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { spawn } from 'node:child_process';
 import * as registry from './registry.js';
+import * as ledger from './ledger.js';
 import * as safety from './safety.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
@@ -10,6 +12,121 @@ import * as transport from './transport/index.js';
 import * as triggerEngine from './trigger-engine.js';
 
 let workspacePath: string;
+
+interface WebhookTestServer {
+  url: string;
+  stop: () => Promise<void>;
+}
+
+type WebhookServerProcess = ReturnType<typeof spawn>;
+
+async function startWebhookTestServer(mode: 'success' | 'failure'): Promise<WebhookTestServer> {
+  const serverScript = `
+const http = require('node:http');
+const mode = process.env.WG_WEBHOOK_TEST_MODE;
+const server = http.createServer((request, response) => {
+  if (mode === 'failure') {
+    response.statusCode = 503;
+    response.end('service unavailable');
+    return;
+  }
+
+  const chunks = [];
+  request.on('data', (chunk) => chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)));
+  request.on('end', () => {
+    response.statusCode = 202;
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({
+      method: request.method,
+      headers: request.headers,
+      body: Buffer.concat(chunks).toString('utf-8'),
+    }));
+  });
+});
+
+server.listen(0, '127.0.0.1', () => {
+  const address = server.address();
+  if (!address || typeof address === 'string') {
+    process.stderr.write('failed to bind webhook test server');
+    process.exit(1);
+    return;
+  }
+  process.stdout.write(String(address.port) + '\\n');
+});
+`;
+  const child = spawn(process.execPath, ['-e', serverScript], {
+    stdio: ['ignore', 'pipe', 'pipe'],
+    env: {
+      ...process.env,
+      WG_WEBHOOK_TEST_MODE: mode,
+    },
+  });
+  const port = await waitForWebhookServerPort(child, mode);
+  return {
+    url: `http://127.0.0.1:${port}/agent-ingest`,
+    stop: async () => stopWebhookServer(child),
+  };
+}
+
+function waitForWebhookServerPort(
+  child: WebhookServerProcess,
+  mode: 'success' | 'failure',
+): Promise<number> {
+  return new Promise<number>((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      reject(new Error(`Timed out waiting for ${mode} webhook test server startup.`));
+    }, 5_000);
+    let stdout = '';
+    let stderr = '';
+    const stdoutStream = child.stdout;
+    const stderrStream = child.stderr;
+    if (!stdoutStream || !stderrStream) {
+      clearTimeout(timeout);
+      reject(new Error(`Webhook test server missing stdio streams for ${mode} mode.`));
+      return;
+    }
+
+    const onData = (chunk: Buffer | string) => {
+      stdout += chunk.toString();
+      const firstLine = stdout.split('\n')[0]?.trim() ?? '';
+      const parsed = Number(firstLine);
+      if (!Number.isFinite(parsed) || parsed <= 0) return;
+      clearTimeout(timeout);
+      stdoutStream.off('data', onData);
+      stderrStream.off('data', onError);
+      resolve(parsed);
+    };
+    const onError = (chunk: Buffer | string) => {
+      stderr += chunk.toString();
+    };
+
+    child.once('exit', (code) => {
+      clearTimeout(timeout);
+      reject(new Error(`Webhook test server exited early with code ${code ?? 'unknown'}: ${stderr}`));
+    });
+    stdoutStream.on('data', onData);
+    stderrStream.on('data', onError);
+  });
+}
+
+function stopWebhookServer(child: WebhookServerProcess): Promise<void> {
+  return new Promise<void>((resolve) => {
+    if (child.exitCode !== null || child.killed) {
+      resolve();
+      return;
+    }
+    const timeout = setTimeout(() => {
+      if (child.exitCode === null && !child.killed) {
+        child.kill('SIGKILL');
+      }
+    }, 1_000);
+    child.once('exit', () => {
+      clearTimeout(timeout);
+      resolve();
+    });
+    child.kill('SIGTERM');
+  });
+}
 
 beforeEach(() => {
   workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-trigger-engine-'));
@@ -453,5 +570,109 @@ describe('trigger engine', () => {
     expect(item?.lastFiredAt).toBeDefined();
     expect(item?.nextFireAt).toBeDefined();
     expect(item?.currentState).toBe('ready');
+  });
+
+  it('fires webhook actions with templated payloads and records transport delivery', async () => {
+    const server = await startWebhookTestServer('success');
+    try {
+      const webhookTrigger = store.create(workspacePath, 'trigger', {
+        title: 'Webhook on completed threads',
+        status: 'active',
+        condition: { type: 'event', pattern: 'thread.*' },
+        action: {
+          type: 'webhook',
+          url: server.url,
+          headers: {
+            'x-workgraph-target': '{{matched_event_latest_target}}',
+          },
+          bodyTemplate: {
+            target: '{{matched_event_latest_target}}',
+            op: '{{matched_event_latest_op}}',
+            count: '{{matched_event_count}}',
+          },
+        },
+        cooldown: 0,
+      }, '# Trigger\n', 'system');
+
+      const initCycle = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+      expect(initCycle.fired).toBe(0);
+
+      const sourceThread = thread.createThread(workspacePath, 'Webhook source', 'Drive webhook trigger', 'agent-webhook');
+      thread.claim(workspacePath, sourceThread.path, 'agent-webhook');
+      thread.done(workspacePath, sourceThread.path, 'agent-webhook', 'Webhook done https://github.com/versatly/workgraph/pull/88');
+
+      const fireCycle = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+      expect(fireCycle.fired).toBe(1);
+
+      const runtime = triggerEngine.loadTriggerState(workspacePath).triggers[webhookTrigger.path];
+      const webhookResponse = JSON.parse(String(runtime?.lastResult?.response_body ?? '{}')) as {
+        method?: string;
+        headers?: Record<string, unknown>;
+        body?: string;
+      };
+      expect(webhookResponse.method).toBe('POST');
+      expect(webhookResponse.headers?.['x-workgraph-target']).toBe(sourceThread.path);
+      const payload = JSON.parse(String(webhookResponse.body ?? '{}')) as Record<string, unknown>;
+      expect(payload.target).toBe(sourceThread.path);
+      expect(['update', 'done']).toContain(String(payload.op));
+      expect(Number(payload.count)).toBeGreaterThanOrEqual(1);
+
+      const outbox = transport.listTransportOutbox(workspacePath);
+      expect(outbox).toHaveLength(1);
+      expect(outbox[0]?.status).toBe('delivered');
+      expect(outbox[0]?.deliveryTarget).toBe(server.url);
+
+      const webhookEntries = ledger.readAll(workspacePath).filter((entry) =>
+        entry.target === webhookTrigger.path && entry.data?.action === 'webhook'
+      );
+      const successEntry = webhookEntries.find((entry) => entry.data?.fired === true);
+      expect(successEntry).toBeDefined();
+      expect(successEntry?.data?.status_code).toBe(202);
+    } finally {
+      await server.stop();
+    }
+  });
+
+  it('marks webhook trigger failures as errors without crashing cycle', async () => {
+    const server = await startWebhookTestServer('failure');
+    try {
+      const webhookTrigger = store.create(workspacePath, 'trigger', {
+        title: 'Webhook failing target',
+        status: 'active',
+        condition: { type: 'cron', expression: '* * * * *' },
+        action: {
+          type: 'webhook',
+          url: server.url,
+          bodyTemplate: {
+            ping: 'pong',
+          },
+        },
+        cooldown: 0,
+      }, '# Trigger\n', 'system');
+
+      const cycle = triggerEngine.runTriggerEngineCycle(workspacePath, {
+        actor: 'system',
+        now: new Date('2026-03-01T00:00:00.000Z'),
+      });
+      expect(cycle.fired).toBe(0);
+      expect(cycle.errors).toBe(1);
+
+      const triggerResult = cycle.triggers.find((entry) => entry.triggerPath === webhookTrigger.path);
+      expect(triggerResult?.runtimeState).toBe('error');
+      expect(triggerResult?.error).toContain('Webhook request failed');
+
+      const outbox = transport.listTransportOutbox(workspacePath);
+      expect(outbox).toHaveLength(1);
+      expect(outbox[0]?.status).toBe('failed');
+
+      const webhookEntries = ledger.readAll(workspacePath).filter((entry) =>
+        entry.target === webhookTrigger.path && entry.data?.action === 'webhook'
+      );
+      const failureEntry = webhookEntries.find((entry) => entry.data?.fired === false);
+      expect(failureEntry).toBeDefined();
+      expect(String(failureEntry?.data?.error ?? '')).toContain('Webhook request failed');
+    } finally {
+      await server.stop();
+    }
   });
 });

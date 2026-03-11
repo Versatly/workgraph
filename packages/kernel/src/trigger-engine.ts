@@ -18,6 +18,7 @@ const TRIGGER_STATE_FILE = '.workgraph/trigger-state.json';
 const TRIGGER_STATE_VERSION = 1;
 const DEFAULT_ENGINE_INTERVAL_SECONDS = 60;
 const DEFAULT_SHELL_TIMEOUT_MS = 30_000;
+const DEFAULT_WEBHOOK_TIMEOUT_MS = 10_000;
 
 type TriggerRuntimeStatus = 'ready' | 'cooldown' | 'inactive' | 'error';
 
@@ -115,6 +116,15 @@ type TriggerAction =
   | {
       type: 'shell';
       command: string;
+      timeoutMs?: number;
+      actor?: string;
+    }
+  | {
+      type: 'webhook';
+      url: string;
+      method?: string;
+      headers?: Record<string, string>;
+      bodyTemplate?: unknown;
       timeoutMs?: number;
       actor?: string;
     };
@@ -958,6 +968,96 @@ function performTriggerAction(
         stdout: shellResult.stdout?.trim() ?? '',
       };
     }
+    case 'webhook': {
+      const url = normalizeWebhookUrl(String(materializeTemplateValue(action.url, context)));
+      const method = normalizeWebhookMethod(
+        String(materializeTemplateValue(action.method ?? 'POST', context) ?? 'POST'),
+      );
+      const timeoutMs = normalizeInt(action.timeoutMs, DEFAULT_WEBHOOK_TIMEOUT_MS, 1);
+      const headers = normalizeWebhookHeaders(
+        materializeTemplateValue(action.headers ?? {}, context),
+      );
+      const body = action.bodyTemplate === undefined
+        ? undefined
+        : materializeTemplateValue(action.bodyTemplate, context);
+      const requestBody = body === undefined ? undefined : JSON.stringify(body);
+      if (requestBody !== undefined && !hasHeader(headers, 'content-type')) {
+        headers['content-type'] = 'application/json';
+      }
+
+      const outboxId = createWebhookOutboxRecord(workspacePath, trigger, {
+        url,
+        method,
+        timeoutMs,
+        headers,
+        body,
+        eventKey,
+      });
+      const response = executeWebhookRequest({
+        url,
+        method,
+        headers,
+        body: requestBody,
+        timeoutMs,
+      });
+
+      if (!response.ok) {
+        const message = response.error
+          ?? `Webhook request failed (${response.status ?? 'unknown'} ${response.statusText ?? ''}).`;
+        if (outboxId) {
+          try {
+            transport.markTransportOutboxFailed(workspacePath, outboxId, {
+              message,
+              context: {
+                trigger_path: trigger.path,
+                event_key: eventKey,
+                status_code: response.status,
+                status_text: response.statusText,
+              },
+            });
+          } catch {
+            // Transport outbox recording is best-effort for trigger actions.
+          }
+        }
+        appendTriggerFailureLedger(workspacePath, actor, trigger, action.type, eventKey, {
+          url,
+          method,
+          status_code: response.status,
+          status_text: response.statusText,
+          error: message,
+          transport_outbox_id: outboxId,
+        });
+        throw new Error(message);
+      }
+
+      if (outboxId) {
+        try {
+          transport.markTransportOutboxDelivered(
+            workspacePath,
+            outboxId,
+            `Webhook delivered with HTTP ${response.status}.`,
+          );
+        } catch {
+          // Transport outbox recording is best-effort for trigger actions.
+        }
+      }
+      appendTriggerFireLedger(workspacePath, actor, trigger, action.type, eventKey, {
+        url,
+        method,
+        status_code: response.status,
+        status_text: response.statusText,
+        transport_outbox_id: outboxId,
+      });
+      return {
+        action: action.type,
+        url,
+        method,
+        status_code: response.status,
+        status_text: response.statusText,
+        response_body: truncateText(response.bodyText, 4_000),
+        transport_outbox_id: outboxId,
+      };
+    }
     default: {
       const exhaustive: never = action;
       throw new Error(`Unsupported trigger action: ${(exhaustive as { type?: string }).type ?? 'unknown'}`);
@@ -1040,6 +1140,22 @@ function appendTriggerFireLedger(
 ): void {
   ledger.append(workspacePath, actor, 'update', trigger.path, 'trigger', {
     fired: true,
+    action: actionType,
+    ...(eventKey ? { event_key: eventKey } : {}),
+    ...details,
+  });
+}
+
+function appendTriggerFailureLedger(
+  workspacePath: string,
+  actor: string,
+  trigger: NormalizedTrigger,
+  actionType: string,
+  eventKey: string | undefined,
+  details: Record<string, unknown>,
+): void {
+  ledger.append(workspacePath, actor, 'update', trigger.path, 'trigger', {
+    fired: false,
     action: actionType,
     ...(eventKey ? { event_key: eventKey } : {}),
     ...details,
@@ -1694,6 +1810,19 @@ function parseTriggerAction(raw: unknown): TriggerAction | null {
         actor: asString(obj.actor),
       };
     }
+    case 'webhook': {
+      const url = asString(obj.url);
+      if (!url) return null;
+      return {
+        type: 'webhook',
+        url,
+        method: asString(obj.method),
+        headers: asStringRecord(obj.headers),
+        bodyTemplate: obj.bodyTemplate ?? obj.body_template ?? obj.body,
+        timeoutMs: asNumber(obj.timeout_ms) ?? asNumber(obj.timeoutMs) ?? undefined,
+        actor: asString(obj.actor),
+      };
+    }
     default:
       return null;
   }
@@ -1927,6 +2056,8 @@ function describeAction(trigger: NormalizedTrigger): string {
       return `update-primitive(${action.path})`;
     case 'shell':
       return `shell(${action.command})`;
+    case 'webhook':
+      return `webhook(${(action.method ?? 'POST').toUpperCase()} ${action.url})`;
     default:
       return 'invalid';
   }
@@ -2062,6 +2193,215 @@ function normalizeReferencePath(value: string): string {
   return unwrapped.endsWith('.md') ? unwrapped : `${unwrapped}.md`;
 }
 
+interface WebhookRequestInput {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  body?: string;
+  timeoutMs: number;
+}
+
+interface WebhookRequestResult {
+  ok: boolean;
+  status?: number;
+  statusText?: string;
+  bodyText: string;
+  error?: string;
+}
+
+const WEBHOOK_FETCH_RUNNER = `
+const fs = require('node:fs');
+
+async function main() {
+  const inputRaw = fs.readFileSync(0, 'utf8');
+  const input = inputRaw.trim().length > 0 ? JSON.parse(inputRaw) : {};
+  const timeoutMs = Number.isFinite(Number(input.timeoutMs))
+    ? Math.max(1, Math.trunc(Number(input.timeoutMs)))
+    : 10000;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const requestInit = {
+      method: String(input.method || 'POST').toUpperCase(),
+      headers: input.headers && typeof input.headers === 'object' && !Array.isArray(input.headers)
+        ? input.headers
+        : {},
+      signal: controller.signal,
+    };
+    if (Object.prototype.hasOwnProperty.call(input, 'body') && input.body !== undefined) {
+      requestInit.body = String(input.body);
+    }
+
+    const response = await fetch(String(input.url), requestInit);
+    const bodyText = await response.text();
+    return {
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      bodyText,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      bodyText: '',
+      error: error instanceof Error ? error.message : String(error),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+main()
+  .then((result) => {
+    process.stdout.write(JSON.stringify(result));
+  })
+  .catch((error) => {
+    process.stderr.write(error instanceof Error ? error.message : String(error));
+    process.exit(1);
+  });
+`;
+
+function executeWebhookRequest(input: WebhookRequestInput): WebhookRequestResult {
+  const execution = spawnSync(process.execPath, ['-e', WEBHOOK_FETCH_RUNNER], {
+    encoding: 'utf-8',
+    input: JSON.stringify(input),
+    timeout: Math.max(input.timeoutMs + 2_000, 5_000),
+    maxBuffer: 5 * 1024 * 1024,
+  });
+  if (execution.error) {
+    return {
+      ok: false,
+      bodyText: '',
+      error: `Webhook request execution failed: ${execution.error.message}`,
+    };
+  }
+  const parsed = parseWebhookRequestResult(execution.stdout);
+  if (parsed) {
+    return parsed;
+  }
+  const stderr = execution.stderr?.trim();
+  return {
+    ok: false,
+    bodyText: '',
+    error: stderr
+      ? `Webhook request execution failed: ${stderr}`
+      : `Webhook request execution failed with exit code ${execution.status ?? 'unknown'}.`,
+  };
+}
+
+function parseWebhookRequestResult(raw: string): WebhookRequestResult | null {
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    return {
+      ok: asBoolean(parsed.ok) ?? false,
+      status: asNumber(parsed.status),
+      statusText: asString(parsed.statusText),
+      bodyText: typeof parsed.bodyText === 'string' ? parsed.bodyText : '',
+      error: asString(parsed.error),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function normalizeWebhookUrl(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    throw new Error('Webhook trigger url is required.');
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    throw new Error(`Webhook trigger url is invalid: ${trimmed}`);
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(`Webhook trigger url must use http or https: ${trimmed}`);
+  }
+  return parsed.toString();
+}
+
+function normalizeWebhookMethod(value: string): string {
+  const method = value.trim().toUpperCase() || 'POST';
+  if (!/^[A-Z]+$/.test(method)) {
+    throw new Error(`Webhook trigger method is invalid: ${value}`);
+  }
+  return method;
+}
+
+function normalizeWebhookHeaders(value: unknown): Record<string, string> {
+  if (!isRecord(value)) return {};
+  const output: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = rawKey.trim();
+    if (!key || rawValue === undefined || rawValue === null) continue;
+    output[key] = String(rawValue);
+  }
+  return output;
+}
+
+function hasHeader(headers: Record<string, string>, expected: string): boolean {
+  const needle = expected.trim().toLowerCase();
+  if (!needle) return false;
+  return Object.keys(headers).some((key) => key.toLowerCase() === needle);
+}
+
+function createWebhookOutboxRecord(
+  workspacePath: string,
+  trigger: NormalizedTrigger,
+  input: {
+    url: string;
+    method: string;
+    timeoutMs: number;
+    headers: Record<string, string>;
+    body: unknown;
+    eventKey: string | undefined;
+  },
+): string | undefined {
+  try {
+    const envelope = transport.createTransportEnvelope({
+      direction: 'outbound',
+      channel: 'trigger-webhook',
+      topic: 'trigger.webhook',
+      source: `trigger-engine:${trigger.path}`,
+      target: input.url,
+      provider: 'webhook',
+      correlationId: input.eventKey,
+      dedupKeys: [
+        input.eventKey ? `trigger:${trigger.path}:${input.eventKey}` : '',
+        `webhook:${input.method}:${input.url}`,
+      ].filter(Boolean),
+      payload: {
+        trigger_path: trigger.path,
+        trigger_title: trigger.title,
+        event_key: input.eventKey,
+        method: input.method,
+        url: input.url,
+        timeout_ms: input.timeoutMs,
+        header_keys: Object.keys(input.headers),
+        body: input.body,
+      },
+    });
+    const outbox = transport.createTransportOutboxRecord(workspacePath, {
+      envelope,
+      deliveryHandler: 'trigger-webhook',
+      deliveryTarget: input.url,
+      message: `Trigger ${trigger.path} dispatching webhook to ${input.url}.`,
+    });
+    return outbox.id;
+  } catch {
+    return undefined;
+  }
+}
+
+function truncateText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  return `${value.slice(0, maxLength)}...`;
+}
+
 function materializeTemplateValue(value: unknown, context: Record<string, unknown>): unknown {
   if (typeof value === 'string') {
     return interpolateTemplate(value, context);
@@ -2130,6 +2470,17 @@ function asStringList(value: unknown): string[] {
     return value.split(',').map((entry) => entry.trim()).filter(Boolean);
   }
   return [];
+}
+
+function asStringRecord(value: unknown): Record<string, string> | undefined {
+  if (!isRecord(value)) return undefined;
+  const output: Record<string, string> = {};
+  for (const [rawKey, rawValue] of Object.entries(value)) {
+    const key = rawKey.trim();
+    if (!key || rawValue === undefined || rawValue === null) continue;
+    output[key] = String(rawValue);
+  }
+  return Object.keys(output).length > 0 ? output : undefined;
 }
 
 function asNumber(value: unknown): number | undefined {
