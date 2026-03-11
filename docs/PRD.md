@@ -3,6 +3,7 @@
 Date: 2026-02-27
 Status: Draft v1 (execution plan)
 Source vision: `new-contextgraph-monorepo.md`
+Current architecture execution roadmap: `docs/ARCHITECTURE_ROADMAP.md`
 
 ## 1) Objective
 

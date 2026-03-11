@@ -4,6 +4,7 @@ Date: 2026-02-27
 Status: Vision v2 (strategy only)
 
 Implementation companion: `new-contextgraph-monorepo-prd.md`
+Current architecture execution roadmap: `docs/ARCHITECTURE_ROADMAP.md`
 
 ## 1) The Core Idea
 

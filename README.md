@@ -127,6 +127,7 @@ Package ownership and layering are documented in `docs/PACKAGE_BOUNDARIES.md`.
 Migration notes: see `docs/MIGRATION.md`.
 Live workspace repair runbook: see `docs/INVARIANT_REPAIR_PLAYBOOK.md`.
 Realtime control-api SSE contract: see `docs/SSE_EVENTS.md`.
+Current architecture execution roadmap: see `docs/ARCHITECTURE_ROADMAP.md`.
 
 ### Reliability and autonomy hardening
 

@@ -13,7 +13,7 @@ required external services or databases; Docker is optional for local containeri
 - **Build (publish surface):** `pnpm run build` (uses `tsup`, outputs to `dist/`)
 - **Build workspace packages:** `pnpm -r --if-present run build`
 - **Typecheck:** `pnpm run typecheck` (runs `tsc --noEmit`)
-- **Test:** `pnpm run test` (runs `vitest run`; tests are filesystem-based using temp dirs)
+- **Test:** `pnpm run test` (hardened wrapper via `scripts/run-tests.mjs`); use `pnpm run test:vitest` for raw Vitest debugging
 - **Full CI:** `pnpm run ci` (typecheck + package typecheck + test + build, in sequence)
 - **CLI entry:** `node bin/workgraph.js` (requires `dist/` from a prior build)
 
@@ -21,6 +21,7 @@ required external services or databases; Docker is optional for local containeri
 
 - The CLI (`bin/workgraph.js`) imports from `dist/cli.js`, so you must run `pnpm run build` before using the CLI directly.
 - All tests are self-contained and create/clean up temp directories — they can run in parallel safely.
+- `pnpm run test` is the preferred reliability path in this repo; use `pnpm run test:vitest` only when you specifically need raw Vitest behavior.
 - The `--workspace` (or `-w`) flag is used to point CLI commands at a workgraph workspace directory. There is no `--root` flag.
 - The `thread done` command uses `--output` (not `--summary`) for the result text.
 - The optional shared-vault / Tailscale skill feature requires `WORKGRAPH_SHARED_VAULT` env var but is not needed for core development or testing.
@@ -29,11 +30,13 @@ required external services or databases; Docker is optional for local containeri
 
 #### Package ownership (package-first)
 
-- `packages/kernel`: core primitive/ledger/thread/workspace domain logic.
+- `packages/kernel`: core primitive/ledger/thread/workspace domain logic, dispatch orchestration, triggers, and policy-governed autonomy behavior.
 - `packages/cli`: command definitions and CLI orchestration only.
 - `packages/sdk`: stable developer-facing SDK exports.
 - `packages/control-api`, `packages/runtime-adapter-core`, `packages/adapter-*`, `packages/mcp-server`: runtime/control/transport boundaries.
+- `packages/runtime-adapter-core`: shared dispatch contracts, cancellation/heartbeat lifecycle hooks, and generic transports.
 - `packages/policy`, `packages/search-qmd-adapter`, `packages/obsidian-integration`, `packages/skills`, `packages/testkit`: policy/search/integration/skills/test support concerns.
+- Treat `packages/policy` as an internal support concern unless it becomes a truly clean standalone boundary.
 
 #### Where to add code and tests
 
@@ -46,3 +49,5 @@ required external services or databases; Docker is optional for local containeri
 - Keep package internals private; import across packages via declared package entrypoints.
 - Keep CLI package thin: orchestration and UX only, with business rules in owned domain packages.
 - Keep adapters/transport packages free of core domain policy logic unless explicitly owned there.
+- Prefer real package boundaries over facades or compatibility wrappers; collapse false boundaries instead of preserving them.
+- On migration or architecture cleanup work, complete the package/boundary cleanup first and use tests as verification gates rather than letting test churn become the main task.
