@@ -250,6 +250,19 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
   },
   {
     "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the autonomy health projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_autonomy_health",
+    "title": "Autonomy Health Projection",
+  },
+  {
+    "annotations": {
       "destructiveHint": true,
       "idempotentHint": false,
     },
@@ -316,6 +329,102 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
   },
   {
     "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Resolve one typed or legacy federated reference with authority and staleness metadata.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "ref": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string",
+            },
+            {
+              "additionalProperties": {},
+              "properties": {},
+              "type": "object",
+            },
+          ],
+        },
+      },
+      "required": [
+        "ref",
+      ],
+      "type": "object",
+    },
+    "name": "wg_federation_resolve_ref",
+    "title": "Federation Resolve Ref",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Search local and remote workspaces through read-only federation capability negotiation.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "includeLocal": {
+          "type": "boolean",
+        },
+        "limit": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "query": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "remoteIds": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "type": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+    "name": "wg_federation_search",
+    "title": "Federation Search",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Read workspace federation identity and remote handshake status.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_federation_status",
+    "title": "Federation Status",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the federation status projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_federation_status_projection",
+    "title": "Federation Status Projection",
+  },
+  {
+    "annotations": {
       "destructiveHint": true,
       "idempotentHint": false,
     },
@@ -362,6 +471,19 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "wg_heartbeat",
     "title": "WorkGraph Heartbeat",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the mission progress projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_mission_progress_projection",
+    "title": "Mission Progress Projection",
   },
   {
     "annotations": {
@@ -477,6 +599,32 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "wg_post_message",
     "title": "WorkGraph Post Message",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the risk dashboard projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_risk_dashboard",
+    "title": "Risk Dashboard Projection",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the run health projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_run_health",
+    "title": "Run Health Projection",
   },
   {
     "annotations": {
@@ -715,6 +863,104 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "wg_thread_context_search",
     "title": "WorkGraph Thread Context Search",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "List failed transport deliveries available for inspection and replay.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_transport_dead_letter_list",
+    "title": "Transport Dead Letter List",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the transport health projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_transport_health",
+    "title": "Transport Health Projection",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "List persistent inbound transport records.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_transport_inbox_list",
+    "title": "Transport Inbox List",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "List persistent outbound transport records.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_transport_outbox_list",
+    "title": "Transport Outbox List",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Replay an outbox or dead-letter transport delivery.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "id": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "recordType": {
+          "enum": [
+            "outbox",
+            "dead-letter",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "recordType",
+        "id",
+      ],
+      "type": "object",
+    },
+    "name": "wg_transport_replay",
+    "title": "Transport Replay",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the trigger health projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_trigger_health",
+    "title": "Trigger Health Projection",
   },
   {
     "annotations": {
@@ -1712,6 +1958,110 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
       "destructiveHint": true,
       "idempotentHint": false,
     },
+    "description": "Create a trigger primitive with programmable condition/action payloads.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "type": "string",
+            },
+            {
+              "additionalProperties": {},
+              "properties": {},
+              "type": "object",
+            },
+          ],
+        },
+        "actor": {
+          "type": "string",
+        },
+        "body": {
+          "type": "string",
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string",
+            },
+            {
+              "additionalProperties": {},
+              "properties": {},
+              "type": "object",
+            },
+          ],
+        },
+        "cooldown": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "enabled": {
+          "type": "boolean",
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "path": {
+          "type": "string",
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "type": {
+          "enum": [
+            "cron",
+            "webhook",
+            "event",
+            "manual",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+        "type",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_trigger_create",
+    "title": "Trigger Create",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Delete a trigger primitive.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "triggerRef": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "triggerRef",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_trigger_delete",
+    "title": "Trigger Delete",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
     "description": "Process trigger events from ledger with idempotent cursor tracking.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1724,6 +2074,176 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "workgraph_trigger_engine_cycle",
     "title": "Trigger Engine Cycle",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Manually fire a trigger into a dispatch run, optionally executing it immediately.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "adapter": {
+          "type": "string",
+        },
+        "agents": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "context": {
+          "additionalProperties": {},
+          "properties": {},
+          "type": "object",
+        },
+        "createCheckpoint": {
+          "type": "boolean",
+        },
+        "eventKey": {
+          "type": "string",
+        },
+        "execute": {
+          "type": "boolean",
+        },
+        "maxSteps": {
+          "maximum": 5000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "objective": {
+          "type": "string",
+        },
+        "retryFailed": {
+          "type": "boolean",
+        },
+        "space": {
+          "type": "string",
+        },
+        "stepDelayMs": {
+          "maximum": 5000,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "timeoutMs": {
+          "maximum": 3600000,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "triggerRef": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "triggerRef",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_trigger_fire",
+    "title": "Trigger Fire",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Update trigger metadata or programmable condition/action payloads.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "action": {
+          "anyOf": [
+            {
+              "type": "string",
+            },
+            {
+              "additionalProperties": {},
+              "properties": {},
+              "type": "object",
+            },
+          ],
+        },
+        "actor": {
+          "type": "string",
+        },
+        "body": {
+          "type": "string",
+        },
+        "condition": {
+          "anyOf": [
+            {
+              "type": "string",
+            },
+            {
+              "additionalProperties": {},
+              "properties": {},
+              "type": "object",
+            },
+          ],
+        },
+        "cooldown": {
+          "maximum": 9007199254740991,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "enabled": {
+          "type": "boolean",
+        },
+        "lastFired": {
+          "anyOf": [
+            {
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "name": {
+          "type": "string",
+        },
+        "nextFireAt": {
+          "anyOf": [
+            {
+              "type": "string",
+            },
+            {
+              "type": "null",
+            },
+          ],
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "triggerRef": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "type": {
+          "enum": [
+            "cron",
+            "webhook",
+            "event",
+            "manual",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "triggerRef",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_trigger_update",
+    "title": "Trigger Update",
   },
 ]
 `;

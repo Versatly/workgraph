@@ -4,5 +4,8 @@
     "composite": true,
     "noEmit": true
   },
-  "include": ["src/**/*"]
+  "include": [
+    "src/**/*",
+    "../adapter-cursor-cloud/src/**/*"
+  ]
 }

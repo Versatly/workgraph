@@ -152,6 +152,14 @@ describe('stress: trigger cascade, throttling, and breaker behavior', () => {
     expect(decisions[5]?.allowed).toBe(false);
     expect(decisions[5]?.reasons.join(' ')).toContain('Rate limit exceeded');
 
+    safety.resetSafetyRails(workspacePath, { actor: 'safety-admin', clearKillSwitch: true });
+    safety.updateSafetyConfig(workspacePath, 'safety-admin', {
+      rateLimit: {
+        enabled: false,
+      },
+      circuitBreaker: { enabled: false },
+    });
+
     const bulkCount = 120;
     const bulkTriggerPaths: string[] = [];
     for (let idx = 0; idx < bulkCount; idx += 1) {
