@@ -6,6 +6,10 @@
   },
   "include": [
     "src/**/*",
+    "../adapter-claude-code/src/**/*",
+    "../adapter-cursor-cloud/src/**/*",
+    "../adapter-http-webhook/src/**/*",
+    "../adapter-shell-worker/src/**/*",
     "../../tests/helpers/cli-build.ts"
   ]
 }

@@ -839,6 +839,10 @@ async function replayTransportRecord(
       await replayRuntimeBridge(workspacePath, record);
       return;
     }
+    if (record.deliveryHandler === 'trigger-action') {
+      await replayTriggerAction(workspacePath, record);
+      return;
+    }
     throw new Error(`Unsupported transport replay handler "${record.deliveryHandler}".`);
   });
   if (!replayed) {
@@ -900,5 +904,23 @@ async function replayRuntimeBridge(
     context: payload.context && typeof payload.context === 'object' && !Array.isArray(payload.context)
       ? payload.context as Record<string, unknown>
       : undefined,
+  });
+}
+
+async function replayTriggerAction(
+  workspacePath: string,
+  record: ReturnType<typeof transport.readTransportOutboxRecord> extends infer T ? Exclude<T, null> : never,
+): Promise<void> {
+  const payload = record.envelope.payload;
+  triggerEngine.replayTriggerActionDelivery(workspacePath, {
+    triggerPath: typeof payload.triggerPath === 'string' ? payload.triggerPath : record.deliveryTarget,
+    action: payload.action && typeof payload.action === 'object' && !Array.isArray(payload.action)
+      ? payload.action as Record<string, unknown>
+      : {},
+    context: payload.context && typeof payload.context === 'object' && !Array.isArray(payload.context)
+      ? payload.context as Record<string, unknown>
+      : {},
+    actor: typeof payload.actor === 'string' ? payload.actor : 'system',
+    eventKey: typeof payload.eventKey === 'string' ? payload.eventKey : undefined,
   });
 }

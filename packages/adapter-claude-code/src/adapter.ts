@@ -1,6 +1,6 @@
 import {
-  ShellSubprocessAdapter,
-} from '@versatly/workgraph-runtime-adapter-core';
+  ShellWorkerAdapter,
+} from '@versatly/workgraph-adapter-shell-worker';
 import type {
   DispatchAdapter,
   DispatchAdapterCreateInput,
@@ -18,7 +18,7 @@ import type {
  */
 export class ClaudeCodeAdapter implements DispatchAdapter {
   name = 'claude-code';
-  private readonly shellAdapter = new ShellSubprocessAdapter();
+  private readonly shellAdapter = new ShellWorkerAdapter();
 
   async create(input: DispatchAdapterCreateInput): Promise<DispatchAdapterRunStatus> {
     return this.shellAdapter.create(input);

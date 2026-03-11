@@ -2,6 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import { loadRegistry, saveRegistry } from './registry.js';
 import * as store from './store.js';
 import * as policy from './policy.js';
@@ -16,6 +17,7 @@ beforeEach(() => {
   workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-policy-dispatch-'));
   const registry = loadRegistry(workspacePath);
   saveRegistry(workspacePath, registry);
+  registerDefaultDispatchAdaptersIntoKernelRegistry();
 });
 
 afterEach(() => {

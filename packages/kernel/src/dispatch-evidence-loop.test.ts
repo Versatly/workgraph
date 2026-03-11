@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import { loadRegistry, saveRegistry } from './registry.js';
 import {
   auditTrail,
@@ -21,6 +22,7 @@ beforeEach(() => {
   workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-dispatch-evidence-'));
   const registry = loadRegistry(workspacePath);
   saveRegistry(workspacePath, registry);
+  registerDefaultDispatchAdaptersIntoKernelRegistry();
   const gitInit = spawnSync('git', ['init'], {
     cwd: workspacePath,
     stdio: 'ignore',

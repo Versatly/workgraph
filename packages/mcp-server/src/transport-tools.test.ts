@@ -8,14 +8,20 @@ import {
   cursorBridge as cursorBridgeModule,
   policy as policyModule,
   registry as registryModule,
+  thread as threadModule,
   transport as transportModule,
+  triggerEngine as triggerEngineModule,
+  store as storeModule,
 } from '@versatly/workgraph-kernel';
 import { createWorkgraphMcpServer } from './mcp-server.js';
 
 const cursorBridge = cursorBridgeModule;
 const policy = policyModule;
 const registry = registryModule;
+const store = storeModule;
+const thread = threadModule;
 const transport = transportModule;
+const triggerEngine = triggerEngineModule;
 
 let workspacePath: string;
 
@@ -78,6 +84,28 @@ describe('transport MCP tools', () => {
       message: 'synthetic failure',
     });
 
+    store.create(workspacePath, 'trigger', {
+      title: 'Replayable trigger action',
+      status: 'active',
+      condition: { type: 'event', event: 'thread-complete' },
+      action: {
+        type: 'dispatch-run',
+        objective: 'Replay dispatch {{matched_event_latest_target}}',
+      },
+      cooldown: 0,
+    }, '# Trigger\n', 'system');
+    const sourceOne = thread.createThread(workspacePath, 'Replay seed', 'seed event', 'agent-seed');
+    thread.claim(workspacePath, sourceOne.path, 'agent-seed');
+    thread.done(workspacePath, sourceOne.path, 'agent-seed', 'seed done https://github.com/versatly/workgraph/pull/100');
+    triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+    const sourceTwo = thread.createThread(workspacePath, 'Replay seed 2', 'second event', 'agent-seed');
+    thread.claim(workspacePath, sourceTwo.path, 'agent-seed');
+    thread.done(workspacePath, sourceTwo.path, 'agent-seed', 'seed 2 done https://github.com/versatly/workgraph/pull/101');
+    triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+    const triggerActionOutbox = transport.listTransportOutbox(workspacePath)
+      .find((record) => record.deliveryHandler === 'trigger-action');
+    expect(triggerActionOutbox).toBeDefined();
+
     const server = createWorkgraphMcpServer({
       workspacePath,
       defaultActor: 'agent-mcp',
@@ -132,6 +160,18 @@ describe('transport MCP tools', () => {
       expect(isToolError(replayed)).toBe(false);
       const replayedPayload = getStructured<{ status: string }>(replayed);
       expect(replayedPayload.status).toBe('replayed');
+
+      const replayedTrigger = await client.callTool({
+        name: 'wg_transport_replay',
+        arguments: {
+          actor: 'agent-mcp',
+          recordType: 'outbox',
+          id: triggerActionOutbox!.id,
+        },
+      });
+      expect(isToolError(replayedTrigger)).toBe(false);
+      const replayedTriggerPayload = getStructured<{ status: string }>(replayedTrigger);
+      expect(replayedTriggerPayload.status).toBe('replayed');
     } finally {
       await client.close();
       await server.close();

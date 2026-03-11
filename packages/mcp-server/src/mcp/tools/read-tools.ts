@@ -1,10 +1,12 @@
 import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
+  federation as federationModule,
   graph as graphModule,
   ledger as ledgerModule,
   mission as missionModule,
   orientation as orientationModule,
+  projections as projectionsModule,
   query as queryModule,
   registry as registryModule,
   store as storeModule,
@@ -16,10 +18,12 @@ import { resolveActor } from '../auth.js';
 import { errorResult, okResult, renderStatusSummary } from '../result.js';
 import { type WorkgraphMcpServerOptions } from '../types.js';
 
+const federation = federationModule;
 const graph = graphModule;
 const ledger = ledgerModule;
 const mission = missionModule;
 const orientation = orientationModule;
+const projections = projectionsModule;
 const query = queryModule;
 const registry = registryModule;
 const store = storeModule;
@@ -374,6 +378,227 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
       try {
         const records = transport.listTransportDeadLetters(options.workspacePath);
         return okResult({ records, count: records.length }, `Transport dead-letter queue has ${records.length} record(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_federation_status',
+    {
+      title: 'Federation Status',
+      description: 'Read workspace federation identity and remote handshake status.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const status = federation.federationStatus(options.workspacePath);
+        return okResult(status, `Federation status loaded for ${status.remotes.length} remote(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_federation_resolve_ref',
+    {
+      title: 'Federation Resolve Ref',
+      description: 'Resolve one typed or legacy federated reference with authority and staleness metadata.',
+      inputSchema: {
+        ref: z.union([z.string().min(1), z.object({}).passthrough()]),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const resolved = federation.resolveFederatedRef(options.workspacePath, args.ref as any);
+        return okResult(
+          resolved,
+          `Resolved federated ref to ${resolved.source}:${resolved.instance.path} (authority=${resolved.authority}).`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_federation_search',
+    {
+      title: 'Federation Search',
+      description: 'Search local and remote workspaces through read-only federation capability negotiation.',
+      inputSchema: {
+        query: z.string().min(1),
+        type: z.string().optional(),
+        limit: z.number().int().min(0).max(1000).optional(),
+        remoteIds: z.array(z.string()).optional(),
+        includeLocal: z.boolean().optional(),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const result = federation.searchFederated(options.workspacePath, args.query, {
+          type: args.type,
+          limit: args.limit,
+          remoteIds: args.remoteIds,
+          includeLocal: args.includeLocal,
+        });
+        return okResult(
+          result,
+          `Federation search returned ${result.results.length} result(s) with ${result.errors.length} remote error(s).`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_run_health',
+    {
+      title: 'Run Health Projection',
+      description: 'Return the run health projection.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const projection = projections.buildRunHealthProjection(options.workspacePath);
+        return okResult(projection, `Run health: active=${projection.summary.activeRuns}, stale=${projection.summary.staleRuns}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_risk_dashboard',
+    {
+      title: 'Risk Dashboard Projection',
+      description: 'Return the risk dashboard projection.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const projection = projections.buildRiskDashboardProjection(options.workspacePath);
+        return okResult(projection, `Risk dashboard: blocked=${projection.summary.blockedThreads}, violations=${projection.summary.policyViolations}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_mission_progress_projection',
+    {
+      title: 'Mission Progress Projection',
+      description: 'Return the mission progress projection.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const projection = projections.buildMissionProgressProjection(options.workspacePath);
+        return okResult(projection, `Mission progress projection covers ${projection.summary.totalMissions} mission(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_transport_health',
+    {
+      title: 'Transport Health Projection',
+      description: 'Return the transport health projection.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const projection = projections.buildTransportHealthProjection(options.workspacePath);
+        return okResult(projection, `Transport health: outbox=${projection.summary.outboxDepth}, dead-letter=${projection.summary.deadLetterCount}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_federation_status_projection',
+    {
+      title: 'Federation Status Projection',
+      description: 'Return the federation status projection.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const projection = projections.buildFederationStatusProjection(options.workspacePath);
+        return okResult(projection, `Federation projection covers ${projection.summary.remotes} remote(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_trigger_health',
+    {
+      title: 'Trigger Health Projection',
+      description: 'Return the trigger health projection.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const projection = projections.buildTriggerHealthProjection(options.workspacePath);
+        return okResult(projection, `Trigger health: total=${projection.summary.totalTriggers}, errors=${projection.summary.errorTriggers}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_autonomy_health',
+    {
+      title: 'Autonomy Health Projection',
+      description: 'Return the autonomy health projection.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const projection = projections.buildAutonomyHealthProjection(options.workspacePath);
+        return okResult(projection, `Autonomy health: running=${projection.summary.running}.`);
       } catch (error) {
         return errorResult(error);
       }

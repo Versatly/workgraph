@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import type { DispatchAdapter } from './runtime-adapter-contracts.js';
 import {
   listDispatchAdapters,
@@ -36,6 +37,7 @@ function makeAdapter(name: string): DispatchAdapter {
 
 describe('runtime adapter registry', () => {
   it('lists built-in adapters in sorted order', () => {
+    registerDefaultDispatchAdaptersIntoKernelRegistry();
     const names = listDispatchAdapters();
     expect(names).toEqual([...names].sort((a, b) => a.localeCompare(b)));
     expect(names).toEqual(expect.arrayContaining([
@@ -47,6 +49,7 @@ describe('runtime adapter registry', () => {
   });
 
   it('resolves built-in adapters with normalized adapter names', () => {
+    registerDefaultDispatchAdaptersIntoKernelRegistry();
     const adapter = resolveDispatchAdapter('  CLAUDE-Code ');
     expect(adapter.name).toBe('claude-code');
   });

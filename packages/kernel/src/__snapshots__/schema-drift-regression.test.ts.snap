@@ -250,6 +250,19 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
   },
   {
     "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the autonomy health projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_autonomy_health",
+    "title": "Autonomy Health Projection",
+  },
+  {
+    "annotations": {
       "destructiveHint": true,
       "idempotentHint": false,
     },
@@ -316,6 +329,102 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
   },
   {
     "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Resolve one typed or legacy federated reference with authority and staleness metadata.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "ref": {
+          "anyOf": [
+            {
+              "minLength": 1,
+              "type": "string",
+            },
+            {
+              "additionalProperties": {},
+              "properties": {},
+              "type": "object",
+            },
+          ],
+        },
+      },
+      "required": [
+        "ref",
+      ],
+      "type": "object",
+    },
+    "name": "wg_federation_resolve_ref",
+    "title": "Federation Resolve Ref",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Search local and remote workspaces through read-only federation capability negotiation.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "includeLocal": {
+          "type": "boolean",
+        },
+        "limit": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "query": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "remoteIds": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "type": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "query",
+      ],
+      "type": "object",
+    },
+    "name": "wg_federation_search",
+    "title": "Federation Search",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Read workspace federation identity and remote handshake status.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_federation_status",
+    "title": "Federation Status",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the federation status projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_federation_status_projection",
+    "title": "Federation Status Projection",
+  },
+  {
+    "annotations": {
       "destructiveHint": true,
       "idempotentHint": false,
     },
@@ -362,6 +471,19 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "wg_heartbeat",
     "title": "WorkGraph Heartbeat",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the mission progress projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_mission_progress_projection",
+    "title": "Mission Progress Projection",
   },
   {
     "annotations": {
@@ -477,6 +599,32 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "wg_post_message",
     "title": "WorkGraph Post Message",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the risk dashboard projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_risk_dashboard",
+    "title": "Risk Dashboard Projection",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the run health projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_run_health",
+    "title": "Run Health Projection",
   },
   {
     "annotations": {
@@ -734,6 +882,19 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
       "idempotentHint": true,
       "readOnlyHint": true,
     },
+    "description": "Return the transport health projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_transport_health",
+    "title": "Transport Health Projection",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
     "description": "List persistent inbound transport records.",
     "inputSchema": {
       "properties": {},
@@ -787,6 +948,19 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "wg_transport_replay",
     "title": "Transport Replay",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return the trigger health projection.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "wg_trigger_health",
+    "title": "Trigger Health Projection",
   },
   {
     "annotations": {

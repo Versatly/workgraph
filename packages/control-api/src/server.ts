@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import {
   auth as authModule,
   ledger as ledgerModule,
@@ -18,6 +19,10 @@ import {
   buildSpacesLens,
   buildTimelineLens,
 } from './server-lenses.js';
+import {
+  buildProjectionByName,
+  listProjectionRouteNames,
+} from './server-projections.js';
 import {
   createDashboardEventFilter,
   type DashboardEvent,
@@ -114,6 +119,7 @@ interface WebhookCreateRequestBody {
 }
 
 export async function startWorkgraphServer(options: WorkgraphServerOptions): Promise<WorkgraphServerHandle> {
+  registerDefaultDispatchAdaptersIntoKernelRegistry();
   const workspacePath = path.resolve(options.workspacePath);
   const host = readNonEmptyString(options.host) ?? DEFAULT_HOST;
   const port = normalizePort(options.port, DEFAULT_PORT);
@@ -505,6 +511,87 @@ function registerRestRoutes(
     }
   });
 
+  app.get('/api/projections/:name', (req: any, res: any) => {
+    try {
+      const projectionName = readNonEmptyString(req.params?.name)?.toLowerCase();
+      if (!projectionName) {
+        res.status(400).json({
+          ok: false,
+          error: 'Missing projection name.',
+        });
+        return;
+      }
+      const allowed = new Set(listProjectionRouteNames());
+      if (!allowed.has(projectionName as ReturnType<typeof listProjectionRouteNames>[number])) {
+        res.status(404).json({
+          ok: false,
+          error: `Unknown projection "${projectionName}".`,
+          available: listProjectionRouteNames(),
+        });
+        return;
+      }
+      const projection = buildProjectionByName(
+        workspacePath,
+        projectionName as ReturnType<typeof listProjectionRouteNames>[number],
+      );
+      res.json({
+        ok: true,
+        projection,
+      });
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
+  app.get('/control-plane', (_req: any, res: any) => {
+    try {
+      serveControlPlaneFile(res, 'index.html', 'text/html; charset=utf-8');
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
+  app.get('/control-plane/style.css', (_req: any, res: any) => {
+    try {
+      serveControlPlaneFile(res, 'style.css', 'text/css; charset=utf-8');
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
+  app.get('/control-plane/app.js', (_req: any, res: any) => {
+    try {
+      serveControlPlaneFile(res, 'app.js', 'application/javascript; charset=utf-8');
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
+  app.get('/control-plane/:page', (req: any, res: any) => {
+    try {
+      const page = readNonEmptyString(req.params?.page)?.toLowerCase();
+      if (!page) {
+        res.status(400).json({
+          ok: false,
+          error: 'Missing control-plane page name.',
+        });
+        return;
+      }
+      const allowedPages = new Set(listProjectionRouteNames().filter((entry) => entry !== 'overview'));
+      if (!allowedPages.has(page as Exclude<ReturnType<typeof listProjectionRouteNames>[number], 'overview'>)) {
+        res.status(404).json({
+          ok: false,
+          error: `Unknown control-plane page "${page}".`,
+          available: [...allowedPages],
+        });
+        return;
+      }
+      serveControlPlaneFile(res, `${page}.html`, 'text/html; charset=utf-8');
+    } catch (error) {
+      writeRouteError(res, error);
+    }
+  });
+
   app.get('/api/webhooks', (_req: any, res: any) => {
     try {
       const webhooks = listWebhooks(workspacePath);
@@ -887,6 +974,24 @@ function safeStreamWrite(res: any, chunk: string): boolean {
   } catch {
     return false;
   }
+}
+
+function serveControlPlaneFile(res: any, fileName: string, contentType: string): void {
+  const root = resolveControlPlaneRoot();
+  const filePath = path.join(root, fileName);
+  if (!fs.existsSync(filePath)) {
+    throw new Error(`Control plane asset not found: ${fileName}`);
+  }
+  res.setHeader('Content-Type', contentType);
+  res.status(200).send(fs.readFileSync(filePath, 'utf-8'));
+}
+
+function resolveControlPlaneRoot(): string {
+  const cwdPath = path.resolve(process.cwd(), 'apps', 'web-control-plane');
+  if (fs.existsSync(cwdPath)) return cwdPath;
+  const workspacePath = path.resolve('/workspace/apps/web-control-plane');
+  if (fs.existsSync(workspacePath)) return workspacePath;
+  throw new Error('Unable to locate web control plane assets.');
 }
 
 function logJson(level: LogLevel, event: string, data: Record<string, unknown>): void {

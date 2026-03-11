@@ -1,0 +1,14 @@
+{
+  "name": "@versatly/workgraph-adapter-http-webhook",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  },
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "dependencies": {
+    "@versatly/workgraph-runtime-adapter-core": "workspace:*"
+  }
+}

@@ -19,6 +19,8 @@ export default defineConfig({
     '@versatly/workgraph-control-api',
     '@versatly/workgraph-adapter-claude-code',
     '@versatly/workgraph-adapter-cursor-cloud',
+    '@versatly/workgraph-adapter-http-webhook',
+    '@versatly/workgraph-adapter-shell-worker',
     '@versatly/workgraph-obsidian-integration',
     '@versatly/workgraph-runtime-adapter-core',
     '@versatly/workgraph-search-qmd-adapter',
