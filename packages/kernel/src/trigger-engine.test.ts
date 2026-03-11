@@ -6,6 +6,7 @@ import * as registry from './registry.js';
 import * as safety from './safety.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
+import * as transport from './transport/index.js';
 import * as triggerEngine from './trigger-engine.js';
 
 let workspacePath: string;
@@ -114,6 +115,40 @@ describe('trigger engine', () => {
     const state = triggerEngine.loadTriggerState(workspacePath);
     expect(state.triggers[triggerPrimitive.path]?.fireCount).toBe(1);
     expect(state.triggers[triggerPrimitive.path]?.cooldownUntil).toBeDefined();
+  });
+
+  it('records trigger action deliveries in the transport outbox', () => {
+    store.create(workspacePath, 'trigger', {
+      title: 'Transported trigger action',
+      status: 'active',
+      condition: { type: 'event', event: 'thread-complete' },
+      action: {
+        type: 'create-thread',
+        title: 'Transport follow-up {{matched_event_latest_target}}',
+        goal: 'Verify transport outbox trigger delivery',
+      },
+      cooldown: 0,
+    }, '# Trigger\n', 'system');
+
+    const seededThread = thread.createThread(workspacePath, 'Transport source', 'Ship transport source', 'agent-dev');
+    thread.claim(workspacePath, seededThread.path, 'agent-dev');
+    thread.done(workspacePath, seededThread.path, 'agent-dev', 'Transport source done https://github.com/versatly/workgraph/pull/88');
+
+    const first = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+    expect(first.fired).toBe(0);
+
+    const nextThread = thread.createThread(workspacePath, 'Transport source 2', 'Ship transport source 2', 'agent-dev');
+    thread.claim(workspacePath, nextThread.path, 'agent-dev');
+    thread.done(workspacePath, nextThread.path, 'agent-dev', 'Transport source 2 done https://github.com/versatly/workgraph/pull/89');
+
+    const second = triggerEngine.runTriggerEngineCycle(workspacePath, { actor: 'system' });
+    expect(second.fired).toBe(1);
+
+    const outbox = transport.listTransportOutbox(workspacePath)
+      .filter((record) => record.deliveryHandler === 'trigger-action');
+    expect(outbox.length).toBeGreaterThanOrEqual(1);
+    expect(outbox[0]?.status).toBe('delivered');
+    expect(outbox[0]?.envelope.topic).toBe('create-thread');
   });
 
   it('matches event trigger patterns against ledger events', () => {

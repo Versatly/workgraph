@@ -10,6 +10,7 @@ import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';
 import * as safety from './safety.js';
 import * as store from './store.js';
+import * as transport from './transport/index.js';
 import { matchesCronSchedule, nextCronMatch, parseCronExpression, type CronSchedule } from './cron.js';
 import type { DispatchRun, PrimitiveInstance } from './types.js';
 
@@ -241,6 +242,14 @@ export interface TriggerRunEvidenceLoopResult {
 export interface TriggerRunEvidenceLoopOptions extends TriggerEngineCycleOptions {
   execution?: Omit<dispatch.DispatchExecuteInput, 'actor'>;
   retryFailedRuns?: boolean;
+}
+
+export interface TriggerActionReplayInput {
+  triggerPath: string;
+  action: Record<string, unknown>;
+  context: Record<string, unknown>;
+  actor: string;
+  eventKey?: string;
 }
 
 export function triggerStatePath(workspacePath: string): string {
@@ -800,6 +809,62 @@ function executeTriggerAction(
   eventKey: string | undefined,
 ): Record<string, unknown> {
   const actor = action.actor ?? (trigger.synthesis?.actor ?? defaultActor);
+  const envelope = transport.createTransportEnvelope({
+    direction: 'outbound',
+    channel: 'trigger-action',
+    topic: action.type,
+    source: trigger.path,
+    target: action.type,
+    correlationId: eventKey,
+    dedupKeys: [
+      `${trigger.path}:${action.type}:${eventKey ?? 'manual'}`,
+      ...(eventKey ? [`trigger-event:${eventKey}`] : []),
+    ],
+    payload: {
+      triggerPath: trigger.path,
+      action,
+      context,
+      actor,
+      eventKey,
+    },
+  });
+  const outbox = transport.createTransportOutboxRecord(workspacePath, {
+    envelope,
+    deliveryHandler: 'trigger-action',
+    deliveryTarget: trigger.path,
+    message: `Executing trigger action ${action.type} for ${trigger.path}.`,
+  });
+  try {
+    const result = performTriggerAction(workspacePath, trigger, action, context, defaultActor, eventKey);
+    transport.markTransportOutboxDelivered(
+      workspacePath,
+      outbox.id,
+      `Trigger action ${action.type} delivered successfully.`,
+    );
+    return result;
+  } catch (error) {
+    transport.markTransportOutboxFailed(workspacePath, outbox.id, {
+      message: errorMessage(error),
+      context: {
+        triggerPath: trigger.path,
+        actionType: action.type,
+        actor,
+        eventKey,
+      },
+    });
+    throw error;
+  }
+}
+
+function performTriggerAction(
+  workspacePath: string,
+  trigger: NormalizedTrigger,
+  action: TriggerAction,
+  context: Record<string, unknown>,
+  defaultActor: string,
+  eventKey: string | undefined,
+): Record<string, unknown> {
+  const actor = action.actor ?? (trigger.synthesis?.actor ?? defaultActor);
   switch (action.type) {
     case 'create-thread': {
       const thread = createThreadFromTrigger(workspacePath, trigger, action, context, actor);
@@ -898,6 +963,28 @@ function executeTriggerAction(
       throw new Error(`Unsupported trigger action: ${(exhaustive as { type?: string }).type ?? 'unknown'}`);
     }
   }
+}
+
+export function replayTriggerActionDelivery(
+  workspacePath: string,
+  input: TriggerActionReplayInput,
+): Record<string, unknown> {
+  const trigger = listNormalizedTriggers(workspacePath).find((candidate) => candidate.path === input.triggerPath);
+  if (!trigger) {
+    throw new Error(`Trigger not found for replay: ${input.triggerPath}`);
+  }
+  const action = parseTriggerAction(input.action);
+  if (!action) {
+    throw new Error(`Invalid trigger action payload for replay: ${input.triggerPath}`);
+  }
+  return performTriggerAction(
+    workspacePath,
+    trigger,
+    action,
+    isRecord(input.context) ? input.context : {},
+    input.actor,
+    input.eventKey,
+  );
 }
 
 function createThreadFromTrigger(
