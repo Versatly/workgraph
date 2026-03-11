@@ -65,7 +65,14 @@ describe('workgraph mcp server', () => {
       expect(toolNames).toContain('workgraph_status');
       expect(toolNames).toContain('workgraph_primitive_schema');
       expect(toolNames).toContain('workgraph_ledger_reconcile');
+      expect(toolNames).toContain('workgraph_thread_create');
       expect(toolNames).toContain('workgraph_thread_claim');
+      expect(toolNames).toContain('workgraph_thread_block');
+      expect(toolNames).toContain('workgraph_thread_unblock');
+      expect(toolNames).toContain('workgraph_thread_handoff');
+      expect(toolNames).toContain('workgraph_thread_release');
+      expect(toolNames).toContain('workgraph_thread_heartbeat');
+      expect(toolNames).toContain('workgraph_thread_join');
       expect(toolNames).toContain('workgraph_dispatch_execute');
       expect(toolNames).toContain('workgraph_trigger_create');
       expect(toolNames).toContain('workgraph_trigger_fire');
@@ -115,13 +122,47 @@ describe('workgraph mcp server', () => {
 
       policy.upsertParty(workspacePath, 'agent-mcp', {
         roles: ['operator'],
-        capabilities: ['mcp:write', 'thread:claim', 'thread:done', 'dispatch:run', 'policy:manage', 'promote:trigger'],
+        capabilities: [
+          'mcp:write',
+          'thread:create',
+          'thread:update',
+          'thread:claim',
+          'thread:done',
+          'dispatch:run',
+          'policy:manage',
+          'promote:trigger',
+        ],
       });
+
+      const created = await client.callTool({
+        name: 'workgraph_thread_create',
+        arguments: {
+          title: 'MCP lifecycle thread',
+          goal: 'Validate full MCP thread lifecycle operations.',
+          actor: 'agent-mcp',
+          priority: 'high',
+          tags: ['mcp'],
+        },
+      });
+      expect(isToolError(created)).toBe(false);
+      const createdPayload = getStructured<{
+        thread: { path: string };
+      }>(created);
+
+      const joined = await client.callTool({
+        name: 'workgraph_thread_join',
+        arguments: {
+          threadPath: createdPayload.thread.path,
+          actor: 'agent-mcp',
+          role: 'participant',
+        },
+      });
+      expect(isToolError(joined)).toBe(false);
 
       const claimed = await client.callTool({
         name: 'workgraph_thread_claim',
         arguments: {
-          threadPath: coordinationThread.path,
+          threadPath: createdPayload.thread.path,
           actor: 'agent-mcp',
         },
       });
@@ -130,16 +171,83 @@ describe('workgraph mcp server', () => {
         thread: { path: string };
         context: { threadPath: string; totalEntries: number };
       }>(claimed);
-      expect(claimedPayload.thread.path).toBe(coordinationThread.path);
-      expect(claimedPayload.context.threadPath).toBe(coordinationThread.path);
+      expect(claimedPayload.thread.path).toBe(createdPayload.thread.path);
+      expect(claimedPayload.context.threadPath).toBe(createdPayload.thread.path);
       expect(claimedPayload.context.totalEntries).toBe(0);
+
+      const heartbeat = await client.callTool({
+        name: 'workgraph_thread_heartbeat',
+        arguments: {
+          threadPath: createdPayload.thread.path,
+          actor: 'agent-mcp',
+          note: 'Still in progress',
+        },
+      });
+      expect(isToolError(heartbeat)).toBe(false);
+
+      const blocked = await client.callTool({
+        name: 'workgraph_thread_block',
+        arguments: {
+          threadPath: createdPayload.thread.path,
+          actor: 'agent-mcp',
+          reason: 'Waiting for dependency confirmation',
+        },
+      });
+      expect(isToolError(blocked)).toBe(false);
+      const blockedPayload = getStructured<{ thread: { fields: { status: string } } }>(blocked);
+      expect(blockedPayload.thread.fields.status).toBe('blocked');
+
+      const unblocked = await client.callTool({
+        name: 'workgraph_thread_unblock',
+        arguments: {
+          threadPath: createdPayload.thread.path,
+          actor: 'agent-mcp',
+          reason: 'Dependency resolved',
+        },
+      });
+      expect(isToolError(unblocked)).toBe(false);
+      const unblockedPayload = getStructured<{ thread: { fields: { status: string } } }>(unblocked);
+      expect(unblockedPayload.thread.fields.status).toBe('active');
+
+      const handedOff = await client.callTool({
+        name: 'workgraph_thread_handoff',
+        arguments: {
+          threadPath: createdPayload.thread.path,
+          actor: 'agent-mcp',
+          toActor: 'agent-mcp',
+          reason: 'No-op handoff for MCP coverage',
+        },
+      });
+      expect(isToolError(handedOff)).toBe(false);
+
+      const released = await client.callTool({
+        name: 'workgraph_thread_release',
+        arguments: {
+          threadPath: createdPayload.thread.path,
+          actor: 'agent-mcp',
+          reason: 'Ready for final completion',
+        },
+      });
+      expect(isToolError(released)).toBe(false);
+      const releasedPayload = getStructured<{ thread: { fields: { status: string } } }>(released);
+      expect(releasedPayload.thread.fields.status).toBe('open');
+
+      const reclaimed = await client.callTool({
+        name: 'workgraph_thread_claim',
+        arguments: {
+          threadPath: createdPayload.thread.path,
+          actor: 'agent-mcp',
+        },
+      });
+      expect(isToolError(reclaimed)).toBe(false);
 
       const done = await client.callTool({
         name: 'workgraph_thread_done',
         arguments: {
-          threadPath: coordinationThread.path,
+          threadPath: createdPayload.thread.path,
           actor: 'agent-mcp',
           output: 'Completed from MCP write tool. https://github.com/versatly/workgraph/pull/72',
+          reason: 'Lifecycle complete',
         },
       });
       expect(isToolError(done)).toBe(false);
@@ -151,14 +259,14 @@ describe('workgraph mcp server', () => {
           objective: 'Execute pending threads from MCP',
         },
       });
-      const createdPayload = getStructured<{ run: { id: string } }>(runCreated);
-      expect(createdPayload.run.id).toMatch(/^run_/);
+      const createdRunPayload = getStructured<{ run: { id: string } }>(runCreated);
+      expect(createdRunPayload.run.id).toMatch(/^run_/);
 
       const runExecuted = await client.callTool({
         name: 'workgraph_dispatch_execute',
         arguments: {
           actor: 'agent-mcp',
-          runId: createdPayload.run.id,
+          runId: createdRunPayload.run.id,
           agents: ['agent-mcp-1', 'agent-mcp-2'],
           maxSteps: 20,
           stepDelayMs: 0,
@@ -243,7 +351,14 @@ describe('workgraph mcp server', () => {
         'workgraph_ledger_recent',
         'workgraph_ledger_reconcile',
         'workgraph_graph_hygiene',
+        'workgraph_thread_create',
         'workgraph_thread_claim',
+        'workgraph_thread_block',
+        'workgraph_thread_unblock',
+        'workgraph_thread_handoff',
+        'workgraph_thread_release',
+        'workgraph_thread_heartbeat',
+        'workgraph_thread_join',
         'workgraph_thread_done',
         'workgraph_checkpoint_create',
         'workgraph_dispatch_create',

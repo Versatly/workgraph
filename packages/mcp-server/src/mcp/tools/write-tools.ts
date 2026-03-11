@@ -260,6 +260,252 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
   );
 
   server.registerTool(
+    'workgraph_thread_create',
+    {
+      title: 'Thread Create',
+      description: 'Create a new thread primitive (policy-scoped write).',
+      inputSchema: {
+        title: z.string().min(1),
+        goal: z.string().min(1),
+        actor: z.string().optional(),
+        priority: z.string().optional(),
+        deps: z.array(z.string()).optional(),
+        parent: z.string().optional(),
+        space: z.string().optional(),
+        context_refs: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['thread:create', 'mcp:write'], {
+          action: 'mcp.thread.create',
+          target: 'threads',
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const created = thread.createThread(options.workspacePath, args.title, args.goal, actor, {
+          priority: args.priority,
+          deps: args.deps,
+          parent: args.parent,
+          space: args.space,
+          context_refs: args.context_refs,
+          tags: args.tags,
+        });
+        return okResult({ thread: created }, `Created thread ${created.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_thread_block',
+    {
+      title: 'Thread Block',
+      description: 'Mark a thread blocked with a reason (policy-scoped write).',
+      inputSchema: {
+        threadPath: z.string().min(1),
+        actor: z.string().optional(),
+        reason: z.string().min(1),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['thread:update', 'mcp:write'], {
+          action: 'mcp.thread.block',
+          target: args.threadPath,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = thread.block(options.workspacePath, args.threadPath, actor, 'external/manual', args.reason);
+        return okResult({ thread: updated }, `Blocked ${updated.path} as ${actor}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_thread_unblock',
+    {
+      title: 'Thread Unblock',
+      description: 'Unblock a blocked thread (policy-scoped write).',
+      inputSchema: {
+        threadPath: z.string().min(1),
+        actor: z.string().optional(),
+        reason: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['thread:update', 'mcp:write'], {
+          action: 'mcp.thread.unblock',
+          target: args.threadPath,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = thread.unblock(options.workspacePath, args.threadPath, actor);
+        const reasonSuffix = args.reason ? ` Reason: ${args.reason}` : '';
+        return okResult({ thread: updated }, `Unblocked ${updated.path} as ${actor}.${reasonSuffix}`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_thread_handoff',
+    {
+      title: 'Thread Handoff',
+      description: 'Hand off a claimed thread to another actor (policy-scoped write).',
+      inputSchema: {
+        threadPath: z.string().min(1),
+        actor: z.string().optional(),
+        fromActor: z.string().optional(),
+        toActor: z.string().min(1),
+        reason: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const fromActor = resolveActor(options.workspacePath, args.fromActor, actor);
+        const gate = checkWriteGate(options, fromActor, ['thread:update', 'mcp:write'], {
+          action: 'mcp.thread.handoff',
+          target: args.threadPath,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = thread.handoff(options.workspacePath, args.threadPath, fromActor, args.toActor, args.reason);
+        return okResult({ thread: updated }, `Handed off ${updated.path} from ${fromActor} to ${args.toActor}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_thread_release',
+    {
+      title: 'Thread Release',
+      description: 'Release a claimed thread back to open (policy-scoped write).',
+      inputSchema: {
+        threadPath: z.string().min(1),
+        actor: z.string().optional(),
+        reason: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['thread:claim', 'mcp:write'], {
+          action: 'mcp.thread.release',
+          target: args.threadPath,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = thread.release(options.workspacePath, args.threadPath, actor, args.reason);
+        return okResult({ thread: updated }, `Released ${updated.path} as ${actor}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_thread_heartbeat',
+    {
+      title: 'Thread Heartbeat',
+      description: 'Refresh heartbeat metadata for a claimed thread (policy-scoped write).',
+      inputSchema: {
+        threadPath: z.string().min(1),
+        actor: z.string().optional(),
+        note: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['thread:update', 'mcp:write'], {
+          action: 'mcp.thread.heartbeat',
+          target: args.threadPath,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const updated = thread.heartbeat(options.workspacePath, args.threadPath, actor);
+        return okResult(
+          {
+            thread: updated,
+            ...(args.note ? { note: args.note } : {}),
+          },
+          `Heartbeated ${updated.path} as ${actor}.`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_thread_join',
+    {
+      title: 'Thread Join',
+      description: 'Join a thread as a participant (policy-scoped write).',
+      inputSchema: {
+        threadPath: z.string().min(1),
+        actor: z.string().optional(),
+        role: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['thread:update', 'mcp:write'], {
+          action: 'mcp.thread.join',
+          target: args.threadPath,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const role = args.role === 'participant' ? 'contributor' : args.role;
+        const updated = thread.joinThread(
+          options.workspacePath,
+          args.threadPath,
+          actor,
+          role as Parameters<typeof thread.joinThread>[3],
+        );
+        return okResult({ thread: updated }, `Joined ${updated.path} as ${actor}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
     'workgraph_thread_claim',
     {
       title: 'Thread Claim',
@@ -305,6 +551,7 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
         threadPath: z.string().min(1),
         actor: z.string().optional(),
         output: z.string().optional(),
+        reason: z.string().optional(),
         evidence: z.array(z.string()).optional(),
       },
       annotations: {
@@ -320,7 +567,10 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
           target: args.threadPath,
         });
         if (!gate.allowed) return errorResult(gate.reason);
-        const updated = thread.done(options.workspacePath, args.threadPath, actor, args.output, {
+        const output = args.reason
+          ? [args.output, `Reason: ${args.reason}`].filter((entry): entry is string => Boolean(entry)).join('\n\n')
+          : args.output;
+        const updated = thread.done(options.workspacePath, args.threadPath, actor, output, {
           evidence: args.evidence,
         });
         return okResult({ thread: updated }, `Marked ${updated.path} done as ${actor}.`);

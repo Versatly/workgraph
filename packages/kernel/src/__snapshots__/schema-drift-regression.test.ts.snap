@@ -1853,6 +1853,36 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
       "destructiveHint": true,
       "idempotentHint": false,
     },
+    "description": "Mark a thread blocked with a reason (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "reason": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "threadPath": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+        "reason",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_block",
+    "title": "Thread Block",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
     "description": "Claim a thread for an actor (policy-scoped write).",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1878,6 +1908,63 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
       "destructiveHint": true,
       "idempotentHint": false,
     },
+    "description": "Create a new thread primitive (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "context_refs": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "deps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "goal": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "parent": {
+          "type": "string",
+        },
+        "priority": {
+          "type": "string",
+        },
+        "space": {
+          "type": "string",
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "title",
+        "goal",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_create",
+    "title": "Thread Create",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
     "description": "Mark a thread as done with output summary (policy-scoped write).",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1894,6 +1981,9 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
         "output": {
           "type": "string",
         },
+        "reason": {
+          "type": "string",
+        },
         "threadPath": {
           "minLength": 1,
           "type": "string",
@@ -1906,6 +1996,98 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "workgraph_thread_done",
     "title": "Thread Done",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Hand off a claimed thread to another actor (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "fromActor": {
+          "type": "string",
+        },
+        "reason": {
+          "type": "string",
+        },
+        "threadPath": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "toActor": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+        "toActor",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_handoff",
+    "title": "Thread Handoff",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Refresh heartbeat metadata for a claimed thread (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "note": {
+          "type": "string",
+        },
+        "threadPath": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_heartbeat",
+    "title": "Thread Heartbeat",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Join a thread as a participant (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "role": {
+          "type": "string",
+        },
+        "threadPath": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_join",
+    "title": "Thread Join",
   },
   {
     "annotations": {
@@ -1933,6 +2115,34 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
   },
   {
     "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Release a claimed thread back to open (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "reason": {
+          "type": "string",
+        },
+        "threadPath": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_release",
+    "title": "Thread Release",
+  },
+  {
+    "annotations": {
       "idempotentHint": true,
       "readOnlyHint": true,
     },
@@ -1952,6 +2162,34 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "workgraph_thread_show",
     "title": "Thread Show",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Unblock a blocked thread (policy-scoped write).",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "reason": {
+          "type": "string",
+        },
+        "threadPath": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_thread_unblock",
+    "title": "Thread Unblock",
   },
   {
     "annotations": {
