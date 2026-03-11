@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import { loadRegistry, saveRegistry } from './registry.js';
 import * as dispatch from './dispatch.js';
 
@@ -12,6 +13,7 @@ beforeEach(() => {
   workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-adapters-'));
   const registry = loadRegistry(workspacePath);
   saveRegistry(workspacePath, registry);
+  registerDefaultDispatchAdaptersIntoKernelRegistry();
 });
 
 afterEach(() => {

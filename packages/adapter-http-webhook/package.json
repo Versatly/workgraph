@@ -1,5 +1,5 @@
 {
-  "name": "@versatly/workgraph-adapter-claude-code",
+  "name": "@versatly/workgraph-adapter-http-webhook",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -9,7 +9,6 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@versatly/workgraph-adapter-shell-worker": "workspace:*",
     "@versatly/workgraph-runtime-adapter-core": "workspace:*"
   }
 }

@@ -50,15 +50,36 @@ importers:
 
   packages/adapter-claude-code:
     dependencies:
-      '@versatly/workgraph-kernel':
+      '@versatly/workgraph-adapter-shell-worker':
         specifier: workspace:*
-        version: link:../kernel
+        version: link:../adapter-shell-worker
+      '@versatly/workgraph-runtime-adapter-core':
+        specifier: workspace:*
+        version: link:../runtime-adapter-core
 
   packages/adapter-cursor-cloud:
     dependencies:
       '@versatly/workgraph-kernel':
         specifier: workspace:*
         version: link:../kernel
+      '@versatly/workgraph-runtime-adapter-core':
+        specifier: workspace:*
+        version: link:../runtime-adapter-core
+
+  packages/adapter-http-webhook:
+    dependencies:
+      '@versatly/workgraph-runtime-adapter-core':
+        specifier: workspace:*
+        version: link:../runtime-adapter-core
+
+  packages/adapter-shell-worker:
+    dependencies:
+      '@versatly/workgraph-adapter-cursor-cloud':
+        specifier: workspace:*
+        version: link:../adapter-cursor-cloud
+      '@versatly/workgraph-runtime-adapter-core':
+        specifier: workspace:*
+        version: link:../runtime-adapter-core
 
   packages/cli:
     dependencies:
@@ -105,9 +126,6 @@ importers:
       '@versatly/workgraph-kernel':
         specifier: workspace:*
         version: link:../kernel
-      '@versatly/workgraph-policy':
-        specifier: workspace:*
-        version: link:../policy
       zod:
         specifier: ^4.3.6
         version: 4.3.6
@@ -125,6 +143,18 @@ importers:
 
   packages/runtime-adapter-core:
     dependencies:
+      '@versatly/workgraph-adapter-claude-code':
+        specifier: workspace:*
+        version: link:../adapter-claude-code
+      '@versatly/workgraph-adapter-cursor-cloud':
+        specifier: workspace:*
+        version: link:../adapter-cursor-cloud
+      '@versatly/workgraph-adapter-http-webhook':
+        specifier: workspace:*
+        version: link:../adapter-http-webhook
+      '@versatly/workgraph-adapter-shell-worker':
+        specifier: workspace:*
+        version: link:../adapter-shell-worker
       '@versatly/workgraph-kernel':
         specifier: workspace:*
         version: link:../kernel
@@ -149,9 +179,6 @@ importers:
       '@versatly/workgraph-obsidian-integration':
         specifier: workspace:*
         version: link:../obsidian-integration
-      '@versatly/workgraph-policy':
-        specifier: workspace:*
-        version: link:../policy
       '@versatly/workgraph-runtime-adapter-core':
         specifier: workspace:*
         version: link:../runtime-adapter-core

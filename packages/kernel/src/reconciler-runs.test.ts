@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import matter from 'gray-matter';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import * as dispatch from './dispatch.js';
 import * as reconciler from './reconciler.js';
 import { loadRegistry, saveRegistry } from './registry.js';
@@ -24,6 +25,7 @@ describe('dispatch run reconciler', () => {
   beforeEach(() => {
     workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-reconciler-runs-'));
     saveRegistry(workspacePath, loadRegistry(workspacePath));
+    registerDefaultDispatchAdaptersIntoKernelRegistry();
     vi.restoreAllMocks();
     fetchMock.mockReset();
     vi.stubGlobal('fetch', fetchMock);

@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import {
   createCursorBridgeWebhookSignature,
   dispatchCursorAutomationEvent,
@@ -18,6 +19,7 @@ beforeEach(() => {
   workspacePath = fs.mkdtempSync(path.join(os.tmpdir(), 'wg-cursor-bridge-'));
   const registry = loadRegistry(workspacePath);
   saveRegistry(workspacePath, registry);
+  registerDefaultDispatchAdaptersIntoKernelRegistry();
 });
 
 afterEach(() => {

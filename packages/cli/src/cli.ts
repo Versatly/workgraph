@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { Command } from 'commander';
 import * as workgraph from '@versatly/workgraph-kernel';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import { startWorkgraphServer, waitForShutdown } from '@versatly/workgraph-control-api';
 import { registerAdapterCommands } from './cli/commands/adapter.js';
 import { registerAutonomyCommands } from './cli/commands/autonomy.js';
@@ -38,6 +39,8 @@ const DEFAULT_ACTOR =
   process.env.WORKGRAPH_AGENT ||
   process.env.USER ||
   'anonymous';
+
+registerDefaultDispatchAdaptersIntoKernelRegistry();
 
 const CLI_VERSION = (() => {
   try {

@@ -1,5 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import {
   auth as authModule,
   ledger as ledgerModule,
@@ -114,6 +115,7 @@ interface WebhookCreateRequestBody {
 }
 
 export async function startWorkgraphServer(options: WorkgraphServerOptions): Promise<WorkgraphServerHandle> {
+  registerDefaultDispatchAdaptersIntoKernelRegistry();
   const workspacePath = path.resolve(options.workspacePath);
   const host = readNonEmptyString(options.host) ?? DEFAULT_HOST;
   const port = normalizePort(options.port, DEFAULT_PORT);

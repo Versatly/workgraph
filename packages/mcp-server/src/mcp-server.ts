@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
 import { registerCollaborationTools } from './mcp/tools/collaboration-tools.js';
 import { registerResources } from './mcp/resources.js';
 import { registerReadTools } from './mcp/tools/read-tools.js';
@@ -17,6 +18,7 @@ export interface WorkgraphMcpServerOptions {
 }
 
 export function createWorkgraphMcpServer(options: WorkgraphMcpServerOptions): McpServer {
+  registerDefaultDispatchAdaptersIntoKernelRegistry();
   const server = new McpServer({
     name: options.name ?? DEFAULT_SERVER_NAME,
     version: options.version ?? DEFAULT_SERVER_VERSION,
