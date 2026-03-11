@@ -2,6 +2,7 @@ import crypto, { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as dispatch from './dispatch.js';
+import * as transport from './transport/index.js';
 import type { DispatchRun, RunStatus } from './types.js';
 
 const CURSOR_BRIDGE_CONFIG_FILE = '.workgraph/cursor-bridge.json';
@@ -283,6 +284,35 @@ export async function dispatchCursorAutomationEvent(
   });
   const idempotencyKey = readNonEmptyString(input.idempotencyKey)
     ?? (eventId ? `cursor-bridge:${eventType}:${eventId}` : undefined);
+  const envelope = transport.createTransportEnvelope({
+    direction: 'outbound',
+    channel: 'runtime-bridge',
+    topic: eventType,
+    source: `cursor-bridge:${source}`,
+    target: adapter,
+    provider: 'cursor-automations',
+    correlationId: eventId,
+    dedupKeys: [
+      ...(eventId ? [`cursor-event:${eventId}`] : []),
+      `cursor-topic:${eventType}:${objective}`,
+    ],
+    payload: {
+      source,
+      eventId,
+      eventType,
+      objective,
+      actor,
+      adapter,
+      execute,
+      context: bridgeContext,
+    },
+  });
+  const outbox = transport.createTransportOutboxRecord(workspacePath, {
+    envelope,
+    deliveryHandler: 'runtime-bridge',
+    deliveryTarget: adapter,
+    message: `Dispatching cursor bridge event ${eventType} to adapter ${adapter}.`,
+  });
 
   let run: DispatchRun | undefined;
   try {
@@ -318,6 +348,7 @@ export async function dispatchCursorAutomationEvent(
       actor,
     };
     appendCursorBridgeEvent(workspacePath, record);
+    transport.markTransportOutboxDelivered(workspacePath, outbox.id, `Cursor bridge event ${eventType} dispatched successfully.`);
     return { run, event: record };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -333,6 +364,15 @@ export async function dispatchCursorAutomationEvent(
       adapter,
       actor,
       error: message,
+    });
+    transport.markTransportOutboxFailed(workspacePath, outbox.id, {
+      message,
+      context: {
+        eventType,
+        eventId,
+        adapter,
+        runId: run?.id,
+      },
     });
     throw error;
   }

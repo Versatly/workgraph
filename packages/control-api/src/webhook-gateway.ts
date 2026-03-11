@@ -1,9 +1,13 @@
 import crypto, { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import { ledger as ledgerModule } from '@versatly/workgraph-kernel';
+import {
+  ledger as ledgerModule,
+  transport as transportModule,
+} from '@versatly/workgraph-kernel';
 
 const ledger = ledgerModule;
+const transport = transportModule;
 
 const WEBHOOK_GATEWAY_STORE_PATH = '.workgraph/webhook-gateway-sources.json';
 const WEBHOOK_GATEWAY_LOG_PATH = '.workgraph/webhook-gateway.log.jsonl';
@@ -316,6 +320,10 @@ export function registerWebhookGatewayEndpoint(app: any, workspacePath: string):
       const adapted = adaptWebhookPayload(source, req.headers, body.jsonBody, body.rawBody);
       const payloadDigest = sha256Hex(body.rawBody);
       const actor = source.actor ?? `webhook:${source.key}`;
+      const dedupKeys = [
+        `${source.key}:delivery:${adapted.deliveryId}`,
+        `${source.key}:payload:${payloadDigest}`,
+      ];
 
       if (source.provider === 'slack' && isSlackChallengePayload(body.jsonBody)) {
         const challenge = String((body.jsonBody as Record<string, unknown>).challenge ?? '');
@@ -370,6 +378,57 @@ export function registerWebhookGatewayEndpoint(app: any, workspacePath: string):
           accepted: false,
           reason: 'duplicate',
           duplicateBy,
+          source: source.key,
+          provider: source.provider,
+          eventType: adapted.eventType,
+          deliveryId: adapted.deliveryId,
+        });
+        return;
+      }
+
+      const inboxEnvelope = transport.createTransportEnvelope({
+        direction: 'inbound',
+        channel: 'webhook-gateway',
+        topic: adapted.eventType,
+        source: `webhook-gateway:${source.key}`,
+        target: '.workgraph/webhook-gateway',
+        provider: source.provider,
+        correlationId: adapted.deliveryId,
+        dedupKeys,
+        payload: {
+          sourceKey: source.key,
+          provider: source.provider,
+          eventType: adapted.eventType,
+          deliveryId: adapted.deliveryId,
+          payload: adapted.payload,
+        },
+      });
+      const inboxResult = transport.recordTransportInbox(workspacePath, {
+        envelope: inboxEnvelope,
+        dedupKeys,
+        message: 'Accepted inbound webhook event.',
+      });
+      if (inboxResult.duplicate) {
+        const duplicateLog: WebhookGatewayLogEntry = {
+          id: randomUUID(),
+          ts: new Date().toISOString(),
+          sourceKey: source.key,
+          provider: source.provider,
+          eventType: adapted.eventType,
+          actor,
+          status: 'accepted',
+          statusCode: 200,
+          signatureVerified: verification.verified,
+          message: 'Duplicate webhook ignored (persistent inbox dedup).',
+          deliveryId: adapted.deliveryId,
+          payloadDigest,
+        };
+        appendWebhookGatewayLog(workspacePath, duplicateLog);
+        writeWebhookGatewayHttpResponse(res, 200, {
+          ok: true,
+          accepted: false,
+          reason: 'duplicate',
+          duplicateBy: 'inbox',
           source: source.key,
           provider: source.provider,
           eventType: adapted.eventType,

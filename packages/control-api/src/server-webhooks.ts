@@ -1,10 +1,14 @@
 import crypto, { randomUUID } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import {
+  transport as transportModule,
+} from '@versatly/workgraph-kernel';
 import type { DashboardEvent } from './server-events.js';
 
 const WEBHOOKS_PATH = '.workgraph/webhooks.json';
 const WEBHOOKS_VERSION = 1;
+const transport = transportModule;
 
 interface WebhookStoreFile {
   version: number;
@@ -90,13 +94,45 @@ export async function dispatchWebhookEvent(workspacePath: string, event: Dashboa
       if (webhook.secret) {
         headers['X-WorkGraph-Signature'] = signPayload(payload, webhook.secret);
       }
-      const response = await fetch(webhook.url, {
-        method: 'POST',
-        headers,
-        body: payload,
+      const envelope = transport.createTransportEnvelope({
+        direction: 'outbound',
+        channel: 'dashboard-webhook',
+        topic: event.type,
+        source: 'control-api.server-events',
+        target: webhook.url,
+        dedupKeys: [`dashboard-event:${event.id}`, `webhook:${webhook.id}:${event.id}`],
+        correlationId: event.id,
+        payload: {
+          event,
+          webhookId: webhook.id,
+        },
       });
-      if (!response.ok) {
-        throw new Error(`Webhook ${webhook.id} responded with status ${response.status}.`);
+      const outbox = transport.createTransportOutboxRecord(workspacePath, {
+        envelope,
+        deliveryHandler: 'dashboard-webhook',
+        deliveryTarget: webhook.url,
+        message: `Dispatching dashboard event ${event.id} to webhook ${webhook.id}.`,
+      });
+      try {
+        const response = await fetch(webhook.url, {
+          method: 'POST',
+          headers,
+          body: payload,
+        });
+        if (!response.ok) {
+          throw new Error(`Webhook ${webhook.id} responded with status ${response.status}.`);
+        }
+        transport.markTransportOutboxDelivered(workspacePath, outbox.id, `Delivered dashboard event ${event.id}.`);
+      } catch (error) {
+        transport.markTransportOutboxFailed(workspacePath, outbox.id, {
+          message: error instanceof Error ? error.message : String(error),
+          context: {
+            webhookId: webhook.id,
+            eventId: event.id,
+            url: webhook.url,
+          },
+        });
+        throw error;
       }
     }),
   );
