@@ -2,10 +2,12 @@ import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   autonomy as autonomyModule,
+  cursorBridge as cursorBridgeModule,
   dispatch as dispatchModule,
   mission as missionModule,
   missionOrchestrator as missionOrchestratorModule,
   orientation as orientationModule,
+  transport as transportModule,
   threadContext as threadContextModule,
   thread as threadModule,
   trigger as triggerModule,
@@ -16,10 +18,12 @@ import { errorResult, okResult } from '../result.js';
 import { type WorkgraphMcpServerOptions } from '../types.js';
 
 const autonomy = autonomyModule;
+const cursorBridge = cursorBridgeModule;
 const dispatch = dispatchModule;
 const mission = missionModule;
 const missionOrchestrator = missionOrchestratorModule;
 const orientation = orientationModule;
+const transport = transportModule;
 const threadContext = threadContextModule;
 const thread = threadModule;
 const trigger = triggerModule;
@@ -779,4 +783,122 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
       }
     },
   );
+
+  server.registerTool(
+    'wg_transport_replay',
+    {
+      title: 'Transport Replay',
+      description: 'Replay an outbox or dead-letter transport delivery.',
+      inputSchema: {
+        actor: z.string().optional(),
+        recordType: z.enum(['outbox', 'dead-letter']),
+        id: z.string().min(1),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['dispatch:run', 'mcp:write'], {
+          action: 'mcp.transport.replay',
+          target: `.workgraph/transport/${args.recordType}/${args.id}`,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const replayed = await replayTransportRecord(options.workspacePath, args.recordType, args.id);
+        return okResult(
+          replayed,
+          `Replayed ${args.recordType} transport record ${args.id}.`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+}
+
+async function replayTransportRecord(
+  workspacePath: string,
+  recordType: 'outbox' | 'dead-letter',
+  id: string,
+) {
+  const outbox = recordType === 'outbox'
+    ? transport.readTransportOutboxRecord(workspacePath, id)
+    : resolveDeadLetterSourceOutbox(workspacePath, id);
+  if (!outbox) {
+    throw new Error(`Transport record not found or not replayable: ${recordType}/${id}`);
+  }
+  const replayed = await transport.replayTransportOutboxRecord(workspacePath, outbox.id, async (record) => {
+    if (record.deliveryHandler === 'dashboard-webhook') {
+      await replayDashboardWebhook(record);
+      return;
+    }
+    if (record.deliveryHandler === 'runtime-bridge') {
+      await replayRuntimeBridge(workspacePath, record);
+      return;
+    }
+    throw new Error(`Unsupported transport replay handler "${record.deliveryHandler}".`);
+  });
+  if (!replayed) {
+    throw new Error(`Transport outbox record not found: ${outbox.id}`);
+  }
+  if (recordType === 'dead-letter') {
+    transport.markTransportDeadLetterReplayed(workspacePath, id);
+  }
+  return replayed;
+}
+
+function resolveDeadLetterSourceOutbox(
+  workspacePath: string,
+  id: string,
+) {
+  const deadLetter = transport.readTransportDeadLetter(workspacePath, id);
+  if (!deadLetter) return null;
+  if (deadLetter.sourceRecordType !== 'outbox') {
+    throw new Error(`Dead-letter record ${id} is not replayable from source type "${deadLetter.sourceRecordType}".`);
+  }
+  return transport.readTransportOutboxRecord(workspacePath, deadLetter.sourceRecordId);
+}
+
+async function replayDashboardWebhook(record: ReturnType<typeof transport.readTransportOutboxRecord> extends infer T ? Exclude<T, null> : never): Promise<void> {
+  const payload = record.envelope.payload;
+  const request = payload && typeof payload === 'object' ? (payload as Record<string, unknown>).request : undefined;
+  const requestRecord = request && typeof request === 'object' ? request as Record<string, unknown> : {};
+  const url = typeof requestRecord.url === 'string' ? requestRecord.url : record.deliveryTarget;
+  const method = typeof requestRecord.method === 'string' ? requestRecord.method : 'POST';
+  const headers = requestRecord.headers && typeof requestRecord.headers === 'object'
+    ? requestRecord.headers as Record<string, string>
+    : { 'content-type': 'application/json' };
+  const body = typeof requestRecord.body === 'string'
+    ? requestRecord.body
+    : JSON.stringify(record.envelope.payload);
+  const response = await fetch(url, {
+    method,
+    headers,
+    body,
+  });
+  if (!response.ok) {
+    throw new Error(`Dashboard webhook replay failed (${response.status}).`);
+  }
+}
+
+async function replayRuntimeBridge(
+  workspacePath: string,
+  record: ReturnType<typeof transport.readTransportOutboxRecord> extends infer T ? Exclude<T, null> : never,
+): Promise<void> {
+  const payload = record.envelope.payload;
+  await cursorBridge.dispatchCursorAutomationEvent(workspacePath, {
+    source: (payload.source as 'webhook' | 'cli-dispatch' | undefined) ?? 'cli-dispatch',
+    eventId: typeof payload.eventId === 'string' ? payload.eventId : undefined,
+    eventType: typeof payload.eventType === 'string' ? payload.eventType : undefined,
+    objective: typeof payload.objective === 'string' ? payload.objective : undefined,
+    actor: typeof payload.actor === 'string' ? payload.actor : undefined,
+    adapter: typeof payload.adapter === 'string' ? payload.adapter : undefined,
+    execute: typeof payload.execute === 'boolean' ? payload.execute : undefined,
+    context: payload.context && typeof payload.context === 'object' && !Array.isArray(payload.context)
+      ? payload.context as Record<string, unknown>
+      : undefined,
+  });
 }

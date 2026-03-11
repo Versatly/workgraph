@@ -8,6 +8,7 @@ import {
   query as queryModule,
   registry as registryModule,
   store as storeModule,
+  transport as transportModule,
   thread as threadModule,
   threadAudit as threadAuditModule,
 } from '@versatly/workgraph-kernel';
@@ -22,6 +23,7 @@ const orientation = orientationModule;
 const query = queryModule;
 const registry = registryModule;
 const store = storeModule;
+const transport = transportModule;
 const thread = threadModule;
 const threadAudit = threadAuditModule;
 
@@ -312,6 +314,66 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
           entries = entries.filter((entry) => entry.actor === args.actor);
         }
         return okResult({ entries, count: entries.length }, `Ledger returned ${entries.length} event(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_transport_outbox_list',
+    {
+      title: 'Transport Outbox List',
+      description: 'List persistent outbound transport records.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const records = transport.listTransportOutbox(options.workspacePath);
+        return okResult({ records, count: records.length }, `Transport outbox has ${records.length} record(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_transport_inbox_list',
+    {
+      title: 'Transport Inbox List',
+      description: 'List persistent inbound transport records.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const records = transport.listTransportInbox(options.workspacePath);
+        return okResult({ records, count: records.length }, `Transport inbox has ${records.length} record(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_transport_dead_letter_list',
+    {
+      title: 'Transport Dead Letter List',
+      description: 'List failed transport deliveries available for inspection and replay.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const records = transport.listTransportDeadLetters(options.workspacePath);
+        return okResult({ records, count: records.length }, `Transport dead-letter queue has ${records.length} record(s).`);
       } catch (error) {
         return errorResult(error);
       }

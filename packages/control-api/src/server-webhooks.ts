@@ -105,6 +105,12 @@ export async function dispatchWebhookEvent(workspacePath: string, event: Dashboa
         payload: {
           event,
           webhookId: webhook.id,
+          request: {
+            url: webhook.url,
+            method: 'POST',
+            headers,
+            body: payload,
+          },
         },
       });
       const outbox = transport.createTransportOutboxRecord(workspacePath, {
