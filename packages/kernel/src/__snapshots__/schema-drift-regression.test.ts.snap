@@ -253,6 +253,72 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
       "destructiveHint": true,
       "idempotentHint": false,
     },
+    "description": "Create a standalone top-level thread with optional idempotency key.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "description": "Actor identity for write attribution.",
+          "type": "string",
+        },
+        "contextRefs": {
+          "description": "Optional context refs to seed on the new thread.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "deps": {
+          "description": "Optional dependency thread refs.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "goal": {
+          "description": "Thread goal/body seed.",
+          "minLength": 1,
+          "type": "string",
+        },
+        "idempotencyKey": {
+          "description": "Stable idempotency key for retry-safe thread creation.",
+          "type": "string",
+        },
+        "priority": {
+          "description": "Optional priority override.",
+          "type": "string",
+        },
+        "space": {
+          "description": "Optional space ref for the new thread.",
+          "type": "string",
+        },
+        "tags": {
+          "description": "Optional thread tags.",
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "title": {
+          "description": "New standalone thread title.",
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "title",
+        "goal",
+      ],
+      "type": "object",
+    },
+    "name": "wg_create_thread",
+    "title": "WorkGraph Create Thread",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
     "description": "Write agent liveness plus active-work claim heartbeat updates.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -487,6 +553,168 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "wg_spawn_thread",
     "title": "WorkGraph Spawn Thread",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Add a searchable context entry scoped to a specific thread.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "description": "Actor identity for write attribution.",
+          "type": "string",
+        },
+        "content": {
+          "description": "Context markdown/body content.",
+          "minLength": 1,
+          "type": "string",
+        },
+        "relevance": {
+          "description": "Optional relevance score (0..1).",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number",
+        },
+        "source": {
+          "description": "Optional source reference (URL, doc ID, note).",
+          "type": "string",
+        },
+        "threadPath": {
+          "description": "Target thread path (threads/<slug>.md).",
+          "minLength": 1,
+          "type": "string",
+        },
+        "title": {
+          "description": "Context entry title.",
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+        "title",
+        "content",
+      ],
+      "type": "object",
+    },
+    "name": "wg_thread_context_add",
+    "title": "WorkGraph Thread Context Add",
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+    },
+    "description": "List all context entries available for a thread.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "description": "Optional actor identity used for attribution/context.",
+          "type": "string",
+        },
+        "threadPath": {
+          "description": "Target thread path (threads/<slug>.md).",
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+      ],
+      "type": "object",
+    },
+    "name": "wg_thread_context_list",
+    "title": "WorkGraph Thread Context List",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Prune stale and/or low-relevance thread context entries.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "description": "Actor identity for write attribution.",
+          "type": "string",
+        },
+        "maxAge": {
+          "anyOf": [
+            {
+              "maximum": 9007199254740991,
+              "minimum": 1,
+              "type": "integer",
+            },
+            {
+              "minLength": 1,
+              "type": "string",
+            },
+          ],
+          "description": "Optional age threshold in minutes or shorthand like 6h / 7d.",
+        },
+        "minRelevance": {
+          "description": "Optional minimum relevance to keep (0..1).",
+          "maximum": 1,
+          "minimum": 0,
+          "type": "number",
+        },
+        "threadPath": {
+          "description": "Target thread path (threads/<slug>.md).",
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+      ],
+      "type": "object",
+    },
+    "name": "wg_thread_context_prune",
+    "title": "WorkGraph Thread Context Prune",
+  },
+  {
+    "annotations": {
+      "destructiveHint": false,
+      "idempotentHint": true,
+    },
+    "description": "Search a thread-specific context store using BM25 keyword ranking.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "description": "Optional actor identity used for attribution/context.",
+          "type": "string",
+        },
+        "limit": {
+          "description": "Max search results to return.",
+          "maximum": 100,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "query": {
+          "description": "Keyword query string for BM25 search.",
+          "minLength": 1,
+          "type": "string",
+        },
+        "threadPath": {
+          "description": "Target thread path (threads/<slug>.md).",
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "threadPath",
+        "query",
+      ],
+      "type": "object",
+    },
+    "name": "wg_thread_context_search",
+    "title": "WorkGraph Thread Context Search",
   },
   {
     "annotations": {
