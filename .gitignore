@@ -8,3 +8,5 @@ tmp/
 *.tsbuildinfo
 **/dist/
 **/node_modules/
+.cursor/hooks/state/
+packages/kernel/src/mcp-resource-*.json
