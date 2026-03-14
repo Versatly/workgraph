@@ -52,6 +52,8 @@ describe('query and orientation', () => {
     const brief = orientation.brief(workspacePath, 'agent-b');
     expect(brief.myClaims).toHaveLength(1);
     expect(brief.recentActivity.length).toBeGreaterThan(0);
+    expect(Array.isArray(brief.companyContext.teams)).toBe(true);
+    expect(Array.isArray(brief.companyContext.clients)).toBe(true);
 
     const checkpoint = orientation.checkpoint(
       workspacePath,

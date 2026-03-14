@@ -43,6 +43,7 @@ describe('workspace init', () => {
     expect(fs.existsSync(path.join(workspacePath, 'policies/escalation.md'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'policy-gates/completion.md'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'spaces/general.md'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'orgs/company.md'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, result.bootstrapTrustTokenPath))).toBe(true);
     expect(result.bootstrapTrustToken).toMatch(/^wg-bootstrap-[a-f0-9]{24}$/);
     expect(result.seededTypes).toContain('thread');

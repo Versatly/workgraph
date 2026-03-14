@@ -29,12 +29,29 @@ describe('registry', () => {
     expect(reg.types.person).toBeDefined();
     expect(reg.types.project).toBeDefined();
     expect(reg.types.client).toBeDefined();
+    expect(reg.types.org).toBeDefined();
+    expect(reg.types.team).toBeDefined();
+    expect(reg.types.pattern).toBeDefined();
+    expect(reg.types.relationship).toBeDefined();
+    expect(reg.types.strategic_note).toBeDefined();
     expect(reg.types.mission).toBeDefined();
     expect(reg.types.conversation).toBeDefined();
     expect(reg.types['plan-step']).toBeDefined();
     expect(reg.types.skill).toBeDefined();
     expect(reg.types.onboarding).toBeDefined();
     expect(reg.types.thread.builtIn).toBe(true);
+  });
+
+  it('adds company-context fields to existing built-in types without removing legacy fields', () => {
+    const reg = loadRegistry(workspacePath);
+    expect(reg.types.decision.fields.decided_by).toBeDefined();
+    expect(reg.types.decision.fields.context_refs).toBeDefined();
+    expect(reg.types.lesson.fields.severity).toBeDefined();
+    expect(reg.types.person.fields.communication_preference).toBeDefined();
+    expect(reg.types.agent.fields.permissions).toBeDefined();
+    expect(reg.types.client.fields.key_contacts).toBeDefined();
+    expect(reg.types.project.fields.priority).toBeDefined();
+    expect(reg.types.policy.fields.scope_type).toBeDefined();
   });
 
   it('persists registry to disk', () => {

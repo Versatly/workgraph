@@ -164,6 +164,7 @@ Starter workgraph workspace seeded by \`workgraph init\`.
 
 This workspace includes editable default primitives:
 
+- Org: \`orgs/company.md\`
 - Roles: \`roles/admin.md\`, \`roles/ops.md\`, \`roles/contributor.md\`, \`roles/viewer.md\`
 - Policies: \`policies/registration-approval.md\`, \`policies/thread-lifecycle.md\`, \`policies/escalation.md\`
 - Gate: \`policy-gates/completion.md\`

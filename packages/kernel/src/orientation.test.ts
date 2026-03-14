@@ -74,6 +74,10 @@ describe('orientation core module', () => {
     expect(brief.blockedThreads.map((entry) => entry.path)).toContain('threads/someone-else.md');
     expect(brief.nextReadyThreads).toHaveLength(1);
     expect(brief.recentActivity).toHaveLength(1);
+    expect(brief.companyContext.teams).toEqual([]);
+    expect(brief.companyContext.clients).toEqual([]);
+    expect(brief.companyContext.recentDecisions).toEqual([]);
+    expect(brief.companyContext.patterns).toEqual([]);
   });
 
   it('creates checkpoint primitives with explicit next/blocked sections', () => {
@@ -138,5 +142,84 @@ describe('orientation core module', () => {
     expect(brief.myClaims).toEqual([]);
     expect(brief.myOpenThreads).toEqual([]);
     expect(brief.nextReadyThreads.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it('includes company context in actor brief', () => {
+    const now = new Date().toISOString();
+    store.create(
+      workspacePath,
+      'org',
+      {
+        title: 'Versatly',
+        mission: 'Make autonomous coordination reliable.',
+        strategy: 'Invest in company context graph primitives.',
+      },
+      'Org context',
+      'agent-seed',
+    );
+    store.create(
+      workspacePath,
+      'team',
+      {
+        title: 'Platform',
+        members: ['agent-focus', 'agent-other'],
+        responsibilities: ['runtime', 'mcp'],
+      },
+      'Team context',
+      'agent-seed',
+    );
+    store.create(
+      workspacePath,
+      'client',
+      {
+        name: 'Acme Corp',
+        status: 'active',
+        description: 'Strategic customer',
+      },
+      'Client context',
+      'agent-seed',
+    );
+    store.create(
+      workspacePath,
+      'decision',
+      {
+        title: 'Adopt company context graph',
+        date: now,
+        status: 'approved',
+        decided_by: 'agent-focus',
+      },
+      'Decision context',
+      'agent-seed',
+    );
+    store.create(
+      workspacePath,
+      'pattern',
+      {
+        title: 'Weekly context sync',
+        description: 'Capture and refresh context every Friday',
+      },
+      'Pattern context',
+      'agent-seed',
+    );
+    store.create(
+      workspacePath,
+      'agent',
+      {
+        name: 'agent-focus',
+        capabilities: ['briefing', 'coordination'],
+        permissions: ['mcp:write'],
+      },
+      'Agent profile',
+      'agent-seed',
+    );
+
+    const brief = orientation.brief(workspacePath, 'agent-focus');
+    expect(brief.companyContext.org?.title).toBe('Versatly');
+    expect(brief.companyContext.teams[0]?.title).toBe('Platform');
+    expect(brief.companyContext.clients[0]?.title).toBe('Acme Corp');
+    expect(brief.companyContext.recentDecisions[0]?.decidedBy).toBe('agent-focus');
+    expect(brief.companyContext.patterns[0]?.title).toBe('Weekly context sync');
+    expect(brief.companyContext.agentProfile?.name).toBe('agent-focus');
+    expect(brief.companyContext.agentProfile?.permissions).toEqual(['mcp:write']);
   });
 });
