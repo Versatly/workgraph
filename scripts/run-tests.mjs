@@ -172,7 +172,11 @@ function cleanup() {
 function spawnVitest(args) {
   const npmExecPath = process.env.npm_execpath;
   if (npmExecPath) {
-    return spawn(process.execPath, [npmExecPath, ...args], {
+    const userAgent = String(process.env.npm_config_user_agent ?? '').toLowerCase();
+    const npmExecArgs = isNpmLikeInvoker(userAgent)
+      ? [npmExecPath, 'exec', '--', ...args]
+      : [npmExecPath, ...args];
+    return spawn(process.execPath, npmExecArgs, {
       cwd: REPO_ROOT,
       env: process.env,
       stdio: ['inherit', 'pipe', 'pipe'],
@@ -299,4 +303,8 @@ function parsePositiveInt(rawValue, fallbackValue) {
 function escapeForCmd(value) {
   if (!/[ \t"]/u.test(value)) return value;
   return `"${value.replaceAll('"', '\\"')}"`;
+}
+
+function isNpmLikeInvoker(userAgent) {
+  return userAgent.startsWith('npm/');
 }
