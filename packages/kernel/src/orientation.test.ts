@@ -185,7 +185,7 @@ describe('orientation core module', () => {
       {
         title: 'Adopt company context graph',
         date: now,
-        status: 'approved',
+        status: 'draft',
         decided_by: 'agent-focus',
       },
       'Decision context',
