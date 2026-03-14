@@ -82,6 +82,33 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
   );
 
   server.registerTool(
+    'workgraph_company_context',
+    {
+      title: 'Workgraph Company Context',
+      description: 'Return company context graph view for an actor.',
+      inputSchema: {
+        actor: z.string().optional(),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const companyContext = orientation.companyContext(options.workspacePath, actor);
+        return okResult(
+          companyContext,
+          `Company context for ${actor}: teams=${companyContext.teams.length}, clients=${companyContext.clients.length}.`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
     'workgraph_query',
     {
       title: 'Workgraph Query',

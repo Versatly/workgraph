@@ -618,9 +618,10 @@ describe('trigger engine', () => {
       expect(Number(payload.count)).toBeGreaterThanOrEqual(1);
 
       const outbox = transport.listTransportOutbox(workspacePath);
-      expect(outbox).toHaveLength(1);
-      expect(outbox[0]?.status).toBe('delivered');
-      expect(outbox[0]?.deliveryTarget).toBe(server.url);
+      const webhookOutbox = outbox.filter((record) => record.deliveryHandler === 'trigger-webhook');
+      expect(webhookOutbox).toHaveLength(1);
+      expect(webhookOutbox[0]?.status).toBe('delivered');
+      expect(webhookOutbox[0]?.deliveryTarget).toBe(server.url);
 
       const webhookEntries = ledger.readAll(workspacePath).filter((entry) =>
         entry.target === webhookTrigger.path && entry.data?.action === 'webhook'
@@ -662,8 +663,9 @@ describe('trigger engine', () => {
       expect(triggerResult?.error).toContain('Webhook request failed');
 
       const outbox = transport.listTransportOutbox(workspacePath);
-      expect(outbox).toHaveLength(1);
-      expect(outbox[0]?.status).toBe('failed');
+      const webhookOutbox = outbox.filter((record) => record.deliveryHandler === 'trigger-webhook');
+      expect(webhookOutbox).toHaveLength(1);
+      expect(webhookOutbox[0]?.status).toBe('failed');
 
       const webhookEntries = ledger.readAll(workspacePath).filter((entry) =>
         entry.target === webhookTrigger.path && entry.data?.action === 'webhook'

@@ -63,12 +63,21 @@ describe('mcp streamable http server', () => {
     try {
       const tools = await client.listTools();
       expect(tools.tools.some((tool) => tool.name === 'workgraph_status')).toBe(true);
+      expect(tools.tools.some((tool) => tool.name === 'workgraph_company_context')).toBe(true);
 
       const status = await client.callTool({
         name: 'workgraph_status',
         arguments: {},
       });
       expect(isToolError(status)).toBe(false);
+
+      const companyContext = await client.callTool({
+        name: 'workgraph_company_context',
+        arguments: {
+          actor: 'http-operator',
+        },
+      });
+      expect(isToolError(companyContext)).toBe(false);
 
       const runCreated = await client.callTool({
         name: 'workgraph_dispatch_create',

@@ -1,1 +1,1 @@
-export { brief } from '../orientation.js';
+export { brief, companyContext } from '../orientation.js';

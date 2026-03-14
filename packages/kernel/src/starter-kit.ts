@@ -30,6 +30,7 @@ export interface StarterKitSeedResult {
   policies: StarterKitSeedSummary;
   gates: StarterKitSeedSummary;
   spaces: StarterKitSeedSummary;
+  orgs: StarterKitSeedSummary;
   trustTokens: StarterKitSeedSummary;
   bootstrapTrustToken: string;
   bootstrapTrustTokenPath: string;
@@ -43,6 +44,7 @@ export function seedStarterKit(workspacePath: string): StarterKitSeedResult {
   const policySeeds = seedGroup(workspacePath, buildPolicySeeds());
   const gateSeeds = seedGroup(workspacePath, buildGateSeeds());
   const spaceSeeds = seedGroup(workspacePath, buildSpaceSeeds());
+  const orgSeeds = seedGroup(workspacePath, buildOrgSeeds());
   const configuredBootstrapPath = loadServerConfig(workspacePath)?.registration.bootstrapTokenPath
     ?? BOOTSTRAP_TRUST_TOKEN_PATH;
   const tokenSeed = seedBootstrapTrustToken(workspacePath, configuredBootstrapPath);
@@ -55,6 +57,7 @@ export function seedStarterKit(workspacePath: string): StarterKitSeedResult {
     policies: policySeeds,
     gates: gateSeeds,
     spaces: spaceSeeds,
+    orgs: orgSeeds,
     trustTokens: {
       created: tokenSeed.created ? [tokenSeed.instance.path] : [],
       existing: tokenSeed.created ? [] : [tokenSeed.instance.path],
@@ -330,6 +333,34 @@ function buildSpaceSeeds(): PrimitiveSeedSpec[] {
         '',
         '- Start initial onboarding threads here.',
         '- Create additional spaces for domain lanes as needed.',
+        '',
+      ].join('\n'),
+    },
+  ];
+}
+
+function buildOrgSeeds(): PrimitiveSeedSpec[] {
+  return [
+    {
+      typeName: 'org',
+      path: 'orgs/company.md',
+      fields: {
+        title: 'Company',
+        mission: 'Deliver reliable outcomes through coordinated, context-rich execution.',
+        strategy: 'Scale agent-native workflows with explicit company context and decision memory.',
+        structure: 'Cross-functional teams organized around product and customer outcomes.',
+        external_links: [],
+        tags: ['starter-kit', 'company-context'],
+      },
+      body: [
+        '# Company Context',
+        '',
+        'This starter org primitive anchors company-wide context for teams, decisions, and patterns.',
+        '',
+        '## Suggested use',
+        '',
+        '- Keep mission and strategy current.',
+        '- Link strategic notes, teams, and key relationships from this node.',
         '',
       ].join('\n'),
     },

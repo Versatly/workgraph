@@ -380,6 +380,15 @@ export interface WorkgraphStatusSnapshot {
   };
 }
 
+export interface CompanyContext {
+  org?: { title: string; mission?: string; strategy?: string };
+  teams: Array<{ title: string; members: string[]; responsibilities: string[] }>;
+  clients: Array<{ title: string; status: string; description?: string }>;
+  recentDecisions: Array<{ title: string; decidedBy?: string; date?: string; status: string }>;
+  patterns: Array<{ title: string; description?: string }>;
+  agentProfile?: { name: string; capabilities: string[]; permissions: string[] };
+}
+
 export interface WorkgraphBrief {
   generatedAt: string;
   actor: string;
@@ -388,6 +397,7 @@ export interface WorkgraphBrief {
   blockedThreads: PrimitiveInstance[];
   nextReadyThreads: PrimitiveInstance[];
   recentActivity: LedgerEntry[];
+  companyContext: CompanyContext;
 }
 
 export type WorkgraphLensId =

@@ -1121,6 +1121,117 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
   },
   {
     "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Return company context graph view for an actor.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+      },
+      "type": "object",
+    },
+    "name": "workgraph_company_context",
+    "title": "Workgraph Company Context",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Create a decision primitive with rationale, participants, and alternatives.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "alternatives": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "body": {
+          "type": "string",
+        },
+        "consequences": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "contextRefs": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "date": {
+          "type": "string",
+        },
+        "decidedBy": {
+          "type": "string",
+        },
+        "externalLinks": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "participants": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "rationale": {
+          "type": "string",
+        },
+        "relatedRefs": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "status": {
+          "enum": [
+            "draft",
+            "proposed",
+            "approved",
+            "active",
+            "superseded",
+            "reverted",
+          ],
+          "type": "string",
+        },
+        "supersedes": {
+          "type": "string",
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "title",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_create_decision",
+    "title": "Decision Create",
+  },
+  {
+    "annotations": {
       "destructiveHint": true,
       "idempotentHint": false,
     },
@@ -1806,6 +1917,136 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "workgraph_query",
     "title": "Workgraph Query",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Record a lesson with severity and source event context.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "appliesTo": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "body": {
+          "type": "string",
+        },
+        "confidence": {
+          "type": "string",
+        },
+        "contextRefs": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "date": {
+          "type": "string",
+        },
+        "relatedRefs": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "severity": {
+          "enum": [
+            "critical",
+            "important",
+            "minor",
+          ],
+          "type": "string",
+        },
+        "sourceEvent": {
+          "type": "string",
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "title",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_record_lesson",
+    "title": "Lesson Record",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Record a reusable pattern with steps and exceptions.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "appliesTo": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "body": {
+          "type": "string",
+        },
+        "description": {
+          "type": "string",
+        },
+        "exceptions": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "relatedRefs": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "steps": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "tags": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string",
+        },
+      },
+      "required": [
+        "title",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_record_pattern",
+    "title": "Pattern Record",
   },
   {
     "annotations": {
