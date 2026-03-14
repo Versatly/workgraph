@@ -7,6 +7,7 @@ import {
   mission as missionModule,
   missionOrchestrator as missionOrchestratorModule,
   orientation as orientationModule,
+  store as storeModule,
   transport as transportModule,
   threadContext as threadContextModule,
   thread as threadModule,
@@ -23,6 +24,7 @@ const dispatch = dispatchModule;
 const mission = missionModule;
 const missionOrchestrator = missionOrchestratorModule;
 const orientation = orientationModule;
+const store = storeModule;
 const transport = transportModule;
 const threadContext = threadContextModule;
 const thread = threadModule;
@@ -611,6 +613,175 @@ export function registerWriteTools(server: McpServer, options: WorkgraphMcpServe
           tags: args.tags,
         });
         return okResult({ checkpoint }, `Created checkpoint ${checkpoint.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_create_decision',
+    {
+      title: 'Decision Create',
+      description: 'Create a decision primitive with rationale, participants, and alternatives.',
+      inputSchema: {
+        title: z.string().min(1),
+        actor: z.string().optional(),
+        status: z.enum(['draft', 'proposed', 'approved', 'active', 'superseded', 'reverted']).optional(),
+        date: z.string().optional(),
+        decidedBy: z.string().optional(),
+        participants: z.array(z.string()).optional(),
+        alternatives: z.array(z.string()).optional(),
+        rationale: z.string().optional(),
+        consequences: z.array(z.string()).optional(),
+        supersedes: z.string().optional(),
+        relatedRefs: z.array(z.string()).optional(),
+        externalLinks: z.array(z.string()).optional(),
+        contextRefs: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+        body: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['mcp:write'], {
+          action: 'mcp.decision.create',
+          target: 'decisions',
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const decision = store.create(
+          options.workspacePath,
+          'decision',
+          {
+            title: args.title,
+            date: args.date ?? new Date().toISOString(),
+            status: args.status,
+            decided_by: args.decidedBy ?? actor,
+            participants: args.participants ?? [],
+            alternatives: args.alternatives ?? [],
+            rationale: args.rationale,
+            consequences: args.consequences ?? [],
+            supersedes: args.supersedes,
+            related_refs: args.relatedRefs ?? [],
+            external_links: args.externalLinks ?? [],
+            context_refs: args.contextRefs ?? [],
+            tags: args.tags ?? [],
+          },
+          args.body ?? '',
+          actor,
+        );
+        return okResult({ decision }, `Created decision ${decision.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_record_lesson',
+    {
+      title: 'Lesson Record',
+      description: 'Record a lesson with severity and source event context.',
+      inputSchema: {
+        title: z.string().min(1),
+        actor: z.string().optional(),
+        date: z.string().optional(),
+        confidence: z.string().optional(),
+        severity: z.enum(['critical', 'important', 'minor']).optional(),
+        sourceEvent: z.string().optional(),
+        appliesTo: z.array(z.string()).optional(),
+        relatedRefs: z.array(z.string()).optional(),
+        contextRefs: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+        body: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['mcp:write'], {
+          action: 'mcp.lesson.record',
+          target: 'lessons',
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const lesson = store.create(
+          options.workspacePath,
+          'lesson',
+          {
+            title: args.title,
+            date: args.date ?? new Date().toISOString(),
+            confidence: args.confidence,
+            severity: args.severity,
+            source_event: args.sourceEvent,
+            applies_to: args.appliesTo ?? [],
+            related_refs: args.relatedRefs ?? [],
+            context_refs: args.contextRefs ?? [],
+            tags: args.tags ?? [],
+          },
+          args.body ?? '',
+          actor,
+        );
+        return okResult({ lesson }, `Recorded lesson ${lesson.path}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_record_pattern',
+    {
+      title: 'Pattern Record',
+      description: 'Record a reusable pattern with steps and exceptions.',
+      inputSchema: {
+        title: z.string().min(1),
+        actor: z.string().optional(),
+        description: z.string().optional(),
+        steps: z.array(z.string()).optional(),
+        exceptions: z.array(z.string()).optional(),
+        appliesTo: z.array(z.string()).optional(),
+        relatedRefs: z.array(z.string()).optional(),
+        tags: z.array(z.string()).optional(),
+        body: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['mcp:write'], {
+          action: 'mcp.pattern.record',
+          target: 'patterns',
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const pattern = store.create(
+          options.workspacePath,
+          'pattern',
+          {
+            title: args.title,
+            description: args.description,
+            steps: args.steps ?? [],
+            exceptions: args.exceptions ?? [],
+            applies_to: args.appliesTo ?? [],
+            related_refs: args.relatedRefs ?? [],
+            tags: args.tags ?? [],
+          },
+          args.body ?? '',
+          actor,
+        );
+        return okResult({ pattern }, `Recorded pattern ${pattern.path}.`);
       } catch (error) {
         return errorResult(error);
       }

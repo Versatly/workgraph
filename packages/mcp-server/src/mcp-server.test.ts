@@ -63,6 +63,7 @@ describe('workgraph mcp server', () => {
       const tools = await client.listTools();
       const toolNames = tools.tools.map((entry) => entry.name);
       expect(toolNames).toContain('workgraph_status');
+      expect(toolNames).toContain('workgraph_company_context');
       expect(toolNames).toContain('workgraph_primitive_schema');
       expect(toolNames).toContain('workgraph_ledger_reconcile');
       expect(toolNames).toContain('workgraph_thread_create');
@@ -76,6 +77,9 @@ describe('workgraph mcp server', () => {
       expect(toolNames).toContain('workgraph_dispatch_execute');
       expect(toolNames).toContain('workgraph_trigger_create');
       expect(toolNames).toContain('workgraph_trigger_fire');
+      expect(toolNames).toContain('workgraph_create_decision');
+      expect(toolNames).toContain('workgraph_record_lesson');
+      expect(toolNames).toContain('workgraph_record_pattern');
       expect(toolNames).toContain('workgraph_create_mission');
       expect(toolNames).toContain('workgraph_mission_status');
 
@@ -86,6 +90,24 @@ describe('workgraph mcp server', () => {
       expect('isError' in statusTool && statusTool.isError).toBeFalsy();
       const statusPayload = getStructured<{ threads: { total: number } }>(statusTool);
       expect(statusPayload.threads.total).toBeGreaterThan(0);
+
+      const companyContextResult = await client.callTool({
+        name: 'workgraph_company_context',
+        arguments: {
+          actor: 'agent-mcp',
+        },
+      });
+      expect(isToolError(companyContextResult)).toBe(false);
+      const companyContextPayload = getStructured<{
+        teams: unknown[];
+        clients: unknown[];
+        recentDecisions: unknown[];
+        patterns: unknown[];
+      }>(companyContextResult);
+      expect(Array.isArray(companyContextPayload.teams)).toBe(true);
+      expect(Array.isArray(companyContextPayload.clients)).toBe(true);
+      expect(Array.isArray(companyContextPayload.recentDecisions)).toBe(true);
+      expect(Array.isArray(companyContextPayload.patterns)).toBe(true);
 
       const statusResource = await client.readResource({ uri: 'workgraph://status' });
       const firstContent = statusResource.contents[0];
@@ -133,6 +155,63 @@ describe('workgraph mcp server', () => {
           'promote:trigger',
         ],
       });
+
+      const createdDecision = await client.callTool({
+        name: 'workgraph_create_decision',
+        arguments: {
+          title: 'Adopt company context graph',
+          actor: 'agent-mcp',
+          rationale: 'Improve organizational context quality for autonomous agents.',
+          participants: ['agent-mcp', 'agent-mcp-2'],
+          alternatives: ['Keep ad-hoc context notes'],
+        },
+      });
+      expect(isToolError(createdDecision)).toBe(false);
+      const decisionPayload = getStructured<{ decision: { path: string; fields: { title: string } } }>(createdDecision);
+      expect(decisionPayload.decision.path).toMatch(/^decisions\//);
+      expect(decisionPayload.decision.fields.title).toBe('Adopt company context graph');
+
+      const recordedLesson = await client.callTool({
+        name: 'workgraph_record_lesson',
+        arguments: {
+          title: 'Track decisions with explicit rationale',
+          actor: 'agent-mcp',
+          severity: 'important',
+          sourceEvent: 'postmortem-2026-03-14',
+        },
+      });
+      expect(isToolError(recordedLesson)).toBe(false);
+      const lessonPayload = getStructured<{ lesson: { path: string; fields: { severity: string } } }>(recordedLesson);
+      expect(lessonPayload.lesson.path).toMatch(/^lessons\//);
+      expect(lessonPayload.lesson.fields.severity).toBe('important');
+
+      const recordedPattern = await client.callTool({
+        name: 'workgraph_record_pattern',
+        arguments: {
+          title: 'Decision preflight checklist',
+          actor: 'agent-mcp',
+          steps: ['Gather stakeholders', 'Capture alternatives', 'Record rationale'],
+          exceptions: ['Emergency incident response'],
+        },
+      });
+      expect(isToolError(recordedPattern)).toBe(false);
+      const patternPayload = getStructured<{ pattern: { path: string; fields: { title: string } } }>(recordedPattern);
+      expect(patternPayload.pattern.path).toMatch(/^patterns\//);
+      expect(patternPayload.pattern.fields.title).toBe('Decision preflight checklist');
+
+      const companyContextAfterWrites = await client.callTool({
+        name: 'workgraph_company_context',
+        arguments: {
+          actor: 'agent-mcp',
+        },
+      });
+      expect(isToolError(companyContextAfterWrites)).toBe(false);
+      const contextAfterWritesPayload = getStructured<{
+        recentDecisions: Array<{ title: string }>;
+        patterns: Array<{ title: string }>;
+      }>(companyContextAfterWrites);
+      expect(contextAfterWritesPayload.recentDecisions.some((entry) => entry.title === 'Adopt company context graph')).toBe(true);
+      expect(contextAfterWritesPayload.patterns.some((entry) => entry.title === 'Decision preflight checklist')).toBe(true);
 
       const created = await client.callTool({
         name: 'workgraph_thread_create',
@@ -344,6 +423,7 @@ describe('workgraph mcp server', () => {
       const expectedTools = [
         'workgraph_status',
         'workgraph_brief',
+        'workgraph_company_context',
         'workgraph_query',
         'workgraph_primitive_schema',
         'workgraph_thread_list',
@@ -361,6 +441,9 @@ describe('workgraph mcp server', () => {
         'workgraph_thread_join',
         'workgraph_thread_done',
         'workgraph_checkpoint_create',
+        'workgraph_create_decision',
+        'workgraph_record_lesson',
+        'workgraph_record_pattern',
         'workgraph_dispatch_create',
         'workgraph_dispatch_execute',
         'workgraph_dispatch_followup',
