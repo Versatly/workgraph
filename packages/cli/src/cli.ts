@@ -29,16 +29,25 @@ import {
   parseSetPairs,
   renderInstalledIntegrationResult,
   resolveInitTargetPath,
+  resolveApiKey,
+  resolveApiUrl,
   resolveWorkspacePath,
   runCommand,
   type JsonCapableOptions,
   wantsJson,
 } from './cli/core.js';
+import { WorkgraphRemoteClient } from './remote-client.js';
 
 const DEFAULT_ACTOR =
   process.env.WORKGRAPH_AGENT ||
   process.env.USER ||
   'anonymous';
+
+type PrimitiveRecord = {
+  path: string;
+  type: string;
+  fields: Record<string, unknown>;
+};
 
 registerDefaultDispatchAdaptersIntoKernelRegistry();
 
@@ -129,8 +138,30 @@ addWorkspaceOption(
     .option('--context <refs>', 'Comma-separated workspace doc refs for context')
     .option('--tags <tags>', 'Comma-separated tags')
     .option('--json', 'Emit structured JSON output')
-).action((title, opts) =>
-  runCommand(
+).action((title, opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{ thread: PrimitiveRecord }>('workgraph_thread_create', {
+          title,
+          goal: opts.goal,
+          actor: opts.actor,
+          priority: opts.priority,
+          deps: csv(opts.deps),
+          parent: opts.parent,
+          space: opts.space,
+          context_refs: csv(opts.context),
+          tags: csv(opts.tags),
+        })),
+      (result) => [
+        `Created thread: ${result.thread.path}`,
+        `Status: ${String(result.thread.fields.status)}`,
+        `Priority: ${String(result.thread.fields.priority)}`,
+      ],
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -149,9 +180,9 @@ addWorkspaceOption(
       `Created thread: ${result.thread.path}`,
       `Status: ${String(result.thread.fields.status)}`,
       `Priority: ${String(result.thread.fields.priority)}`,
-    ]
-  )
-);
+    ],
+  );
+});
 
 addWorkspaceOption(
   threadCmd
@@ -161,8 +192,34 @@ addWorkspaceOption(
     .option('--space <spaceRef>', 'Filter threads by space ref')
     .option('--ready', 'Only include threads ready to be claimed now')
     .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
+).action((opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{ threads: Array<PrimitiveRecord & { ready: boolean }>; count: number }>(
+          'workgraph_thread_list',
+          {
+            status: opts.status,
+            readyOnly: !!opts.ready,
+            space: opts.space,
+          },
+        )),
+      (result) => {
+        if (result.threads.length === 0) return ['No threads found.'];
+        return [
+          ...result.threads.map((t) => {
+            const status = String(t.fields.status);
+            const owner = t.fields.owner ? ` (${String(t.fields.owner)})` : '';
+            const ready = t.ready ? ' ready' : '';
+            return `[${status}]${ready} ${String(t.fields.title)}${owner} -> ${t.path}`;
+          }),
+          `${result.count} thread(s)`,
+        ];
+      },
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -194,9 +251,9 @@ addWorkspaceOption(
         }),
         `${result.count} thread(s)`,
       ];
-    }
-  )
-);
+    },
+  );
+});
 
 addWorkspaceOption(
   threadCmd
@@ -207,8 +264,51 @@ addWorkspaceOption(
     .option('--claim', 'Immediately claim the next ready thread')
     .option('--fail-on-empty', 'Exit non-zero if no ready thread exists')
     .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
+).action((opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, async (client) => {
+        const readyResult = await client.callTool<{ threads: PrimitiveRecord[] }>(
+          'workgraph_thread_list',
+          {
+            readyOnly: true,
+            space: opts.space,
+          },
+        );
+        const nextThread = readyResult.threads[0];
+        if (!nextThread) {
+          if (opts.failOnEmpty) {
+            throw new Error('No ready threads available.');
+          }
+          return { thread: null, claimed: false };
+        }
+        if (!opts.claim) {
+          return { thread: nextThread, claimed: false };
+        }
+        const claimedResult = await client.callTool<{ thread: PrimitiveRecord }>(
+          'workgraph_thread_claim',
+          {
+            threadPath: nextThread.path,
+            actor: opts.actor,
+          },
+        );
+        return {
+          thread: claimedResult.thread,
+          claimed: true,
+        };
+      }),
+      (result) => {
+        if (!result.thread) return ['No ready thread available.'];
+        return [
+          `${result.claimed ? 'Claimed' : 'Selected'} thread: ${result.thread.path}`,
+          `Title: ${String(result.thread.fields.title)}`,
+          ...(result.thread.fields.space ? [`Space: ${String(result.thread.fields.space)}`] : []),
+        ];
+      },
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -234,9 +334,9 @@ addWorkspaceOption(
         `Title: ${String(result.thread.fields.title)}`,
         ...(result.thread.fields.space ? [`Space: ${String(result.thread.fields.space)}`] : []),
       ];
-    }
-  )
-);
+    },
+  );
+});
 
 addWorkspaceOption(
   threadCmd
@@ -361,8 +461,19 @@ addWorkspaceOption(
     .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
     .option('--lease-ttl-minutes <n>', 'Claim lease TTL in minutes', '30')
     .option('--json', 'Emit structured JSON output')
-).action((threadPath, opts) =>
-  runCommand(
+).action((threadPath, opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{ thread: PrimitiveRecord }>('workgraph_thread_claim', {
+          threadPath,
+          actor: opts.actor,
+        })),
+      (result) => [`Claimed: ${result.thread.path}`, `Owner: ${String(result.thread.fields.owner)}`],
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -372,9 +483,9 @@ addWorkspaceOption(
         }),
       };
     },
-    (result) => [`Claimed: ${result.thread.path}`, `Owner: ${String(result.thread.fields.owner)}`]
-  )
-);
+    (result) => [`Claimed: ${result.thread.path}`, `Owner: ${String(result.thread.fields.owner)}`],
+  );
+});
 
 addWorkspaceOption(
   threadCmd
@@ -402,8 +513,21 @@ addWorkspaceOption(
     .option('-o, --output <text>', 'Output/result summary')
     .option('--evidence <items>', 'Comma-separated evidence values (url/path/reply/thread refs)')
     .option('--json', 'Emit structured JSON output')
-).action((threadPath, opts) =>
-  runCommand(
+).action((threadPath, opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{ thread: PrimitiveRecord }>('workgraph_thread_done', {
+          threadPath,
+          actor: opts.actor,
+          output: opts.output,
+          evidence: csv(opts.evidence),
+        })),
+      (result) => [`Done: ${result.thread.path}`],
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -413,9 +537,9 @@ addWorkspaceOption(
         }),
       };
     },
-    (result) => [`Done: ${result.thread.path}`]
-  )
-);
+    (result) => [`Done: ${result.thread.path}`],
+  );
+});
 
 addWorkspaceOption(
   threadCmd
@@ -595,8 +719,26 @@ addWorkspaceOption(
     .option('--current-task <threadRef>', 'Current task/thread slug for this agent')
     .option('--capabilities <items>', 'Comma-separated capability tags')
     .option('--json', 'Emit structured JSON output')
-).action((name, opts) =>
-  runCommand(
+).action((name, opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{ presence: PrimitiveRecord }>('workgraph_agent_heartbeat', {
+          name,
+          actor: opts.actor,
+          status: normalizeAgentPresenceStatus(opts.status),
+          currentTask: opts.currentTask,
+          capabilities: csv(opts.capabilities),
+        })),
+      (result) => [
+        `Heartbeat: ${String(result.presence.fields.name)} [${String(result.presence.fields.status)}]`,
+        `Last seen: ${String(result.presence.fields.last_seen)}`,
+        `Current task: ${String(result.presence.fields.current_task ?? 'none')}`,
+      ],
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -614,8 +756,8 @@ addWorkspaceOption(
       `Last seen: ${String(result.presence.fields.last_seen)}`,
       `Current task: ${String(result.presence.fields.current_task ?? 'none')}`,
     ],
-  )
-);
+  );
+});
 
 addWorkspaceOption(
   agentCmd
@@ -628,8 +770,33 @@ addWorkspaceOption(
     .option('--current-task <threadRef>', 'Optional current task/thread ref')
     .option('-a, --actor <name>', 'Actor writing registration artifacts')
     .option('--json', 'Emit structured JSON output')
-).action((name, opts) =>
-  runCommand(
+).action((name, opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<ReturnType<typeof workgraph.agent.registerAgent>>('workgraph_agent_register', {
+          name,
+          token: opts.token,
+          role: opts.role,
+          capabilities: csv(opts.capabilities),
+          status: normalizeAgentPresenceStatus(opts.status),
+          currentTask: opts.currentTask,
+          actor: opts.actor,
+        })),
+      (result) => [
+        `Registered agent: ${result.agentName}`,
+        `Role: ${result.role} (${result.rolePath})`,
+        `Capabilities: ${result.capabilities.join(', ') || 'none'}`,
+        `Presence: ${result.presence.path}`,
+        `Policy party: ${result.policyParty.id}`,
+        `Bootstrap token: ${result.trustTokenPath} [${result.trustTokenStatus}]`,
+        ...(result.credential ? [`Credential: ${result.credential.id} [${result.credential.status}]`] : []),
+        ...(result.apiKey ? [`API key (store securely, shown once): ${result.apiKey}`] : []),
+      ],
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -656,8 +823,8 @@ addWorkspaceOption(
       ...(result.credential ? [`Credential: ${result.credential.id} [${result.credential.status}]`] : []),
       ...(result.apiKey ? [`API key (store securely, shown once): ${result.apiKey}`] : []),
     ],
-  )
-);
+  );
+});
 
 addWorkspaceOption(
   agentCmd
@@ -800,8 +967,28 @@ addWorkspaceOption(
     .command('list')
     .description('List known agent presence entries')
     .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
+).action((opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{ agents: PrimitiveRecord[]; count: number }>('workgraph_agent_list', {})),
+      (result) => {
+        if (result.agents.length === 0) return ['No agent presence entries found.'];
+        return [
+          ...result.agents.map((entry) => {
+            const name = String(entry.fields.name ?? entry.path);
+            const status = String(entry.fields.status ?? 'unknown');
+            const task = String(entry.fields.current_task ?? 'none');
+            const lastSeen = String(entry.fields.last_seen ?? 'unknown');
+            return `${name} [${status}] task=${task} last_seen=${lastSeen}`;
+          }),
+          `${result.count} agent(s)`,
+        ];
+      },
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -824,8 +1011,8 @@ addWorkspaceOption(
         `${result.count} agent(s)`,
       ];
     },
-  )
-);
+  );
+});
 
 // ============================================================================
 // primitive
@@ -1687,8 +1874,20 @@ addWorkspaceOption(
     .command('status')
     .description('Show workspace situational status snapshot')
     .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
+).action((opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<ReturnType<typeof workgraph.orientation.statusSnapshot>>('workgraph_status', {})),
+      (result) => [
+        `Threads: total=${result.threads.total} open=${result.threads.open} active=${result.threads.active} blocked=${result.threads.blocked} done=${result.threads.done}`,
+        `Ready threads: ${result.threads.ready} Active claims: ${result.claims.active}`,
+        `Primitive types: ${Object.keys(result.primitives.byType).length}`,
+      ],
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -1699,8 +1898,8 @@ addWorkspaceOption(
       `Ready threads: ${result.threads.ready} Active claims: ${result.claims.active}`,
       `Primitive types: ${Object.keys(result.primitives.byType).length}`,
     ],
-  )
-);
+  );
+});
 
 addWorkspaceOption(
   program
@@ -1710,8 +1909,25 @@ addWorkspaceOption(
     .option('--recent <count>', 'Recent activity count', '12')
     .option('--next <count>', 'Next ready threads to include', '5')
     .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
+).action((opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<ReturnType<typeof workgraph.orientation.brief>>('workgraph_brief', {
+          actor: opts.actor,
+          recentCount: Number.parseInt(String(opts.recent), 10),
+          nextCount: Number.parseInt(String(opts.next), 10),
+        })),
+      (result) => [
+        `Brief for ${result.actor}`,
+        `My claims: ${result.myClaims.length}`,
+        `Blocked threads: ${result.blockedThreads.length}`,
+        `Next ready: ${result.nextReadyThreads.map((item) => item.path).join(', ') || 'none'}`,
+      ],
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -1726,8 +1942,8 @@ addWorkspaceOption(
       `Blocked threads: ${result.blockedThreads.length}`,
       `Next ready: ${result.nextReadyThreads.map((item) => item.path).join(', ') || 'none'}`,
     ],
-  )
-);
+  );
+});
 
 addWorkspaceOption(
   program
@@ -1738,8 +1954,22 @@ addWorkspaceOption(
     .option('--blocked <items>', 'Comma-separated blockers')
     .option('--tags <items>', 'Comma-separated tags')
     .option('--json', 'Emit structured JSON output')
-).action((summary, opts) =>
-  runCommand(
+).action((summary, opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{ checkpoint: PrimitiveRecord }>('workgraph_checkpoint_create', {
+          actor: opts.actor,
+          summary,
+          next: csv(opts.next),
+          blocked: csv(opts.blocked),
+          tags: csv(opts.tags),
+        })),
+      (result) => [`Created checkpoint: ${result.checkpoint.path}`],
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -1752,8 +1982,8 @@ addWorkspaceOption(
       };
     },
     (result) => [`Created checkpoint: ${result.checkpoint.path}`],
-  )
-);
+  );
+});
 
 addWorkspaceOption(
   program
@@ -1790,15 +2020,23 @@ addWorkspaceOption(
     .command('list')
     .description('List built-in context lenses')
     .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
+).action((opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{ lenses: Array<{ id: string; description: string }> }>('workgraph_lens_list', {})),
+      (result) => result.lenses.map((lens) => `lens://${lens.id} - ${lens.description}`),
+    );
+  }
+  return runCommand(
     opts,
     () => ({
       lenses: workgraph.lens.listContextLenses(),
     }),
-    (result) => result.lenses.map((lens) => `lens://${lens.id} - ${lens.description}`)
-  )
-);
+    (result) => result.lenses.map((lens) => `lens://${lens.id} - ${lens.description}`),
+  );
+});
 
 addWorkspaceOption(
   lensCmd
@@ -1810,8 +2048,43 @@ addWorkspaceOption(
     .option('--limit <n>', 'Maximum items per section', '10')
     .option('-o, --output <path>', 'Write lens markdown to workspace-relative output path')
     .option('--json', 'Emit structured JSON output')
-).action((lensId, opts) =>
-  runCommand(
+).action((lensId, opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) => client.callTool<
+      workgraph.WorkgraphLensResult | workgraph.WorkgraphMaterializedLensResult
+      >('workgraph_lens_show', {
+        lensId,
+        actor: opts.actor,
+        lookbackHours: parsePositiveNumberOption(opts.lookbackHours, 'lookback-hours'),
+        staleHours: parsePositiveNumberOption(opts.staleHours, 'stale-hours'),
+        limit: parsePositiveIntegerOption(opts.limit, 'limit'),
+        outputPath: opts.output,
+      })),
+      (result) => {
+        const metricSummary = Object.entries(result.metrics)
+          .map(([metric, value]) => `${metric}=${value}`)
+          .join(' ');
+        const sectionSummary = result.sections
+          .map((section) => `${section.id}:${section.items.length}`)
+          .join(' ');
+        const lines = [
+          `Lens: ${result.lens}`,
+          `Generated: ${result.generatedAt}`,
+          ...(result.actor ? [`Actor: ${result.actor}`] : []),
+          `Metrics: ${metricSummary || 'none'}`,
+          `Sections: ${sectionSummary || 'none'}`,
+        ];
+        if (isMaterializedLensResult(result)) {
+          lines.push(`Saved markdown: ${result.outputPath}`);
+          return lines;
+        }
+        return [...lines, '', ...result.markdown.split('\n')];
+      },
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -1849,8 +2122,8 @@ addWorkspaceOption(
       }
       return [...lines, '', ...result.markdown.split('\n')];
     },
-  )
-);
+  );
+});
 
 // ============================================================================
 // query/search
@@ -1873,8 +2146,29 @@ addWorkspaceOption(
     .option('--limit <n>', 'Result limit')
     .option('--offset <n>', 'Result offset')
     .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
+).action((opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{ results: PrimitiveRecord[]; count: number }>('workgraph_query', {
+          type: opts.type,
+          status: opts.status,
+          owner: opts.owner,
+          tag: opts.tag,
+          text: opts.text,
+          pathIncludes: opts.pathIncludes,
+          updatedAfter: opts.updatedAfter,
+          updatedBefore: opts.updatedBefore,
+          createdAfter: opts.createdAfter,
+          createdBefore: opts.createdBefore,
+          limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+          offset: opts.offset ? Number.parseInt(String(opts.offset), 10) : undefined,
+        })),
+      (result) => result.results.map((item) => `${item.type} ${item.path}`),
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -1895,8 +2189,8 @@ addWorkspaceOption(
       return { results, count: results.length };
     },
     (result) => result.results.map((item) => `${item.type} ${item.path}`),
-  )
-);
+  );
+});
 
 addWorkspaceOption(
   program
@@ -1906,8 +2200,30 @@ addWorkspaceOption(
     .option('--mode <mode>', 'auto | core | qmd', 'auto')
     .option('--limit <n>', 'Result limit')
     .option('--json', 'Emit structured JSON output')
-).action((text, opts) =>
-  runCommand(
+).action((text, opts) => {
+  if (isRemoteMode(opts)) {
+    return runCommand(
+      opts,
+      () => withRemoteClient(opts, (client) =>
+        client.callTool<{
+          mode: string;
+          fallbackReason?: string;
+          results: PrimitiveRecord[];
+          count: number;
+        }>('workgraph_search', {
+          text,
+          mode: opts.mode,
+          type: opts.type,
+          limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
+        })),
+      (result) => [
+        `Mode: ${result.mode}`,
+        ...(result.fallbackReason ? [`Note: ${result.fallbackReason}`] : []),
+        ...result.results.map((item) => `${item.type} ${item.path}`),
+      ],
+    );
+  }
+  return runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
@@ -1926,8 +2242,8 @@ addWorkspaceOption(
       ...(result.fallbackReason ? [`Note: ${result.fallbackReason}`] : []),
       ...result.results.map((item) => `${item.type} ${item.path}`),
     ],
-  )
-);
+  );
+});
 
 // ============================================================================
 // board/graph
@@ -2424,6 +2740,44 @@ addWorkspaceOption(
 registerAutonomyCommands(program, DEFAULT_ACTOR);
 
 // ============================================================================
+// remote/api diagnostics
+// ============================================================================
+
+program
+  .command('remote')
+  .description('Remote/API mode diagnostics')
+  .command('test')
+  .description('Ping MCP HTTP endpoint and list available tools')
+  .option('--api-url <url>', 'Workgraph MCP HTTP endpoint URL (or WORKGRAPH_API_URL env)')
+  .option('--api-key <token>', 'Agent credential API key (or WORKGRAPH_API_KEY env)')
+  .option('--json', 'Emit structured JSON output')
+  .action((opts) =>
+    runCommand(
+      opts,
+      () => withRemoteClient(opts, async (client) => {
+        const tools = await client.listTools();
+        const status = await client.callTool<ReturnType<typeof workgraph.orientation.statusSnapshot>>(
+          'workgraph_status',
+          {},
+        );
+        return {
+          apiUrl: resolveApiUrl(opts),
+          ok: true,
+          toolCount: tools.length,
+          tools: tools.map((tool) => tool.name).sort((left, right) => left.localeCompare(right)),
+          status,
+        };
+      }),
+      (result) => [
+        `Connected to: ${result.apiUrl}`,
+        `MCP tools available: ${result.toolCount}`,
+        `Threads: total=${result.status.threads.total} ready=${result.status.threads.ready} active=${result.status.threads.active}`,
+        `Claims: active=${result.status.claims.active}`,
+      ],
+    ),
+  );
+
+// ============================================================================
 // serve (http server)
 // ============================================================================
 
@@ -2594,6 +2948,30 @@ addWorkspaceOption(
 );
 
 await program.parseAsync();
+
+function isRemoteMode(opts: JsonCapableOptions): boolean {
+  return !!resolveApiUrl(opts);
+}
+
+async function withRemoteClient<T>(
+  opts: JsonCapableOptions,
+  action: (client: WorkgraphRemoteClient) => Promise<T>,
+): Promise<T> {
+  const apiUrl = resolveApiUrl(opts);
+  if (!apiUrl) {
+    throw new Error('Remote API mode requires --api-url or WORKGRAPH_API_URL.');
+  }
+  const client = await WorkgraphRemoteClient.connect({
+    apiUrl,
+    apiKey: resolveApiKey(opts),
+    version: CLI_VERSION,
+  });
+  try {
+    return await action(client);
+  } finally {
+    await client.close();
+  }
+}
 
 function isMaterializedLensResult(
   value: workgraph.WorkgraphLensResult | workgraph.WorkgraphMaterializedLensResult,

@@ -1,14 +1,17 @@
 import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
+  agent as agentModule,
   federation as federationModule,
   graph as graphModule,
   ledger as ledgerModule,
+  lens as lensModule,
   mission as missionModule,
   orientation as orientationModule,
   projections as projectionsModule,
   query as queryModule,
   registry as registryModule,
+  searchQmdAdapter as searchQmdAdapterModule,
   store as storeModule,
   transport as transportModule,
   thread as threadModule,
@@ -18,14 +21,17 @@ import { resolveActor } from '../auth.js';
 import { errorResult, okResult, renderStatusSummary } from '../result.js';
 import { type WorkgraphMcpServerOptions } from '../types.js';
 
+const agent = agentModule;
 const federation = federationModule;
 const graph = graphModule;
 const ledger = ledgerModule;
+const lens = lensModule;
 const mission = missionModule;
 const orientation = orientationModule;
 const projections = projectionsModule;
 const query = queryModule;
 const registry = registryModule;
+const searchQmdAdapter = searchQmdAdapterModule;
 const store = storeModule;
 const transport = transportModule;
 const thread = threadModule;
@@ -75,6 +81,29 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
           nextCount: args.nextCount,
         });
         return okResult(brief, `Brief for ${actor}: claims=${brief.myClaims.length}, blocked=${brief.blockedThreads.length}`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_agent_list',
+    {
+      title: 'Agent List',
+      description: 'List known agent presence entries.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const agents = agent.list(options.workspacePath);
+        return okResult(
+          { agents, count: agents.length },
+          `Agent list returned ${agents.length} entry(s).`,
+        );
       } catch (error) {
         return errorResult(error);
       }
@@ -149,6 +178,112 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
           offset: args.offset,
         });
         return okResult({ results, count: results.length }, `Query returned ${results.length} primitive(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_search',
+    {
+      title: 'Workgraph Search',
+      description: 'Keyword search across markdown body/frontmatter.',
+      inputSchema: {
+        text: z.string().min(1),
+        type: z.string().optional(),
+        mode: z.enum(['auto', 'core', 'qmd']).optional(),
+        limit: z.number().int().min(0).max(1000).optional(),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const result = searchQmdAdapter.search(options.workspacePath, args.text, {
+          mode: args.mode,
+          type: args.type,
+          limit: args.limit,
+        });
+        return okResult(
+          {
+            ...result,
+            count: result.results.length,
+          },
+          `Search returned ${result.results.length} result(s) in ${result.mode} mode.`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_lens_list',
+    {
+      title: 'Workgraph Lens List',
+      description: 'List built-in context lenses.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const lenses = lens.listContextLenses();
+        return okResult(
+          { lenses, count: lenses.length },
+          `Lens list returned ${lenses.length} item(s).`,
+        );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_lens_show',
+    {
+      title: 'Workgraph Lens Show',
+      description: 'Generate one context lens snapshot.',
+      inputSchema: {
+        lensId: z.string().min(1),
+        actor: z.string().optional(),
+        lookbackHours: z.number().positive().optional(),
+        staleHours: z.number().positive().optional(),
+        limit: z.number().int().min(1).max(500).optional(),
+        outputPath: z.string().optional(),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        if (args.outputPath) {
+          const materialized = lens.materializeContextLens(options.workspacePath, args.lensId, {
+            actor,
+            lookbackHours: args.lookbackHours,
+            staleHours: args.staleHours,
+            limit: args.limit,
+            outputPath: args.outputPath,
+          });
+          return okResult(
+            materialized,
+            `Materialized lens ${materialized.lens} to ${materialized.outputPath}.`,
+          );
+        }
+        const generated = lens.generateContextLens(options.workspacePath, args.lensId, {
+          actor,
+          lookbackHours: args.lookbackHours,
+          staleHours: args.staleHours,
+          limit: args.limit,
+        });
+        return okResult(generated, `Generated lens ${generated.lens}.`);
       } catch (error) {
         return errorResult(error);
       }

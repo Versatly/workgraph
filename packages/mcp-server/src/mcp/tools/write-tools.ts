@@ -1,6 +1,7 @@
 import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
+  agent as agentModule,
   autonomy as autonomyModule,
   cursorBridge as cursorBridgeModule,
   dispatch as dispatchModule,
@@ -18,6 +19,7 @@ import { checkWriteGate, resolveActor } from '../auth.js';
 import { errorResult, okResult } from '../result.js';
 import { type WorkgraphMcpServerOptions } from '../types.js';
 
+const agent = agentModule;
 const autonomy = autonomyModule;
 const cursorBridge = cursorBridgeModule;
 const dispatch = dispatchModule;
@@ -62,6 +64,92 @@ const triggerConditionSchema = z.union([
 const triggerContextSchema = z.object({}).passthrough();
 
 export function registerWriteTools(server: McpServer, options: WorkgraphMcpServerOptions): void {
+  server.registerTool(
+    'workgraph_agent_register',
+    {
+      title: 'Agent Register',
+      description: 'Register an agent using trust-token fallback flow.',
+      inputSchema: {
+        name: z.string().min(1),
+        actor: z.string().optional(),
+        token: z.string().optional(),
+        role: z.string().optional(),
+        capabilities: z.array(z.string()).optional(),
+        status: z.enum(['online', 'busy', 'offline']).optional(),
+        currentTask: z.string().optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['mcp:write'], {
+          action: 'mcp.agent.register',
+          target: 'agents',
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const token = typeof args.token === 'string' && args.token.trim().length > 0
+          ? args.token.trim()
+          : process.env.WORKGRAPH_TRUST_TOKEN;
+        if (!token) {
+          return errorResult('Missing trust token. Provide token argument or set WORKGRAPH_TRUST_TOKEN.');
+        }
+        const registered = agent.registerAgent(options.workspacePath, args.name, {
+          token,
+          role: args.role,
+          capabilities: args.capabilities,
+          status: args.status,
+          currentTask: args.currentTask,
+          actor: args.actor,
+        });
+        return okResult(registered, `Registered agent ${registered.agentName}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_agent_heartbeat',
+    {
+      title: 'Agent Heartbeat',
+      description: 'Create/update an agent presence heartbeat.',
+      inputSchema: {
+        name: z.string().min(1),
+        actor: z.string().optional(),
+        status: z.enum(['online', 'busy', 'offline']).optional(),
+        currentTask: z.string().optional(),
+        capabilities: z.array(z.string()).optional(),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        const gate = checkWriteGate(options, actor, ['agent:heartbeat', 'mcp:write'], {
+          action: 'mcp.agent.heartbeat',
+          target: args.name,
+        });
+        if (!gate.allowed) return errorResult(gate.reason);
+        const presence = agent.heartbeat(options.workspacePath, args.name, {
+          actor: args.actor,
+          status: args.status,
+          currentTask: args.currentTask,
+          capabilities: args.capabilities,
+        });
+        return okResult({ presence }, `Heartbeated agent ${args.name}.`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
   server.registerTool(
     'workgraph_create_mission',
     {
