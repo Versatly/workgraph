@@ -13,6 +13,7 @@ exports[`schema drift regression > locks CLI option signatures for critical comm
     "-w, --workspace <path>",
     "--vault <path>",
     "--shared-vault <path>",
+    "--api-url <url>",
     "--api-key <token>",
     "--dry-run",
     "-h, --help",
@@ -22,6 +23,7 @@ exports[`schema drift regression > locks CLI option signatures for critical comm
     "-w, --workspace <path>",
     "--vault <path>",
     "--shared-vault <path>",
+    "--api-url <url>",
     "--api-key <token>",
     "--dry-run",
     "-h, --help",
@@ -36,6 +38,7 @@ exports[`schema drift regression > locks CLI option signatures for critical comm
     "-w, --workspace <path>",
     "--vault <path>",
     "--shared-vault <path>",
+    "--api-url <url>",
     "--api-key <token>",
     "--dry-run",
     "-h, --help",
@@ -46,6 +49,7 @@ exports[`schema drift regression > locks CLI option signatures for critical comm
     "-w, --workspace <path>",
     "--vault <path>",
     "--shared-vault <path>",
+    "--api-url <url>",
     "--api-key <token>",
     "--dry-run",
     "-h, --help",
@@ -58,6 +62,7 @@ exports[`schema drift regression > locks CLI option signatures for critical comm
     "-w, --workspace <path>",
     "--vault <path>",
     "--shared-vault <path>",
+    "--api-url <url>",
     "--api-key <token>",
     "--dry-run",
     "-h, --help",
@@ -69,6 +74,7 @@ exports[`schema drift regression > locks CLI option signatures for critical comm
     "-w, --workspace <path>",
     "--vault <path>",
     "--shared-vault <path>",
+    "--api-url <url>",
     "--api-key <token>",
     "--dry-run",
     "-h, --help",
@@ -90,6 +96,7 @@ exports[`schema drift regression > locks CLI option signatures for critical comm
     "-w, --workspace <path>",
     "--vault <path>",
     "--shared-vault <path>",
+    "--api-url <url>",
     "--api-key <token>",
     "--dry-run",
     "-h, --help",
@@ -102,6 +109,7 @@ exports[`schema drift regression > locks CLI option signatures for critical comm
     "-w, --workspace <path>",
     "--vault <path>",
     "--shared-vault <path>",
+    "--api-url <url>",
     "--api-key <token>",
     "--dry-run",
     "-h, --help",
@@ -124,6 +132,7 @@ exports[`schema drift regression > locks CLI option signatures for critical comm
     "-w, --workspace <path>",
     "--vault <path>",
     "--shared-vault <path>",
+    "--api-url <url>",
     "--api-key <token>",
     "--dry-run",
     "-h, --help",
@@ -967,6 +976,109 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
       "destructiveHint": true,
       "idempotentHint": false,
     },
+    "description": "Create/update an agent presence heartbeat.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "capabilities": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "currentTask": {
+          "type": "string",
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "status": {
+          "enum": [
+            "online",
+            "busy",
+            "offline",
+          ],
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_agent_heartbeat",
+    "title": "Agent Heartbeat",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "List known agent presence entries.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "workgraph_agent_list",
+    "title": "Agent List",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
+    "description": "Register an agent using trust-token fallback flow.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "capabilities": {
+          "items": {
+            "type": "string",
+          },
+          "type": "array",
+        },
+        "currentTask": {
+          "type": "string",
+        },
+        "name": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "role": {
+          "type": "string",
+        },
+        "status": {
+          "enum": [
+            "online",
+            "busy",
+            "offline",
+          ],
+          "type": "string",
+        },
+        "token": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "name",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_agent_register",
+    "title": "Agent Register",
+  },
+  {
+    "annotations": {
+      "destructiveHint": true,
+      "idempotentHint": false,
+    },
     "description": "Approve a mission plan and move it to approved status.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -1649,6 +1761,60 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
       "idempotentHint": true,
       "readOnlyHint": true,
     },
+    "description": "List built-in context lenses.",
+    "inputSchema": {
+      "properties": {},
+      "type": "object",
+    },
+    "name": "workgraph_lens_list",
+    "title": "Workgraph Lens List",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Generate one context lens snapshot.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "actor": {
+          "type": "string",
+        },
+        "lensId": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "limit": {
+          "maximum": 500,
+          "minimum": 1,
+          "type": "integer",
+        },
+        "lookbackHours": {
+          "exclusiveMinimum": 0,
+          "type": "number",
+        },
+        "outputPath": {
+          "type": "string",
+        },
+        "staleHours": {
+          "exclusiveMinimum": 0,
+          "type": "number",
+        },
+      },
+      "required": [
+        "lensId",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_lens_show",
+    "title": "Workgraph Lens Show",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
     "description": "Read aggregate mission progress across milestones and features.",
     "inputSchema": {
       "$schema": "http://json-schema.org/draft-07/schema#",
@@ -2047,6 +2213,44 @@ exports[`schema drift regression > locks MCP tool metadata and input schemas 1`]
     },
     "name": "workgraph_record_pattern",
     "title": "Pattern Record",
+  },
+  {
+    "annotations": {
+      "idempotentHint": true,
+      "readOnlyHint": true,
+    },
+    "description": "Keyword search across markdown body/frontmatter.",
+    "inputSchema": {
+      "$schema": "http://json-schema.org/draft-07/schema#",
+      "properties": {
+        "limit": {
+          "maximum": 1000,
+          "minimum": 0,
+          "type": "integer",
+        },
+        "mode": {
+          "enum": [
+            "auto",
+            "core",
+            "qmd",
+          ],
+          "type": "string",
+        },
+        "text": {
+          "minLength": 1,
+          "type": "string",
+        },
+        "type": {
+          "type": "string",
+        },
+      },
+      "required": [
+        "text",
+      ],
+      "type": "object",
+    },
+    "name": "workgraph_search",
+    "title": "Workgraph Search",
   },
   {
     "annotations": {
