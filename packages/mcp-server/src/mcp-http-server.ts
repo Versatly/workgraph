@@ -6,6 +6,8 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { auth as kernelAuth } from '@versatly/workgraph-kernel';
 import { createWorkgraphMcpServer } from './mcp-server.js';
 
+const MCP_ACCEPT_FALLBACK = 'application/json, text/event-stream';
+
 export interface WorkgraphMcpHttpServerOptions {
   workspacePath: string;
   defaultActor?: string;
@@ -77,7 +79,9 @@ export async function startWorkgraphMcpHttpServer(
   });
 
   app.post(endpointPath, async (req: any, res: any) => {
+    normalizeAcceptHeader(req);
     const sessionId = readSessionId(req.headers['mcp-session-id']);
+    let ephemeralBinding: SessionBinding | undefined;
     try {
       const requestAuthContext = buildRequestAuthContext(req, 'mcp');
       let binding: SessionBinding | undefined;
@@ -111,6 +115,20 @@ export async function startWorkgraphMcpHttpServer(
           }
         };
         await server.connect(transport);
+      } else if (!sessionId) {
+        const transport = new StreamableHTTPServerTransport({
+          sessionIdGenerator: undefined,
+        });
+        const server = createWorkgraphMcpServer({
+          workspacePath: options.workspacePath,
+          defaultActor: options.defaultActor,
+          readOnly: options.readOnly,
+          name: options.name,
+          version: options.version,
+        });
+        binding = { transport, server, authContext: requestAuthContext };
+        ephemeralBinding = binding;
+        await server.connect(transport);
       } else {
         res.status(400).json({
           jsonrpc: '2.0',
@@ -140,10 +158,15 @@ export async function startWorkgraphMcpHttpServer(
           id: null,
         });
       }
+    } finally {
+      if (ephemeralBinding) {
+        await ephemeralBinding.server.close();
+      }
     }
   });
 
   app.get(endpointPath, async (req: any, res: any) => {
+    normalizeAcceptHeader(req);
     const sessionId = readSessionId(req.headers['mcp-session-id']);
     if (!sessionId || !sessions[sessionId]) {
       res.status(400).send('Invalid or missing MCP session ID.');
@@ -264,7 +287,10 @@ function createBearerAuthMiddleware(
 ): WorkgraphMcpBearerAuthMiddleware {
   const authToken = readString(rawToken);
   return (req: any, res: any, next: () => void) => {
-    const providedToken = readBearerToken(req.headers.authorization);
+    const providedToken = readCredentialToken(
+      req.headers.authorization,
+      req.headers['x-api-key'],
+    );
     if (!authToken) return next();
     if (!providedToken) {
       res.status(401).json({
@@ -292,18 +318,72 @@ function createBearerAuthMiddleware(
 }
 
 function readBearerToken(headerValue: unknown): string | undefined {
-  const authorization = readString(headerValue);
+  const authorization = readHeaderString(headerValue);
   if (!authorization || !authorization.startsWith('Bearer ')) {
     return undefined;
   }
   return readString(authorization.slice('Bearer '.length));
 }
 
+function readCredentialToken(
+  authorizationHeaderValue: unknown,
+  apiKeyHeaderValue: unknown,
+): string | undefined {
+  return readBearerToken(authorizationHeaderValue) ?? readApiKeyToken(apiKeyHeaderValue);
+}
+
+function readApiKeyToken(headerValue: unknown): string | undefined {
+  return readHeaderString(headerValue);
+}
+
+function readHeaderString(headerValue: unknown): string | undefined {
+  if (Array.isArray(headerValue)) {
+    return readString(headerValue[0]);
+  }
+  return readString(headerValue);
+}
+
+function normalizeAcceptHeader(req: {
+  headers?: Record<string, unknown>;
+  rawHeaders?: unknown;
+} | undefined): void {
+  const headers = req?.headers;
+  if (!headers) return;
+  const accept = readHeaderString(headers.accept);
+  if (!accept || hasWildcardAccept(accept)) {
+    headers.accept = MCP_ACCEPT_FALLBACK;
+    const rawHeaders = req?.rawHeaders;
+    if (Array.isArray(rawHeaders)) {
+      let hasAccept = false;
+      for (let index = 0; index < rawHeaders.length - 1; index += 2) {
+        const headerName = String(rawHeaders[index] ?? '').toLowerCase();
+        if (headerName !== 'accept') continue;
+        rawHeaders[index + 1] = MCP_ACCEPT_FALLBACK;
+        hasAccept = true;
+      }
+      if (!hasAccept) {
+        rawHeaders.push('accept', MCP_ACCEPT_FALLBACK);
+      }
+    }
+  }
+}
+
+function hasWildcardAccept(value: string): boolean {
+  const mediaTypes = value
+    .split(',')
+    .map((entry) => entry.split(';')[0]?.trim().toLowerCase())
+    .filter((entry): entry is string => !!entry);
+  return mediaTypes.includes('*/*');
+}
+
 function buildRequestAuthContext(
   req: any,
   source: 'mcp' | 'rest',
 ): kernelAuth.WorkgraphAuthContext {
-  const credentialToken = readBearerToken(req?.headers?.authorization);
+  const credentialToken = readCredentialToken(
+    req?.headers?.authorization,
+    req?.headers?.['x-api-key'],
+  );
   return {
     ...(credentialToken ? { credentialToken } : {}),
     source,
