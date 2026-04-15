@@ -14,16 +14,8 @@ const CLI_BUILD_DEPENDENCIES = [
   path.resolve('tsup.config.ts'),
   path.resolve('packages/cli/src'),
   path.resolve('packages/kernel/src'),
-  path.resolve('packages/control-api/src'),
   path.resolve('packages/mcp-server/src'),
-  path.resolve('packages/adapter-claude-code/src'),
-  path.resolve('packages/adapter-cursor-cloud/src'),
-  path.resolve('packages/obsidian-integration/src'),
-  path.resolve('packages/policy/src'),
-  path.resolve('packages/runtime-adapter-core/src'),
-  path.resolve('packages/search-qmd-adapter/src'),
   path.resolve('packages/sdk/src'),
-  path.resolve('packages/skills/src'),
 ];
 
 export function ensureCliBuiltForTests(): void {
