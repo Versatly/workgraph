@@ -95,36 +95,6 @@ export function csv(value?: string): string[] | undefined {
   return String(value).split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-type IntegrationInstallCliOptions = JsonCapableOptions & {
-  actor: string;
-  owner?: string;
-  title?: string;
-  sourceUrl?: string;
-  force?: boolean;
-};
-
-export function installNamedIntegration(
-  workspacePath: string,
-  integrationName: string,
-  opts: IntegrationInstallCliOptions,
-): Promise<workgraph.InstallSkillIntegrationResult> {
-  return workgraph.integration.installIntegration(workspacePath, integrationName, {
-    actor: opts.actor,
-    owner: opts.owner,
-    title: opts.title,
-    sourceUrl: opts.sourceUrl,
-    force: !!opts.force,
-  });
-}
-
-export function renderInstalledIntegrationResult(result: workgraph.InstallSkillIntegrationResult): string[] {
-  return [
-    `${result.replacedExisting ? 'Updated' : 'Installed'} ${result.provider} integration skill: ${result.skill.path}`,
-    `Source: ${result.sourceUrl}`,
-    `Status: ${String(result.skill.fields.status)}`,
-  ];
-}
-
 function parseScalar(value: string): unknown {
   if (value === 'true') return true;
   if (value === 'false') return false;
