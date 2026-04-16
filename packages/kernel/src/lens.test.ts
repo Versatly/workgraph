@@ -5,7 +5,6 @@ import path from 'node:path';
 import { loadRegistry, saveRegistry } from './registry.js';
 import * as thread from './thread.js';
 import * as store from './store.js';
-import * as dispatch from './dispatch.js';
 import * as lens from './lens.js';
 import * as ledger from './ledger.js';
 
@@ -98,29 +97,6 @@ describe('context lenses', () => {
     thread.claim(workspacePath, 'threads/finish-auth-rollout.md', 'agent-risk');
     thread.done(workspacePath, 'threads/finish-auth-rollout.md', 'agent-risk', 'Auth shipped https://github.com/versatly/workgraph/pull/22');
 
-    const failedRun = dispatch.createRun(workspacePath, {
-      actor: 'agent-ops',
-      objective: 'Run deployment checks',
-      adapter: 'cursor-cloud',
-      idempotencyKey: 'lens-failed-run',
-    });
-    dispatch.markRun(workspacePath, failedRun.id, 'agent-ops', 'running');
-    dispatch.markRun(workspacePath, failedRun.id, 'agent-ops', 'failed', {
-      error: 'Smoke test failed',
-    });
-
-    store.create(
-      workspacePath,
-      'incident',
-      {
-        title: 'Customer login outage',
-        severity: 'sev1',
-        status: 'active',
-        tags: ['customer'],
-      },
-      'Major login outage in production.',
-      'system',
-    );
     store.create(
       workspacePath,
       'decision',
@@ -140,8 +116,7 @@ describe('context lenses', () => {
       limit: 10,
     });
     expect(teamRisk.metrics.blockedHighPriority).toBe(1);
-    expect(teamRisk.metrics.failedRuns).toBe(1);
-    expect(teamRisk.metrics.activeHighSeverityIncidents).toBe(1);
+    expect(teamRisk.metrics.activeHighSeverityIncidents).toBe(0);
 
     const customerHealth = lens.generateContextLens(workspacePath, 'customer-health', {
       actor: 'agent-ops',
@@ -149,7 +124,7 @@ describe('context lenses', () => {
     });
     expect(customerHealth.metrics.activeCustomerThreads).toBeGreaterThanOrEqual(1);
     expect(customerHealth.metrics.blockedCustomerThreads).toBe(1);
-    expect(customerHealth.metrics.customerIncidents).toBe(1);
+    expect(customerHealth.metrics.customerIncidents).toBe(0);
 
     const execBrief = lens.generateContextLens(workspacePath, 'exec-brief', {
       actor: 'agent-ops',

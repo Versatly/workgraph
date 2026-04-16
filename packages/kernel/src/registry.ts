@@ -607,6 +607,22 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
   },
 ];
 
+const RETAINED_BUILT_IN_TYPE_NAMES = new Set([
+  'thread',
+  'space',
+  'decision',
+  'org',
+  'fact',
+  'relationship',
+  'agent',
+  'presence',
+  'conversation',
+  'plan-step',
+  'policy',
+  'policy-gate',
+  'checkpoint',
+]);
+
 // ---------------------------------------------------------------------------
 // Registry operations
 // ---------------------------------------------------------------------------
@@ -728,13 +744,20 @@ export function extendType(
 function seedRegistry(): Registry {
   const types: Record<string, PrimitiveTypeDefinition> = {};
   for (const t of BUILT_IN_TYPES) {
+    if (!RETAINED_BUILT_IN_TYPE_NAMES.has(t.name)) continue;
     types[t.name] = t;
   }
   return { version: CURRENT_VERSION, types };
 }
 
 function ensureBuiltIns(registry: Registry): Registry {
+  for (const [typeName, typeDef] of Object.entries(registry.types)) {
+    if (typeDef.builtIn && !RETAINED_BUILT_IN_TYPE_NAMES.has(typeName)) {
+      delete registry.types[typeName];
+    }
+  }
   for (const t of BUILT_IN_TYPES) {
+    if (!RETAINED_BUILT_IN_TYPE_NAMES.has(t.name)) continue;
     if (!registry.types[t.name]) {
       registry.types[t.name] = t;
       continue;
@@ -751,10 +774,6 @@ function ensureBuiltIns(registry: Registry): Registry {
         },
       };
     }
-  }
-  // Remove deprecated skill transport field to keep schema infrastructure-agnostic.
-  if (registry.types.skill?.builtIn && 'tailscale_path' in registry.types.skill.fields) {
-    delete registry.types.skill.fields.tailscale_path;
   }
   return registry;
 }

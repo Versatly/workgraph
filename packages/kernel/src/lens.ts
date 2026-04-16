@@ -4,7 +4,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import * as dispatch from './dispatch.js';
 import * as ledger from './ledger.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
@@ -180,9 +179,6 @@ function buildTeamRiskLens(workspacePath: string, options: NormalizedLensOptions
     .filter((entry) => String(entry.instance.fields.status ?? '') === 'active')
     .filter((entry) => isStale(entry.instance, staleCutoffMs))
     .slice(0, options.limit);
-  const failedRuns = dispatch.listRuns(workspacePath, { status: 'failed' })
-    .filter((run) => parseTimestamp(run.updatedAt) >= lookbackCutoffMs)
-    .slice(0, options.limit);
   const highSeverityIncidents = store.list(workspacePath, 'incident')
     .filter((incident) => String(incident.fields.status ?? '') === 'active')
     .filter((incident) => HIGH_RISK_SEVERITIES.has(normalizeSeverity(incident.fields.severity)))
@@ -203,11 +199,6 @@ function buildTeamRiskLens(workspacePath: string, options: NormalizedLensOptions
       })),
     },
     {
-      id: 'failed_runs',
-      title: `Failed Runs (${options.lookbackHours}h window)`,
-      items: failedRuns.map(toRunItem),
-    },
-    {
       id: 'active_high_severity_incidents',
       title: 'Active High-Severity Incidents',
       items: highSeverityIncidents.map((incident) => toIncidentItem(incident, nowMs)),
@@ -220,7 +211,6 @@ function buildTeamRiskLens(workspacePath: string, options: NormalizedLensOptions
     metrics: {
       blockedHighPriority: blockedHighPriority.length,
       staleActiveClaims: staleActiveClaims.length,
-      failedRuns: failedRuns.length,
       activeHighSeverityIncidents: highSeverityIncidents.length,
     },
     sections,
@@ -304,9 +294,6 @@ function buildExecBriefLens(workspacePath: string, options: NormalizedLensOption
     .filter((instance) => HIGH_RISK_PRIORITIES.has(normalizePriority(instance.fields.priority)))
     .sort(compareThreadsByPriorityThenUpdated)
     .slice(0, options.limit);
-  const failedRuns = dispatch.listRuns(workspacePath, { status: 'failed' })
-    .filter((run) => parseTimestamp(run.updatedAt) >= lookbackCutoffMs)
-    .slice(0, options.limit);
   const decisions = store.list(workspacePath, 'decision')
     .filter((instance) => ['proposed', 'approved', 'active'].includes(String(instance.fields.status ?? '')))
     .filter((instance) => parseTimestamp(instance.fields.updated ?? instance.fields.date) >= lookbackCutoffMs)
@@ -326,10 +313,7 @@ function buildExecBriefLens(workspacePath: string, options: NormalizedLensOption
     {
       id: 'key_risks',
       title: 'Key Risks',
-      items: [
-        ...blockedHighPriority.map((instance) => toThreadItem(instance, nowMs)),
-        ...failedRuns.map(toRunItem),
-      ].slice(0, options.limit),
+      items: blockedHighPriority.map((instance) => toThreadItem(instance, nowMs)),
     },
     {
       id: 'recent_decisions',
@@ -350,7 +334,7 @@ function buildExecBriefLens(workspacePath: string, options: NormalizedLensOption
     metrics: {
       topPriorities: topPriorities.length,
       momentumDone: momentum.length,
-      risks: blockedHighPriority.length + failedRuns.length,
+      risks: blockedHighPriority.length,
       decisions: decisions.length,
     },
     sections,

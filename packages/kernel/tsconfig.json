@@ -5,11 +5,24 @@
     "noEmit": true
   },
   "include": [
-    "src/**/*",
-    "../adapter-claude-code/src/**/*",
-    "../adapter-cursor-cloud/src/**/*",
-    "../adapter-http-webhook/src/**/*",
-    "../adapter-shell-worker/src/**/*",
-    "../../tests/helpers/cli-build.ts"
+    "src/**/*"
+  ],
+  "exclude": [
+    "src/adapter-*.ts",
+    "src/*dispatch*.ts",
+    "src/dispatch/**/*.ts",
+    "src/*trigger*.ts",
+    "src/*autonomy*.ts",
+    "src/*mission*.ts",
+    "src/*federation*.ts",
+    "src/*swarm*.ts",
+    "src/*cursor-bridge*.ts",
+    "src/*integration*.ts",
+    "src/*skill*.ts",
+    "src/*onboard*.ts",
+    "src/*clawdapus*.ts",
+    "src/search-qmd-adapter*.ts",
+    "src/transport/**/*",
+    "src/projections/**/*"
   ]
 }

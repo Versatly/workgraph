@@ -1,2178 +1,777 @@
-import fs from 'node:fs';
-import path from 'node:path';
 import { Command } from 'commander';
 import * as workgraph from '@versatly/workgraph-kernel';
-import { registerDefaultDispatchAdaptersIntoKernelRegistry } from '@versatly/workgraph-runtime-adapter-core';
-import { startWorkgraphServer, waitForShutdown } from '@versatly/workgraph-control-api';
-import { registerAdapterCommands } from './cli/commands/adapter.js';
-import { registerAutonomyCommands } from './cli/commands/autonomy.js';
-import { registerCapabilityCommands } from './cli/commands/capability.js';
+import { startWorkgraphMcpHttpServer } from '@versatly/workgraph-mcp-server';
 import { registerConversationCommands } from './cli/commands/conversation.js';
-import { registerCursorCommands } from './cli/commands/cursor.js';
-import { registerDispatchCommands } from './cli/commands/dispatch.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
-import { registerMissionCommands } from './cli/commands/mission.js';
-import { registerSafetyCommands } from './cli/commands/safety.js';
-import { registerPortabilityCommands } from './cli/commands/portability.js';
-import { registerFederationCommands } from './cli/commands/federation.js';
-import { registerWebhookCommands } from './cli/commands/webhook.js';
-import { registerTriggerCommands } from './cli/commands/trigger.js';
 import {
   addWorkspaceOption,
   csv,
-  installNamedIntegration,
   parseNonNegativeIntOption,
-  parsePortOption,
   parsePositiveIntOption,
   parsePositiveIntegerOption,
-  parsePositiveNumberOption,
   parseSetPairs,
-  renderInstalledIntegrationResult,
-  resolveInitTargetPath,
-  resolveApiKey,
-  resolveApiUrl,
+  parsePortOption,
   resolveWorkspacePath,
+  resolveInitTargetPath,
   runCommand,
-  type JsonCapableOptions,
   wantsJson,
 } from './cli/core.js';
-import { WorkgraphRemoteClient } from './remote-client.js';
 
-const DEFAULT_ACTOR =
-  process.env.WORKGRAPH_AGENT ||
-  process.env.USER ||
-  'anonymous';
-
-type PrimitiveRecord = {
-  path: string;
-  type: string;
-  fields: Record<string, unknown>;
-};
-
-registerDefaultDispatchAdaptersIntoKernelRegistry();
-
-const CLI_VERSION = (() => {
-  try {
-    const pkgUrl = new URL('../package.json', import.meta.url);
-    const pkg = JSON.parse(fs.readFileSync(pkgUrl, 'utf-8')) as { version?: string };
-    return pkg.version ?? '0.0.0';
-  } catch {
-    return '0.0.0';
-  }
-})();
+const CLI_VERSION = '3.2.2';
+const DEFAULT_ACTOR = process.env.WORKGRAPH_ACTOR?.trim() || 'agent';
 
 const program = new Command();
+
 program
   .name('workgraph')
-  .description('Agent-first workgraph workspace for multi-agent collaboration.')
-  .version(CLI_VERSION);
-
-program.showHelpAfterError();
+  .description('Context graph, thread collaboration, MCP exposure, and actor registration.')
+  .version(CLI_VERSION)
+  .showHelpAfterError();
 
 addWorkspaceOption(
   program
     .command('init [path]')
-    .description('Initialize or repair a workgraph workspace starter kit')
-    .option('-n, --name <name>', 'Workspace name')
-    .option('--no-type-dirs', 'Do not pre-create built-in type directories')
-    .option('--no-bases', 'Do not generate .base files from primitive registry')
-    .option('--no-readme', 'Do not create README.md/QUICKSTART.md')
-    .option('--json', 'Emit structured JSON output')
+    .description('Initialize a workgraph workspace')
+    .option('--name <name>', 'Workspace name')
+    .option('--no-readme', 'Skip README/QUICKSTART generation')
+    .option('--no-bases', 'Skip base file generation')
+    .option('--json', 'Emit structured JSON output'),
 ).action((targetPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveInitTargetPath(targetPath, opts);
-      const result = workgraph.workspace.initWorkspace(workspacePath, {
-        name: opts.name,
-        createTypeDirs: opts.typeDirs,
-        createBases: opts.bases,
-        createReadme: opts.readme,
-      });
-      return result;
-    },
-    (result) => {
-      const roleSeeded = result.starterKit.roles.created.length + result.starterKit.roles.existing.length;
-      const policySeeded = result.starterKit.policies.created.length + result.starterKit.policies.existing.length;
-      const gateSeeded = result.starterKit.gates.created.length + result.starterKit.gates.existing.length;
-      const spaceSeeded = result.starterKit.spaces.created.length + result.starterKit.spaces.existing.length;
-      return [
-        `${result.alreadyInitialized ? 'Updated' : 'Initialized'} workgraph workspace: ${result.workspacePath}`,
-        `Seeded types: ${result.seededTypes.join(', ')}`,
-        `Generated .base files: ${result.generatedBases.length}`,
-        `Config: ${result.configPath}`,
-        `Server config: ${result.serverConfigPath}`,
-        `Starter kit primitives: roles=${roleSeeded} policies=${policySeeded} gates=${gateSeeded} spaces=${spaceSeeded}`,
-        `Bootstrap trust token (${result.bootstrapTrustTokenPath}): ${result.bootstrapTrustToken}`,
-        ...(result.quickstartPath ? [`Quickstart: ${result.quickstartPath}`] : []),
-        '',
-        'Next steps:',
-        `1) Start server: workgraph serve -w "${result.workspacePath}"`,
-        `2) Preferred registration flow: workgraph agent request agent-1 -w "${result.workspacePath}" --role roles/admin.md`,
-        `   Approve request: workgraph agent review agent-1 -w "${result.workspacePath}" --decision approved --actor admin-approver`,
-        `   Bootstrap fallback: workgraph agent register agent-1 -w "${result.workspacePath}" --token ${result.bootstrapTrustToken}`,
-        `3) Create first thread: workgraph thread create "First coordinated task" -w "${result.workspacePath}" --goal "Validate onboarding flow" --actor agent-1`,
-      ];
-    }
-  )
+    () => workgraph.workspace.initWorkspace(resolveInitTargetPath(targetPath, opts), {
+      name: opts.name,
+      createReadme: opts.readme,
+      createBases: opts.bases,
+    }),
+    (result) => [
+      `Initialized workspace: ${result.workspacePath}`,
+      `Bootstrap trust token path: ${result.bootstrapTrustTokenPath}`,
+      `Server config: ${result.serverConfigPath}`,
+    ],
+  ),
 );
-
-// ============================================================================
-// thread
-// ============================================================================
 
 const threadCmd = program
   .command('thread')
-  .description('Coordinate work through claimable threads');
+  .description('Coordinate work through collaborative threads');
 
 addWorkspaceOption(
   threadCmd
     .command('create <title>')
-    .description('Create a new thread')
-    .requiredOption('-g, --goal <goal>', 'What success looks like')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('-p, --priority <level>', 'urgent | high | medium | low', 'medium')
-    .option('--deps <paths>', 'Comma-separated dependency thread paths')
-    .option('--parent <path>', 'Parent thread path')
-    .option('--space <spaceRef>', 'Optional space ref (e.g. spaces/backend.md)')
-    .option('--context <refs>', 'Comma-separated workspace doc refs for context')
+    .description('Create a thread')
+    .requiredOption('--goal <text>', 'Thread goal')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--priority <level>', 'urgent|high|medium|low', 'medium')
+    .option('--deps <refs>', 'Comma-separated dependency thread refs')
+    .option('--parent <ref>', 'Parent thread ref')
+    .option('--space <ref>', 'Space ref')
+    .option('--context-refs <refs>', 'Comma-separated context refs')
     .option('--tags <tags>', 'Comma-separated tags')
-    .option('--json', 'Emit structured JSON output')
-).action((title, opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{ thread: PrimitiveRecord }>('workgraph_thread_create', {
-          title,
-          goal: opts.goal,
-          actor: opts.actor,
-          priority: opts.priority,
-          deps: csv(opts.deps),
-          parent: opts.parent,
-          space: opts.space,
-          context_refs: csv(opts.context),
-          tags: csv(opts.tags),
-        })),
-      (result) => [
-        `Created thread: ${result.thread.path}`,
-        `Status: ${String(result.thread.fields.status)}`,
-        `Priority: ${String(result.thread.fields.priority)}`,
-      ],
-    );
-  }
-  return runCommand(
+    .option('--json', 'Emit structured JSON output'),
+).action((title, opts) =>
+  runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        thread: workgraph.thread.createThread(workspacePath, title, opts.goal, opts.actor, {
-          priority: opts.priority,
-          deps: csv(opts.deps),
-          parent: opts.parent,
-          space: opts.space,
-          context_refs: csv(opts.context),
-          tags: csv(opts.tags),
-        }),
-      };
-    },
+    () => workgraph.thread.createThread(resolveWorkspacePath(opts), title, opts.goal, opts.actor, {
+      priority: normalizePriority(opts.priority),
+      deps: csv(opts.deps),
+      parent: opts.parent,
+      space: opts.space,
+      context_refs: csv(opts.contextRefs),
+      tags: csv(opts.tags),
+    }),
     (result) => [
-      `Created thread: ${result.thread.path}`,
-      `Status: ${String(result.thread.fields.status)}`,
-      `Priority: ${String(result.thread.fields.priority)}`,
+      `Created thread: ${result.path}`,
+      `Status: ${String(result.fields.status)}`,
+      `Priority: ${String(result.fields.priority)}`,
     ],
-  );
-});
+  ),
+);
 
 addWorkspaceOption(
   threadCmd
     .command('list')
-    .description('List threads (optionally by state/ready status)')
-    .option('-s, --status <status>', 'open | active | blocked | done | cancelled')
-    .option('--space <spaceRef>', 'Filter threads by space ref')
-    .option('--ready', 'Only include threads ready to be claimed now')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{ threads: Array<PrimitiveRecord & { ready: boolean }>; count: number }>(
-          'workgraph_thread_list',
-          {
-            status: opts.status,
-            readyOnly: !!opts.ready,
-            space: opts.space,
-          },
-        )),
-      (result) => {
-        if (result.threads.length === 0) return ['No threads found.'];
-        return [
-          ...result.threads.map((t) => {
-            const status = String(t.fields.status);
-            const owner = t.fields.owner ? ` (${String(t.fields.owner)})` : '';
-            const ready = t.ready ? ' ready' : '';
-            return `[${status}]${ready} ${String(t.fields.title)}${owner} -> ${t.path}`;
-          }),
-          `${result.count} thread(s)`,
-        ];
-      },
-    );
-  }
-  return runCommand(
+    .description('List threads')
+    .option('--status <status>', 'Filter by status')
+    .option('--space <ref>', 'Filter by space')
+    .option('--ready', 'Only show ready threads')
+    .option('--json', 'Emit structured JSON output'),
+).action((opts) =>
+  runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
       let threads = opts.space
         ? workgraph.store.threadsInSpace(workspacePath, opts.space)
         : workgraph.store.list(workspacePath, 'thread');
-      const readySet = new Set(
-        (opts.space
-          ? workgraph.thread.listReadyThreadsInSpace(workspacePath, opts.space)
-          : workgraph.thread.listReadyThreads(workspacePath))
-          .map(t => t.path)
-      );
-      if (opts.status) threads = threads.filter(t => t.fields.status === opts.status);
-      if (opts.ready) threads = threads.filter(t => readySet.has(t.path));
-      const enriched = threads.map(t => ({
-        ...t,
-        ready: readySet.has(t.path),
-      }));
-      return { threads: enriched, count: enriched.length };
+      if (opts.status) {
+        threads = threads.filter((entry) => String(entry.fields.status) === opts.status);
+      }
+      if (opts.ready) {
+        const readySet = new Set(
+          (opts.space
+            ? workgraph.thread.listReadyThreadsInSpace(workspacePath, opts.space)
+            : workgraph.thread.listReadyThreads(workspacePath)).map((entry) => entry.path),
+        );
+        threads = threads.filter((entry) => readySet.has(entry.path));
+      }
+      return { threads, count: threads.length };
     },
     (result) => {
       if (result.threads.length === 0) return ['No threads found.'];
       return [
-        ...result.threads.map((t) => {
-          const status = String(t.fields.status);
-          const owner = t.fields.owner ? ` (${String(t.fields.owner)})` : '';
-          const ready = t.ready ? ' ready' : '';
-          return `[${status}]${ready} ${String(t.fields.title)}${owner} -> ${t.path}`;
-        }),
+        ...result.threads.map((entry) =>
+          `[${String(entry.fields.status)}] ${String(entry.fields.priority)} ${String(entry.fields.title)} -> ${entry.path}`),
         `${result.count} thread(s)`,
       ];
     },
-  );
-});
+  ),
+);
 
 addWorkspaceOption(
   threadCmd
     .command('next')
-    .description('Pick the next ready thread, optionally claim it')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--space <spaceRef>', 'Restrict scheduling to one space')
-    .option('--claim', 'Immediately claim the next ready thread')
-    .option('--fail-on-empty', 'Exit non-zero if no ready thread exists')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, async (client) => {
-        const readyResult = await client.callTool<{ threads: PrimitiveRecord[] }>(
-          'workgraph_thread_list',
-          {
-            readyOnly: true,
-            space: opts.space,
-          },
-        );
-        const nextThread = readyResult.threads[0];
-        if (!nextThread) {
-          if (opts.failOnEmpty) {
-            throw new Error('No ready threads available.');
-          }
-          return { thread: null, claimed: false };
-        }
-        if (!opts.claim) {
-          return { thread: nextThread, claimed: false };
-        }
-        const claimedResult = await client.callTool<{ thread: PrimitiveRecord }>(
-          'workgraph_thread_claim',
-          {
-            threadPath: nextThread.path,
-            actor: opts.actor,
-          },
-        );
-        return {
-          thread: claimedResult.thread,
-          claimed: true,
-        };
-      }),
-      (result) => {
-        if (!result.thread) return ['No ready thread available.'];
-        return [
-          `${result.claimed ? 'Claimed' : 'Selected'} thread: ${result.thread.path}`,
-          `Title: ${String(result.thread.fields.title)}`,
-          ...(result.thread.fields.space ? [`Space: ${String(result.thread.fields.space)}`] : []),
-        ];
-      },
-    );
-  }
-  return runCommand(
+    .description('Show or claim the next ready thread')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--space <ref>', 'Limit to one space')
+    .option('--claim', 'Claim the next ready thread')
+    .option('--json', 'Emit structured JSON output'),
+).action((opts) =>
+  runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
-      const thread = opts.claim
-        ? (opts.space
+      if (opts.claim) {
+        return {
+          thread: opts.space
             ? workgraph.thread.claimNextReadyInSpace(workspacePath, opts.actor, opts.space)
-            : workgraph.thread.claimNextReady(workspacePath, opts.actor))
-        : (opts.space
-            ? workgraph.thread.pickNextReadyThreadInSpace(workspacePath, opts.space)
-            : workgraph.thread.pickNextReadyThread(workspacePath));
-      if (!thread && opts.failOnEmpty) {
-        throw new Error('No ready threads available.');
+            : workgraph.thread.claimNextReady(workspacePath, opts.actor),
+        };
       }
       return {
-        thread,
-        claimed: !!opts.claim && !!thread,
+        thread: opts.space
+          ? workgraph.thread.pickNextReadyThreadInSpace(workspacePath, opts.space)
+          : workgraph.thread.pickNextReadyThread(workspacePath),
       };
     },
-    (result) => {
-      if (!result.thread) return ['No ready thread available.'];
-      return [
-        `${result.claimed ? 'Claimed' : 'Selected'} thread: ${result.thread.path}`,
-        `Title: ${String(result.thread.fields.title)}`,
-        ...(result.thread.fields.space ? [`Space: ${String(result.thread.fields.space)}`] : []),
-      ];
-    },
-  );
-});
+    (result) => result.thread
+      ? [
+          `Thread: ${result.thread.path}`,
+          `Title: ${String(result.thread.fields.title)}`,
+          `Priority: ${String(result.thread.fields.priority)}`,
+        ]
+      : ['No ready thread found.'],
+  ),
+);
 
 addWorkspaceOption(
   threadCmd
     .command('show <threadPath>')
-    .description('Show thread details and ledger history')
-    .option('--json', 'Emit structured JSON output')
+    .description('Show one thread and its ledger history')
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
-      const thread = workgraph.store.read(workspacePath, threadPath);
+      const thread = workgraph.store.read(workspacePath, normalizePath(threadPath));
       if (!thread) throw new Error(`Thread not found: ${threadPath}`);
-      const history = workgraph.ledger.historyOf(workspacePath, threadPath);
-      return { thread, history };
+      return {
+        thread,
+        history: workgraph.ledger.historyOf(workspacePath, thread.path),
+      };
     },
     (result) => [
-      `${String(result.thread.fields.title)} (${result.thread.path})`,
-      `Status: ${String(result.thread.fields.status)} Owner: ${String(result.thread.fields.owner ?? 'unclaimed')}`,
-      `History entries: ${result.history.length}`,
-    ]
-  )
+      `Thread: ${result.thread.path}`,
+      `Status: ${String(result.thread.fields.status)}`,
+      `Owner: ${String(result.thread.fields.owner ?? 'none')}`,
+      `Ledger entries: ${result.history.length}`,
+    ],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('participants <threadPath>')
-    .description('List thread participants and roles')
-    .option('--json', 'Emit structured JSON output')
+    .description('List thread participants')
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const participants = workgraph.thread.listThreadParticipants(workspacePath, threadPath);
-      return { threadPath, participants, count: participants.length };
-    },
-    (result) => {
-      if (result.participants.length === 0) {
-        return [`No participants recorded for ${result.threadPath}.`];
-      }
-      return [
-        `Participants for ${result.threadPath}:`,
-        ...result.participants.map((participant) =>
-          `- ${participant.actor} [${participant.role}] joined=${participant.joined_at}`),
-      ];
-    },
-  )
+    () => ({
+      participants: workgraph.thread.listThreadParticipants(resolveWorkspacePath(opts), normalizePath(threadPath)),
+    }),
+    (result) => result.participants.length > 0
+      ? result.participants.map((entry) => `${entry.actor} (${entry.role})`)
+      : ['No participants recorded.'],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('invite <threadPath>')
-    .description('Invite or update a participant role on a thread')
-    .requiredOption('--participant <name>', 'Participant actor name')
-    .option('--role <role>', 'owner | contributor | reviewer | observer', 'contributor')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--json', 'Emit structured JSON output')
+    .description('Invite another participant onto a thread')
+    .requiredOption('--participant <name>', 'Participant actor')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--role <role>', 'owner|contributor|reviewer|observer', 'contributor')
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        thread: workgraph.thread.inviteThreadParticipant(
-          workspacePath,
-          threadPath,
-          opts.actor,
-          opts.participant,
-          opts.role,
-        ),
-      };
-    },
-    (result) => [`Invited participant on: ${result.thread.path}`],
-  )
+    () => workgraph.thread.inviteThreadParticipant(
+      resolveWorkspacePath(opts),
+      normalizePath(threadPath),
+      opts.actor,
+      opts.participant,
+      normalizeParticipantRole(opts.role),
+    ),
+    (result) => [`Updated participants for ${result.path}.`],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('join <threadPath>')
-    .description('Join a thread as participant')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--role <role>', 'contributor | reviewer | observer', 'contributor')
-    .option('--json', 'Emit structured JSON output')
+    .description('Join a thread as a participant')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--role <role>', 'contributor|reviewer|observer', 'contributor')
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        thread: workgraph.thread.joinThread(workspacePath, threadPath, opts.actor, opts.role),
-      };
-    },
-    (result) => [`Joined thread: ${result.thread.path}`],
-  )
+    () => workgraph.thread.joinThread(
+      resolveWorkspacePath(opts),
+      normalizePath(threadPath),
+      opts.actor,
+      normalizeParticipantRole(opts.role),
+    ),
+    (result) => [`Joined ${result.path} as ${opts.actor}.`],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('leave <threadPath>')
-    .description('Leave a thread (or remove another participant if authorized)')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--participant <name>', 'Participant actor to remove (defaults to --actor)')
-    .option('--json', 'Emit structured JSON output')
+    .description('Leave a thread or remove another participant')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--participant <name>', 'Optional participant to remove')
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        thread: workgraph.thread.leaveThread(workspacePath, threadPath, opts.actor, opts.participant),
-      };
-    },
-    (result) => [`Updated participants on: ${result.thread.path}`],
-  )
+    () => workgraph.thread.leaveThread(
+      resolveWorkspacePath(opts),
+      normalizePath(threadPath),
+      opts.actor,
+      opts.participant,
+    ),
+    (result) => [`Updated participants for ${result.path}.`],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('claim <threadPath>')
-    .description('Claim a thread for this agent')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--lease-ttl-minutes <n>', 'Claim lease TTL in minutes', '30')
-    .option('--json', 'Emit structured JSON output')
-).action((threadPath, opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{ thread: PrimitiveRecord }>('workgraph_thread_claim', {
-          threadPath,
-          actor: opts.actor,
-        })),
-      (result) => [`Claimed: ${result.thread.path}`, `Owner: ${String(result.thread.fields.owner)}`],
-    );
-  }
-  return runCommand(
+    .description('Claim a thread')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--lease-ttl-minutes <n>', 'Lease TTL minutes')
+    .option('--json', 'Emit structured JSON output'),
+).action((threadPath, opts) =>
+  runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        thread: workgraph.thread.claim(workspacePath, threadPath, opts.actor, {
-          leaseTtlMinutes: Number.parseFloat(String(opts.leaseTtlMinutes)),
-        }),
-      };
-    },
-    (result) => [`Claimed: ${result.thread.path}`, `Owner: ${String(result.thread.fields.owner)}`],
-  );
-});
+    () => workgraph.thread.claim(resolveWorkspacePath(opts), normalizePath(threadPath), opts.actor, {
+      leaseTtlMinutes: opts.leaseTtlMinutes ? parsePositiveIntOption(opts.leaseTtlMinutes, 'lease-ttl-minutes') : undefined,
+    }),
+    (result) => [`Claimed ${result.path} as ${opts.actor}.`],
+  ),
+);
 
 addWorkspaceOption(
   threadCmd
     .command('release <threadPath>')
-    .description('Release a claimed thread back to open')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--reason <reason>', 'Why you are releasing')
-    .option('--json', 'Emit structured JSON output')
+    .description('Release a claimed thread')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--reason <text>', 'Release reason')
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return { thread: workgraph.thread.release(workspacePath, threadPath, opts.actor, opts.reason) };
-    },
-    (result) => [`Released: ${result.thread.path}`, `Status: ${String(result.thread.fields.status)}`]
-  )
+    () => workgraph.thread.release(resolveWorkspacePath(opts), normalizePath(threadPath), opts.actor, opts.reason),
+    (result) => [`Released ${result.path} as ${opts.actor}.`],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('done <threadPath>')
     .description('Mark a thread done')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('-o, --output <text>', 'Output/result summary')
-    .option('--evidence <items>', 'Comma-separated evidence values (url/path/reply/thread refs)')
-    .option('--json', 'Emit structured JSON output')
-).action((threadPath, opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{ thread: PrimitiveRecord }>('workgraph_thread_done', {
-          threadPath,
-          actor: opts.actor,
-          output: opts.output,
-          evidence: csv(opts.evidence),
-        })),
-      (result) => [`Done: ${result.thread.path}`],
-    );
-  }
-  return runCommand(
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--output <text>', 'Completion output')
+    .option('--evidence <items>', 'Comma-separated evidence items')
+    .option('--json', 'Emit structured JSON output'),
+).action((threadPath, opts) =>
+  runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        thread: workgraph.thread.done(workspacePath, threadPath, opts.actor, opts.output, {
-          evidence: csv(opts.evidence),
-        }),
-      };
-    },
-    (result) => [`Done: ${result.thread.path}`],
-  );
-});
+    () => workgraph.thread.done(resolveWorkspacePath(opts), normalizePath(threadPath), opts.actor, opts.output, {
+      evidence: csv(opts.evidence),
+    }),
+    (result) => [`Completed ${result.path} as ${opts.actor}.`],
+  ),
+);
 
 addWorkspaceOption(
   threadCmd
     .command('reopen <threadPath>')
-    .description('Reopen a done/cancelled thread via compensating ledger op')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--reason <reason>', 'Why the thread is being reopened')
-    .option('--json', 'Emit structured JSON output')
+    .description('Reopen a done or cancelled thread')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--reason <text>', 'Reopen reason')
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return { thread: workgraph.thread.reopen(workspacePath, threadPath, opts.actor, opts.reason) };
-    },
-    (result) => [`Reopened: ${result.thread.path}`, `Status: ${String(result.thread.fields.status)}`]
-  )
+    () => workgraph.thread.reopen(resolveWorkspacePath(opts), normalizePath(threadPath), opts.actor, opts.reason),
+    (result) => [`Reopened ${result.path} as ${opts.actor}.`],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('block <threadPath>')
-    .description('Mark a thread blocked')
-    .requiredOption('-b, --blocked-by <dep>', 'Dependency blocking this thread')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--reason <reason>', 'Why it is blocked')
-    .option('--json', 'Emit structured JSON output')
+    .description('Block a thread')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--blocked-by <ref>', 'Blocking dependency', 'external/manual')
+    .option('--reason <text>', 'Blocking reason')
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        thread: workgraph.thread.block(workspacePath, threadPath, opts.actor, opts.blockedBy, opts.reason),
-      };
-    },
-    (result) => [`Blocked: ${result.thread.path}`]
-  )
+    () => workgraph.thread.block(
+      resolveWorkspacePath(opts),
+      normalizePath(threadPath),
+      opts.actor,
+      opts.blockedBy,
+      opts.reason,
+    ),
+    (result) => [`Blocked ${result.path} as ${opts.actor}.`],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('unblock <threadPath>')
     .description('Unblock a thread')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--json', 'Emit structured JSON output')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return { thread: workgraph.thread.unblock(workspacePath, threadPath, opts.actor) };
-    },
-    (result) => [`Unblocked: ${result.thread.path}`]
-  )
+    () => workgraph.thread.unblock(resolveWorkspacePath(opts), normalizePath(threadPath), opts.actor),
+    (result) => [`Unblocked ${result.path} as ${opts.actor}.`],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('heartbeat [threadPath]')
-    .description('Refresh thread claim lease heartbeat (one thread or all active claims for actor)')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--ttl-minutes <n>', 'Lease TTL in minutes', '30')
-    .option('--json', 'Emit structured JSON output')
+    .description('Refresh one or more claim heartbeats')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--ttl-minutes <n>', 'Lease TTL minutes')
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.thread.heartbeatClaim(
-        workspacePath,
-        opts.actor,
-        threadPath,
-        {
-          ttlMinutes: Number.parseFloat(String(opts.ttlMinutes)),
-        },
-      );
-    },
+    () => workgraph.thread.heartbeatClaim(resolveWorkspacePath(opts), opts.actor, threadPath ? normalizePath(threadPath) : undefined, {
+      ttlMinutes: opts.ttlMinutes ? parsePositiveIntOption(opts.ttlMinutes, 'ttl-minutes') : undefined,
+    }),
     (result) => [
-      `Heartbeat actor: ${result.actor}`,
-      `Touched leases: ${result.touched.length}`,
-      ...(result.touched.length > 0
-        ? result.touched.map((entry) => `- ${entry.threadPath} expires=${entry.expiresAt}`)
-        : []),
-      ...(result.skipped.length > 0
-        ? result.skipped.map((entry) => `SKIP ${entry.threadPath}: ${entry.reason}`)
-        : []),
+      `Touched: ${result.touched.length}`,
+      `Skipped: ${result.skipped.length}`,
     ],
-  )
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('reap-stale')
-    .description('Reopen/release stale claimed threads whose leases expired')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--limit <n>', 'Max stale leases to reap this run')
-    .option('--json', 'Emit structured JSON output')
+    .description('Reap stale claims')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--limit <n>', 'Maximum claims to reap')
+    .option('--json', 'Emit structured JSON output'),
 ).action((opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.thread.reapStaleClaims(workspacePath, opts.actor, {
-        limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
-      });
-    },
+    () => workgraph.thread.reapStaleClaims(resolveWorkspacePath(opts), opts.actor, {
+      limit: opts.limit ? parsePositiveIntOption(opts.limit, 'limit') : undefined,
+    }),
     (result) => [
-      `Reaper actor: ${result.actor}`,
-      `Scanned stale leases: ${result.scanned}`,
+      `Scanned: ${result.scanned}`,
       `Reaped: ${result.reaped.length}`,
-      ...(result.reaped.length > 0
-        ? result.reaped.map((entry) => `- ${entry.threadPath} (prev=${entry.previousOwner})`)
-        : []),
-      ...(result.skipped.length > 0
-        ? result.skipped.map((entry) => `SKIP ${entry.threadPath}: ${entry.reason}`)
-        : []),
+      `Skipped: ${result.skipped.length}`,
     ],
-  )
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('leases')
-    .description('List claim leases and staleness state')
-    .option('--json', 'Emit structured JSON output')
+    .description('List claim lease status')
+    .option('--json', 'Emit structured JSON output'),
 ).action((opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const leases = workgraph.thread.listClaimLeaseStatus(workspacePath);
-      return { leases, count: leases.length };
-    },
-    (result) => result.leases.map((lease) =>
-      `${lease.stale ? 'STALE' : 'LIVE'} ${lease.owner} -> ${lease.target} expires=${lease.expiresAt}`)
-  )
+    () => ({ leases: workgraph.thread.listClaimLeaseStatus(resolveWorkspacePath(opts)) }),
+    (result) => result.leases.length > 0
+      ? result.leases.map((lease) => `${lease.target} owner=${lease.owner} stale=${lease.stale}`)
+      : ['No claim leases found.'],
+  ),
 );
 
 addWorkspaceOption(
   threadCmd
     .command('decompose <threadPath>')
-    .description('Break a thread into sub-threads')
-    .requiredOption('--sub <specs...>', 'Sub-thread specs as "title|goal"')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--json', 'Emit structured JSON output')
+    .description('Create child threads under one parent thread')
+    .requiredOption('--subthread <title::goal...>', 'Repeatable child thread spec', collectSubthreadSpecs, [])
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--json', 'Emit structured JSON output'),
 ).action((threadPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const subthreads = opts.sub.map((spec: string) => {
-        const [title, ...goalParts] = spec.split('|');
-        const goal = goalParts.join('|').trim() || title.trim();
-        return { title: title.trim(), goal };
-      });
-      return { children: workgraph.thread.decompose(workspacePath, threadPath, subthreads, opts.actor) };
-    },
-    (result) => [`Created ${result.children.length} sub-thread(s).`]
-  )
+    () => ({
+      threads: workgraph.thread.decompose(resolveWorkspacePath(opts), normalizePath(threadPath), opts.subthread, opts.actor),
+    }),
+    (result) => result.threads.map((entry) => `Created child thread: ${entry.path}`),
+  ),
 );
-
-// ============================================================================
-// agent presence
-// ============================================================================
 
 const agentCmd = program
   .command('agent')
-  .description('Track agent presence heartbeats');
+  .description('Manage actor registration, credentials, and presence');
 
 addWorkspaceOption(
   agentCmd
     .command('heartbeat <name>')
-    .description('Create/update an agent presence heartbeat')
-    .option('-a, --actor <name>', 'Actor writing the heartbeat', DEFAULT_ACTOR)
-    .option('--status <status>', 'online | busy | offline', 'online')
-    .option('--current-task <threadRef>', 'Current task/thread slug for this agent')
-    .option('--capabilities <items>', 'Comma-separated capability tags')
-    .option('--json', 'Emit structured JSON output')
-).action((name, opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{ presence: PrimitiveRecord }>('workgraph_agent_heartbeat', {
-          name,
-          actor: opts.actor,
-          status: normalizeAgentPresenceStatus(opts.status),
-          currentTask: opts.currentTask,
-          capabilities: csv(opts.capabilities),
-        })),
-      (result) => [
-        `Heartbeat: ${String(result.presence.fields.name)} [${String(result.presence.fields.status)}]`,
-        `Last seen: ${String(result.presence.fields.last_seen)}`,
-        `Current task: ${String(result.presence.fields.current_task ?? 'none')}`,
-      ],
-    );
-  }
-  return runCommand(
+    .description('Write an actor presence heartbeat')
+    .option('-a, --actor <actor>', 'Actor performing the update', DEFAULT_ACTOR)
+    .option('--status <status>', 'online|busy|offline', 'online')
+    .option('--current-task <text>', 'Current task')
+    .option('--capabilities <items>', 'Comma-separated capabilities')
+    .option('--json', 'Emit structured JSON output'),
+).action((name, opts) =>
+  runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        presence: workgraph.agent.heartbeat(workspacePath, name, {
-          actor: opts.actor,
-          status: normalizeAgentPresenceStatus(opts.status),
-          currentTask: opts.currentTask,
-          capabilities: csv(opts.capabilities),
-        }),
-      };
-    },
-    (result) => [
-      `Heartbeat: ${String(result.presence.fields.name)} [${String(result.presence.fields.status)}]`,
-      `Last seen: ${String(result.presence.fields.last_seen)}`,
-      `Current task: ${String(result.presence.fields.current_task ?? 'none')}`,
-    ],
-  );
-});
+    () => workgraph.agent.heartbeat(resolveWorkspacePath(opts), name, {
+      actor: opts.actor,
+      status: normalizePresenceStatus(opts.status),
+      currentTask: opts.currentTask,
+      capabilities: csv(opts.capabilities),
+    }),
+    (result) => [`Heartbeated ${String(result.fields.name)} (${String(result.fields.status)}).`],
+  ),
+);
 
 addWorkspaceOption(
   agentCmd
     .command('register <name>')
-    .description('Register an agent using bootstrap token fallback (legacy/hybrid mode)')
-    .option('--token <token>', 'Bootstrap trust token (or WORKGRAPH_TRUST_TOKEN env)')
-    .option('--role <role>', 'Role slug/path override (default from trust token)')
-    .option('--capabilities <items>', 'Comma-separated extra capabilities')
-    .option('--status <status>', 'online | busy | offline', 'online')
-    .option('--current-task <threadRef>', 'Optional current task/thread ref')
-    .option('-a, --actor <name>', 'Actor writing registration artifacts')
-    .option('--json', 'Emit structured JSON output')
-).action((name, opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<ReturnType<typeof workgraph.agent.registerAgent>>('workgraph_agent_register', {
-          name,
-          token: opts.token,
-          role: opts.role,
-          capabilities: csv(opts.capabilities),
-          status: normalizeAgentPresenceStatus(opts.status),
-          currentTask: opts.currentTask,
-          actor: opts.actor,
-        })),
-      (result) => [
-        `Registered agent: ${result.agentName}`,
-        `Role: ${result.role} (${result.rolePath})`,
-        `Capabilities: ${result.capabilities.join(', ') || 'none'}`,
-        `Presence: ${result.presence.path}`,
-        `Policy party: ${result.policyParty.id}`,
-        `Bootstrap token: ${result.trustTokenPath} [${result.trustTokenStatus}]`,
-        ...(result.credential ? [`Credential: ${result.credential.id} [${result.credential.status}]`] : []),
-        ...(result.apiKey ? [`API key (store securely, shown once): ${result.apiKey}`] : []),
-      ],
-    );
-  }
-  return runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const token = String(opts.token ?? process.env.WORKGRAPH_TRUST_TOKEN ?? '').trim();
-      if (!token) {
-        throw new Error('Missing trust token. Provide --token or set WORKGRAPH_TRUST_TOKEN.');
-      }
-      return workgraph.agent.registerAgent(workspacePath, name, {
-        token,
-        role: opts.role,
-        capabilities: csv(opts.capabilities),
-        status: normalizeAgentPresenceStatus(opts.status),
-        currentTask: opts.currentTask,
-        actor: opts.actor,
-      });
-    },
-    (result) => [
-      `Registered agent: ${result.agentName}`,
-      `Role: ${result.role} (${result.rolePath})`,
-      `Capabilities: ${result.capabilities.join(', ') || 'none'}`,
-      `Presence: ${result.presence.path}`,
-      `Policy party: ${result.policyParty.id}`,
-      `Bootstrap token: ${result.trustTokenPath} [${result.trustTokenStatus}]`,
-      ...(result.credential ? [`Credential: ${result.credential.id} [${result.credential.status}]`] : []),
-      ...(result.apiKey ? [`API key (store securely, shown once): ${result.apiKey}`] : []),
-    ],
-  );
-});
-
-addWorkspaceOption(
-  agentCmd
-    .command('request <name>')
-    .description('Submit an approval-based agent registration request')
-    .option('--role <role>', 'Requested role slug/path (default: roles/contributor.md)')
-    .option('--capabilities <items>', 'Comma-separated requested extra capabilities')
-    .option('-a, --actor <name>', 'Actor submitting the request')
-    .option('--note <text>', 'Optional request note')
-    .option('--json', 'Emit structured JSON output')
+    .description('Register an actor using a trust token')
+    .option('-a, --actor <actor>', 'Actor performing the update', DEFAULT_ACTOR)
+    .option('--token <token>', 'Trust token (or WORKGRAPH_TRUST_TOKEN env)')
+    .option('--role <role>', 'Role ref')
+    .option('--capabilities <items>', 'Comma-separated capabilities')
+    .option('--status <status>', 'online|busy|offline', 'online')
+    .option('--current-task <text>', 'Current task')
+    .option('--json', 'Emit structured JSON output'),
 ).action((name, opts) =>
   runCommand(
     opts,
     () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.agent.submitRegistrationRequest(workspacePath, name, {
+      const token = readNonEmptyString(opts.token) ?? process.env.WORKGRAPH_TRUST_TOKEN;
+      if (!token) {
+        throw new Error('Missing trust token. Provide --token or set WORKGRAPH_TRUST_TOKEN.');
+      }
+      return workgraph.agent.registerAgent(resolveWorkspacePath(opts), name, {
+        token,
+        actor: opts.actor,
         role: opts.role,
         capabilities: csv(opts.capabilities),
-        actor: opts.actor,
-        note: opts.note,
+        status: normalizePresenceStatus(opts.status),
+        currentTask: opts.currentTask,
       });
     },
     (result) => [
-      `Submitted registration request for ${result.agentName}`,
-      `Request: ${result.request.path}`,
-      `Requested role: ${result.requestedRolePath}`,
-      `Requested capabilities: ${result.requestedCapabilities.join(', ') || 'none'}`,
+      `Registered actor: ${result.agentName}`,
+      `Role: ${result.role}`,
+      `Presence: ${result.presence.path}`,
     ],
-  )
+  ),
+);
+
+addWorkspaceOption(
+  agentCmd
+    .command('request <name>')
+    .description('Submit an actor registration request')
+    .option('-a, --actor <actor>', 'Actor performing the update', DEFAULT_ACTOR)
+    .option('--role <role>', 'Requested role ref')
+    .option('--capabilities <items>', 'Comma-separated capabilities')
+    .option('--note <text>', 'Request note')
+    .option('--json', 'Emit structured JSON output'),
+).action((name, opts) =>
+  runCommand(
+    opts,
+    () => workgraph.agent.submitRegistrationRequest(resolveWorkspacePath(opts), name, {
+      actor: opts.actor,
+      role: opts.role,
+      capabilities: csv(opts.capabilities),
+      note: opts.note,
+    }),
+    (result) => [
+      `Submitted request: ${result.request.path}`,
+      `Requested role: ${result.requestedRolePath}`,
+    ],
+  ),
 );
 
 addWorkspaceOption(
   agentCmd
     .command('review <requestRef>')
-    .description('Approve or reject a pending registration request')
-    .requiredOption('--decision <decision>', 'approved | rejected')
-    .option('-a, --actor <name>', 'Reviewer actor', DEFAULT_ACTOR)
-    .option('--role <role>', 'Approved role slug/path (for approved decisions)')
-    .option('--capabilities <items>', 'Comma-separated approved extra capabilities')
-    .option('--scopes <items>', 'Comma-separated credential scopes (defaults to approved capabilities)')
-    .option('--expires-at <isoDate>', 'Optional credential expiry ISO date')
-    .option('--note <text>', 'Optional review note')
-    .option('--json', 'Emit structured JSON output')
+    .description('Approve or reject a registration request')
+    .requiredOption('--decision <decision>', 'approved|rejected')
+    .option('-a, --actor <actor>', 'Reviewer actor', DEFAULT_ACTOR)
+    .option('--role <role>', 'Approved role ref')
+    .option('--capabilities <items>', 'Comma-separated capabilities')
+    .option('--scopes <items>', 'Comma-separated credential scopes')
+    .option('--expires-at <iso>', 'Credential expiry')
+    .option('--note <text>', 'Review note')
+    .option('--json', 'Emit structured JSON output'),
 ).action((requestRef, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const decision = String(opts.decision ?? '').trim().toLowerCase();
-      if (decision !== 'approved' && decision !== 'rejected') {
-        throw new Error('Invalid --decision value. Expected approved|rejected.');
-      }
-      return workgraph.agent.reviewRegistrationRequest(
-        workspacePath,
-        requestRef,
-        opts.actor,
-        decision,
-        {
-          role: opts.role,
-          capabilities: csv(opts.capabilities),
-          scopes: csv(opts.scopes),
-          expiresAt: opts.expiresAt,
-          note: opts.note,
-        },
-      );
-    },
+    () => workgraph.agent.reviewRegistrationRequest(
+      resolveWorkspacePath(opts),
+      requestRef,
+      opts.actor,
+      normalizeRegistrationDecision(opts.decision),
+      {
+        role: opts.role,
+        capabilities: csv(opts.capabilities),
+        scopes: csv(opts.scopes),
+        expiresAt: opts.expiresAt,
+        note: opts.note,
+      },
+    ),
     (result) => [
       `Reviewed request: ${result.request.path}`,
       `Decision: ${result.decision}`,
-      `Approval record: ${result.approval.path}`,
-      ...(result.policyParty
-        ? [`Policy party: ${result.policyParty.id} (${result.policyParty.roles.join(', ')})`]
-        : []),
-      ...(result.credential ? [`Credential: ${result.credential.id} [${result.credential.status}]`] : []),
-      ...(result.apiKey ? [`API key (store securely, shown once): ${result.apiKey}`] : []),
+      `Approval: ${result.approval.path}`,
     ],
-  )
+  ),
 );
 
 addWorkspaceOption(
   agentCmd
     .command('credential-list')
-    .description('List issued agent credentials')
-    .option('--actor <name>', 'Filter by actor id')
-    .option('--json', 'Emit structured JSON output')
+    .description('List actor credentials')
+    .option('--actor-filter <name>', 'Optional actor filter')
+    .option('--json', 'Emit structured JSON output'),
 ).action((opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const credentials = workgraph.agent.listAgentCredentials(workspacePath, opts.actor);
-      return {
-        credentials,
-        count: credentials.length,
-      };
-    },
-    (result) => {
-      if (result.credentials.length === 0) return ['No credentials found.'];
-      return [
-        ...result.credentials.map((credential) =>
-          `${credential.id} actor=${credential.actor} status=${credential.status} scopes=${credential.scopes.join(', ') || 'none'}`
-        ),
-        `${result.count} credential(s)`,
-      ];
-    },
-  )
+    () => ({
+      credentials: workgraph.agent.listAgentCredentials(resolveWorkspacePath(opts), opts.actorFilter),
+    }),
+    (result) => result.credentials.length > 0
+      ? result.credentials.map((entry) => `${entry.id} actor=${entry.actor} status=${entry.status}`)
+      : ['No credentials found.'],
+  ),
 );
 
 addWorkspaceOption(
   agentCmd
     .command('credential-revoke <credentialId>')
-    .description('Revoke an issued credential')
-    .option('-a, --actor <name>', 'Actor revoking the credential', DEFAULT_ACTOR)
-    .option('--reason <text>', 'Optional revocation reason')
-    .option('--json', 'Emit structured JSON output')
+    .description('Revoke an actor credential')
+    .option('-a, --actor <actor>', 'Actor performing the update', DEFAULT_ACTOR)
+    .option('--reason <text>', 'Revocation reason')
+    .option('--json', 'Emit structured JSON output'),
 ).action((credentialId, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        credential: workgraph.agent.revokeAgentCredential(
-          workspacePath,
-          credentialId,
-          opts.actor,
-          opts.reason,
-        ),
-      };
-    },
-    (result) => [
-      `Revoked credential: ${result.credential.id}`,
-      `Actor: ${result.credential.actor}`,
-      `Status: ${result.credential.status}`,
-    ],
-  )
+    () => workgraph.agent.revokeAgentCredential(resolveWorkspacePath(opts), credentialId, opts.actor, opts.reason),
+    (result) => [`Revoked credential ${result.id} for ${result.actor}.`],
+  ),
 );
 
 addWorkspaceOption(
   agentCmd
     .command('list')
-    .description('List known agent presence entries')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{ agents: PrimitiveRecord[]; count: number }>('workgraph_agent_list', {})),
-      (result) => {
-        if (result.agents.length === 0) return ['No agent presence entries found.'];
-        return [
-          ...result.agents.map((entry) => {
-            const name = String(entry.fields.name ?? entry.path);
-            const status = String(entry.fields.status ?? 'unknown');
-            const task = String(entry.fields.current_task ?? 'none');
-            const lastSeen = String(entry.fields.last_seen ?? 'unknown');
-            return `${name} [${status}] task=${task} last_seen=${lastSeen}`;
-          }),
-          `${result.count} agent(s)`,
-        ];
-      },
-    );
-  }
-  return runCommand(
+    .description('List actor presence entries')
+    .option('--json', 'Emit structured JSON output'),
+).action((opts) =>
+  runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const agents = workgraph.agent.list(workspacePath);
-      return {
-        agents,
-        count: agents.length,
-      };
-    },
-    (result) => {
-      if (result.agents.length === 0) return ['No agent presence entries found.'];
-      return [
-        ...result.agents.map((entry) => {
-          const name = String(entry.fields.name ?? entry.path);
-          const status = String(entry.fields.status ?? 'unknown');
-          const task = String(entry.fields.current_task ?? 'none');
-          const lastSeen = String(entry.fields.last_seen ?? 'unknown');
-          return `${name} [${status}] task=${task} last_seen=${lastSeen}`;
-        }),
-        `${result.count} agent(s)`,
-      ];
-    },
-  );
-});
-
-// ============================================================================
-// primitive
-// ============================================================================
+    () => ({ agents: workgraph.agent.list(resolveWorkspacePath(opts)) }),
+    (result) => result.agents.length > 0
+      ? result.agents.map((entry) => `${String(entry.fields.name)} (${String(entry.fields.status)}) -> ${entry.path}`)
+      : ['No actors found.'],
+  ),
+);
 
 const primitiveCmd = program
   .command('primitive')
-  .description('Manage primitive type definitions and instances');
+  .description('Manage primitive schemas and instances');
 
 addWorkspaceOption(
   primitiveCmd
     .command('define <name>')
     .description('Define a new primitive type')
-    .requiredOption('-d, --description <desc>', 'Type description')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--fields <specs...>', 'Field definitions as "name:type"')
-    .option('--dir <directory>', 'Storage directory override')
-    .option('--json', 'Emit structured JSON output')
+    .requiredOption('--description <text>', 'Type description')
+    .option('-a, --actor <actor>', 'Actor', DEFAULT_ACTOR)
+    .option('--directory <dir>', 'Storage directory')
+    .option('--field <name:type>', 'Repeatable field definition', collectFieldSpecs, [])
+    .option('--json', 'Emit structured JSON output'),
 ).action((name, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const fields: Record<string, workgraph.FieldDefinition> = {};
-      for (const spec of opts.fields ?? []) {
-        const [fieldName, fieldType = 'string'] = String(spec).split(':');
-        fields[fieldName.trim()] = { type: fieldType.trim() as workgraph.FieldDefinition['type'] };
-      }
-      const type = workgraph.registry.defineType(
-        workspacePath,
-        name,
-        opts.description,
-        fields,
-        opts.actor,
-        opts.dir
-      );
-      workgraph.bases.syncPrimitiveRegistryManifest(workspacePath);
-      const baseResult = workgraph.bases.generateBasesFromPrimitiveRegistry(workspacePath, {
-        includeNonCanonical: true,
-      });
-      return {
-        type,
-        basesGenerated: baseResult.generated.length,
-      };
-    },
+    () => workgraph.registry.defineType(
+      resolveWorkspacePath(opts),
+      name,
+      opts.description,
+      parseFieldDefinitions(opts.field),
+      opts.actor,
+      opts.directory,
+    ),
     (result) => [
-      `Defined type: ${result.type.name}`,
-      `Directory: ${result.type.directory}/`,
-      `Bases generated: ${result.basesGenerated}`,
-    ]
-  )
-);
-
-registerPrimitiveSchemaCommand('schema', 'Show supported fields for a primitive type');
-registerPrimitiveSchemaCommand('fields', 'Alias for schema');
-
-// ============================================================================
-// bases
-// ============================================================================
-
-const basesCmd = program
-  .command('bases')
-  .description('Generate Obsidian .base files from primitive-registry.yaml');
-
-addWorkspaceOption(
-  basesCmd
-    .command('sync-registry')
-    .description('Sync .workgraph/primitive-registry.yaml from active registry')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const manifest = workgraph.bases.syncPrimitiveRegistryManifest(workspacePath);
-      return {
-        primitiveCount: manifest.primitives.length,
-        manifestPath: '.workgraph/primitive-registry.yaml',
-      };
-    },
-    (result) => [
-      `Synced primitive registry manifest: ${result.manifestPath}`,
-      `Primitives: ${result.primitiveCount}`,
-    ]
-  )
-);
-
-addWorkspaceOption(
-  basesCmd
-    .command('generate')
-    .description('Generate .base files by reading primitive-registry.yaml')
-    .option('--all', 'Include non-canonical primitives')
-    .option('--refresh-registry', 'Refresh primitive-registry.yaml before generation')
-    .option('--output-dir <path>', 'Output directory for .base files (default: .workgraph/bases)')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      if (opts.refreshRegistry) {
-        workgraph.bases.syncPrimitiveRegistryManifest(workspacePath);
-      }
-      return workgraph.bases.generateBasesFromPrimitiveRegistry(workspacePath, {
-        includeNonCanonical: !!opts.all,
-        outputDirectory: opts.outputDir,
-      });
-    },
-    (result) => [
-      `Generated ${result.generated.length} .base file(s)`,
-      `Directory: ${result.outputDirectory}`,
-    ]
-  )
+      `Defined primitive type: ${result.name}`,
+      `Directory: ${result.directory}`,
+    ],
+  ),
 );
 
 addWorkspaceOption(
   primitiveCmd
     .command('list')
-    .description('List primitive types')
-    .option('--json', 'Emit structured JSON output')
+    .description('List registered primitive types')
+    .option('--json', 'Emit structured JSON output'),
 ).action((opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const types = workgraph.registry.listTypes(workspacePath);
-      return { types, count: types.length };
-    },
-    (result) => result.types.map(t => `${t.name} (${t.directory}/) ${t.builtIn ? '[built-in]' : ''}`)
-  )
+    () => ({ types: workgraph.registry.listTypes(resolveWorkspacePath(opts)) }),
+    (result) => result.types.map((type) => `${type.name} -> ${type.directory}`),
+  ),
 );
-
-function registerPrimitiveSchemaCommand(commandName: string, description: string): void {
-  addWorkspaceOption(
-    primitiveCmd
-      .command(`${commandName} <typeName>`)
-      .description(description)
-      .option('--json', 'Emit structured JSON output')
-  ).action((typeName, opts) =>
-    runCommand(
-      opts,
-      () => {
-        const workspacePath = resolveWorkspacePath(opts);
-        const typeDef = workgraph.registry.getType(workspacePath, typeName);
-        if (!typeDef) {
-          throw new Error(`Unknown primitive type "${typeName}". Use \`workgraph primitive list\` to inspect available types.`);
-        }
-        const fields = Object.entries(typeDef.fields).map(([name, definition]) => ({
-          name,
-          type: definition.type,
-          required: definition.required === true,
-          default: definition.default,
-          enum: definition.enum ?? [],
-          description: definition.description ?? '',
-          template: definition.template ?? undefined,
-          pattern: definition.pattern ?? undefined,
-          refTypes: definition.refTypes ?? [],
-        }));
-        return {
-          type: typeDef.name,
-          description: typeDef.description,
-          directory: typeDef.directory,
-          builtIn: typeDef.builtIn,
-          fields,
-        };
-      },
-      (result) => [
-        `Type: ${result.type}`,
-        `Directory: ${result.directory}/`,
-        `Built-in: ${result.builtIn}`,
-        ...result.fields.map((field) =>
-          `- ${field.name}: ${field.type}${field.required ? ' (required)' : ''}${field.description ? ` — ${field.description}` : ''}`),
-      ],
-    )
-  );
-}
 
 addWorkspaceOption(
   primitiveCmd
     .command('create <type> <title>')
-    .description('Create an instance of any primitive type')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--set <fields...>', 'Set fields as "key=value"')
-    .option('--body <text>', 'Markdown body content', '')
-    .option('--json', 'Emit structured JSON output')
+    .description('Create a primitive instance')
+    .option('-a, --actor <actor>', 'Actor', DEFAULT_ACTOR)
+    .option('--body <markdown>', 'Markdown body')
+    .option('--set <key=value>', 'Repeatable field assignment', collectSetPairs, [])
+    .option('--json', 'Emit structured JSON output'),
 ).action((type, title, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const fields: Record<string, unknown> = { title, ...parseSetPairs(opts.set ?? []) };
-      return {
-        instance: workgraph.store.create(workspacePath, type, fields, opts.body, opts.actor),
-      };
-    },
-    (result) => [`Created ${result.instance.type}: ${result.instance.path}`]
-  )
+    () => workgraph.store.create(
+      resolveWorkspacePath(opts),
+      type,
+      {
+        title,
+        ...mergeSetPairs(opts.set),
+      },
+      opts.body ?? '',
+      opts.actor,
+    ),
+    (result) => [`Created primitive: ${result.path}`],
+  ),
 );
 
 addWorkspaceOption(
   primitiveCmd
     .command('update <path>')
-    .description('Update an existing primitive instance')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--set <fields...>', 'Set fields as "key=value"')
+    .description('Update a primitive instance')
+    .option('-a, --actor <actor>', 'Actor', DEFAULT_ACTOR)
+    .option('--body <markdown>', 'Replace markdown body')
+    .option('--set <key=value>', 'Repeatable field assignment', collectSetPairs, [])
     .option('--etag <etag>', 'Expected etag for optimistic concurrency')
-    .option('--body <text>', 'Replace markdown body content')
-    .option('--body-file <path>', 'Read markdown body content from file')
-    .option('--json', 'Emit structured JSON output')
+    .option('--json', 'Emit structured JSON output'),
 ).action((targetPath, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const updates = parseSetPairs(opts.set ?? []);
-      let body: string | undefined = opts.body;
-      if (opts.bodyFile) {
-        body = fs.readFileSync(path.resolve(opts.bodyFile), 'utf-8');
-      }
-      return {
-        instance: workgraph.store.update(workspacePath, targetPath, updates, body, opts.actor, {
-          expectedEtag: opts.etag,
-        }),
-      };
-    },
-    (result) => [`Updated ${result.instance.type}: ${result.instance.path}`]
-  )
+    () => workgraph.store.update(
+      resolveWorkspacePath(opts),
+      normalizePath(targetPath),
+      mergeSetPairs(opts.set),
+      opts.body,
+      opts.actor,
+      {
+        expectedEtag: opts.etag,
+      },
+    ),
+    (result) => [`Updated primitive: ${result.path}`],
+  ),
 );
-
-// ============================================================================
-// skill
-// ============================================================================
-
-const skillCmd = program
-  .command('skill')
-  .description('Manage native skill primitives in shared workgraph vaults');
-
-addWorkspaceOption(
-  skillCmd
-    .command('write <title>')
-    .description('Create or update a skill primitive')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--owner <name>', 'Skill owner')
-    .option('--skill-version <semver>', 'Skill version')
-    .option('--status <status>', 'draft | proposed | active | deprecated | archived')
-    .option('--distribution <mode>', 'Distribution mode', 'tailscale-shared-vault')
-    .option('--tailscale-path <path>', 'Shared Tailscale workspace path')
-    .option('--reviewers <list>', 'Comma-separated reviewer names')
-    .option('--depends-on <list>', 'Comma-separated skill dependencies (slug/path)')
-    .option('--expected-updated-at <iso>', 'Optimistic concurrency guard for updates')
-    .option('--tags <list>', 'Comma-separated tags')
-    .option('--body <text>', 'Skill markdown content')
-    .option('--body-file <path>', 'Read markdown content from file')
-    .option('--json', 'Emit structured JSON output')
-).action((title, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      let body = opts.body ?? '';
-      if (opts.bodyFile) {
-        const absBodyFile = path.resolve(opts.bodyFile);
-        body = fs.readFileSync(absBodyFile, 'utf-8');
-      }
-      const instance = workgraph.skill.writeSkill(
-        workspacePath,
-        title,
-        body,
-        opts.actor,
-        {
-          owner: opts.owner,
-          version: opts.skillVersion,
-          status: opts.status,
-          distribution: opts.distribution,
-          tailscalePath: opts.tailscalePath,
-          reviewers: csv(opts.reviewers),
-          dependsOn: csv(opts.dependsOn),
-          expectedUpdatedAt: opts.expectedUpdatedAt,
-          tags: csv(opts.tags),
-        }
-      );
-      workgraph.bases.syncPrimitiveRegistryManifest(workspacePath);
-      workgraph.bases.generateBasesFromPrimitiveRegistry(workspacePath, { includeNonCanonical: true });
-      return { skill: instance };
-    },
-    (result) => [
-      `Wrote skill: ${result.skill.path}`,
-      `Status: ${String(result.skill.fields.status)} Version: ${String(result.skill.fields.version)}`,
-    ]
-  )
-);
-
-addWorkspaceOption(
-  skillCmd
-    .command('load <skillRef>')
-    .description('Load one skill primitive by slug or path')
-    .option('--json', 'Emit structured JSON output')
-).action((skillRef, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return { skill: workgraph.skill.loadSkill(workspacePath, skillRef) };
-    },
-    (result) => [
-      `Skill: ${String(result.skill.fields.title)}`,
-      `Path: ${result.skill.path}`,
-      `Status: ${String(result.skill.fields.status)}`,
-    ]
-  )
-);
-
-addWorkspaceOption(
-  skillCmd
-    .command('list')
-    .description('List skills')
-    .option('--status <status>', 'Filter by status')
-    .option('--updated-since <iso>', 'Filter by updated timestamp (ISO-8601)')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const skills = workgraph.skill.listSkills(workspacePath, {
-        status: opts.status,
-        updatedSince: opts.updatedSince,
-      });
-      return { skills, count: skills.length };
-    },
-    (result) => result.skills.map((skill) =>
-      `${String(skill.fields.title)} [${String(skill.fields.status)}] -> ${skill.path}`)
-  )
-);
-
-addWorkspaceOption(
-  skillCmd
-    .command('history <skillRef>')
-    .description('Show ledger history entries for one skill')
-    .option('--limit <n>', 'Limit number of returned entries')
-    .option('--json', 'Emit structured JSON output')
-).action((skillRef, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        entries: workgraph.skill.skillHistory(workspacePath, skillRef, {
-          limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
-        }),
-      };
-    },
-    (result) => result.entries.map((entry) => `${entry.ts} ${entry.op} ${entry.actor}`),
-  )
-);
-
-addWorkspaceOption(
-  skillCmd
-    .command('diff <skillRef>')
-    .description('Show latest field-change summary for one skill')
-    .option('--json', 'Emit structured JSON output')
-).action((skillRef, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.skill.skillDiff(workspacePath, skillRef);
-    },
-    (result) => [
-      `Skill: ${result.path}`,
-      `Latest: ${result.latestEntryTs ?? 'none'}`,
-      `Previous: ${result.previousEntryTs ?? 'none'}`,
-      `Changed fields: ${result.changedFields.join(', ') || 'none'}`,
-    ],
-  )
-);
-
-addWorkspaceOption(
-  skillCmd
-    .command('propose <skillRef>')
-    .description('Move a skill into proposed state and open review thread')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--proposal-thread <path>', 'Explicit proposal thread path')
-    .option('--no-create-thread', 'Do not create a proposal thread automatically')
-    .option('--space <spaceRef>', 'Space for created proposal thread')
-    .option('--reviewers <list>', 'Comma-separated reviewers')
-    .option('--json', 'Emit structured JSON output')
-).action((skillRef, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        skill: workgraph.skill.proposeSkill(workspacePath, skillRef, opts.actor, {
-          proposalThread: opts.proposalThread,
-          createThreadIfMissing: opts.createThread,
-          space: opts.space,
-          reviewers: csv(opts.reviewers),
-        }),
-      };
-    },
-    (result) => [
-      `Proposed skill: ${result.skill.path}`,
-      `Proposal thread: ${String(result.skill.fields.proposal_thread ?? 'none')}`,
-    ]
-  )
-);
-
-addWorkspaceOption(
-  skillCmd
-    .command('promote <skillRef>')
-    .description('Promote a proposed/draft skill to active')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--skill-version <semver>', 'Explicit promoted version')
-    .option('--json', 'Emit structured JSON output')
-).action((skillRef, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        skill: workgraph.skill.promoteSkill(workspacePath, skillRef, opts.actor, {
-          version: opts.skillVersion,
-        }),
-      };
-    },
-    (result) => [
-      `Promoted skill: ${result.skill.path}`,
-      `Status: ${String(result.skill.fields.status)} Version: ${String(result.skill.fields.version)}`,
-    ]
-  )
-);
-
-// ============================================================================
-// integration
-// ============================================================================
-
-const integrationCmd = program
-  .command('integration')
-  .description('Manage optional third-party integrations');
-
-addWorkspaceOption(
-  integrationCmd
-    .command('list')
-    .description('List supported optional integrations')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => ({
-      integrations: workgraph.integration.listIntegrations(),
-    }),
-    (result) => result.integrations.map((integration) =>
-      `${integration.id} (${integration.defaultTitle}) -> ${integration.defaultSourceUrl}`)
-  )
-);
-
-addWorkspaceOption(
-  integrationCmd
-    .command('install <integrationName>')
-    .description('Install an optional integration into this workspace')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--owner <name>', 'Skill owner override')
-    .option('--title <title>', 'Skill title to store in workgraph')
-    .option('--source-url <url>', 'Source URL override for integration content')
-    .option('--force', 'Overwrite an existing imported integration skill')
-    .option('--json', 'Emit structured JSON output')
-).action((integrationName, opts) =>
-  runCommand(
-    opts,
-    () => installNamedIntegration(resolveWorkspacePath(opts), integrationName, opts),
-    renderInstalledIntegrationResult,
-  )
-);
-
-addWorkspaceOption(
-  integrationCmd
-    .command('clawdapus')
-    .description('Import Clawdapus SKILL.md into this workspace')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--owner <name>', 'Skill owner override')
-    .option('--title <title>', 'Skill title to store in workgraph', 'clawdapus')
-    .option(
-      '--source-url <url>',
-      'Source URL for Clawdapus SKILL.md',
-      workgraph.clawdapus.DEFAULT_CLAWDAPUS_SKILL_URL,
-    )
-    .option('--force', 'Overwrite an existing imported Clawdapus skill')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => installNamedIntegration(resolveWorkspacePath(opts), 'clawdapus', opts),
-    renderInstalledIntegrationResult,
-  )
-);
-
-// ============================================================================
-// ledger
-// ============================================================================
-
-const ledgerCmd = program
-  .command('ledger')
-  .description('Inspect the append-only workgraph ledger');
-
-addWorkspaceOption(
-  ledgerCmd
-    .command('show')
-    .description('Show recent ledger entries')
-    .option('-n, --count <n>', 'Number of entries', '20')
-    .option('--actor <name>', 'Filter by actor')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const count = Number.parseInt(String(opts.count), 10);
-      const safeCount = Number.isNaN(count) ? 20 : count;
-      let entries = workgraph.ledger.recent(workspacePath, safeCount);
-      if (opts.actor) entries = entries.filter(e => e.actor === opts.actor);
-      return { entries, count: entries.length };
-    },
-    (result) => result.entries.map(e => `${e.ts} ${e.op} ${e.actor} ${e.target}`)
-  )
-);
-
-addWorkspaceOption(
-  ledgerCmd
-    .command('history <targetPath>')
-    .description('Show full history of a target path')
-    .option('--json', 'Emit structured JSON output')
-).action((targetPath, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const entries = workgraph.ledger.historyOf(workspacePath, targetPath);
-      return { target: targetPath, entries, count: entries.length };
-    },
-    (result) => result.entries.map(e => `${e.ts} ${e.op} ${e.actor}`)
-  )
-);
-
-addWorkspaceOption(
-  ledgerCmd
-    .command('claims')
-    .description('Show active claims')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const claimsMap = workgraph.ledger.allClaims(workspacePath);
-      const claims = [...claimsMap.entries()].map(([target, owner]) => ({ target, owner }));
-      return { claims, count: claims.length };
-    },
-    (result) => result.claims.map(c => `${c.owner} -> ${c.target}`)
-  )
-);
-
-addWorkspaceOption(
-  ledgerCmd
-    .command('query')
-    .description('Query ledger with structured filters')
-    .option('--actor <name>', 'Filter by actor')
-    .option('--op <operation>', 'Filter by operation')
-    .option('--type <primitiveType>', 'Filter by primitive type')
-    .option('--target <path>', 'Filter by exact target path')
-    .option('--target-includes <text>', 'Filter by target substring')
-    .option('--since <iso>', 'Filter entries on/after ISO timestamp')
-    .option('--until <iso>', 'Filter entries on/before ISO timestamp')
-    .option('--limit <n>', 'Limit number of results')
-    .option('--offset <n>', 'Offset into result set')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        entries: workgraph.ledger.query(workspacePath, {
-          actor: opts.actor,
-          op: opts.op,
-          type: opts.type,
-          target: opts.target,
-          targetIncludes: opts.targetIncludes,
-          since: opts.since,
-          until: opts.until,
-          limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
-          offset: opts.offset ? Number.parseInt(String(opts.offset), 10) : undefined,
-        }),
-      };
-    },
-    (result) => result.entries.map((entry) => `${entry.ts} ${entry.op} ${entry.actor} ${entry.target}`)
-  )
-);
-
-addWorkspaceOption(
-  ledgerCmd
-    .command('blame <targetPath>')
-    .description('Show actor attribution summary for one target')
-    .option('--json', 'Emit structured JSON output')
-).action((targetPath, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.ledger.blame(workspacePath, targetPath);
-    },
-    (result) => [
-      `Target: ${result.target}`,
-      `Entries: ${result.totalEntries}`,
-      ...result.actors.map((actor) => `${actor.actor}: ${actor.count} change(s)`),
-    ]
-  )
-);
-
-addWorkspaceOption(
-  ledgerCmd
-    .command('verify')
-    .description('Verify tamper-evident ledger hash-chain integrity')
-    .option('--strict', 'Treat missing hash fields as verification failures')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.ledger.verifyHashChain(workspacePath, { strict: !!opts.strict });
-    },
-    (result) => [
-      `Hash-chain valid: ${result.ok}`,
-      `Entries: ${result.entries}`,
-      `Last hash: ${result.lastHash}`,
-      ...(result.issues.length > 0 ? result.issues.map((issue) => `ISSUE: ${issue}`) : []),
-      ...(result.warnings.length > 0 ? result.warnings.map((warning) => `WARN: ${warning}`) : []),
-    ]
-  )
-);
-
-addWorkspaceOption(
-  ledgerCmd
-    .command('reconcile')
-    .description('Audit thread files against ledger claims, leases, and dependency wiring')
-    .option('--fail-on-issues', 'Exit non-zero when issues are found')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const report = workgraph.threadAudit.reconcileThreadState(workspacePath);
-      if (opts.failOnIssues && !report.ok) {
-        throw new Error(`Ledger reconcile found ${report.issues.length} issue(s).`);
-      }
-      return report;
-    },
-    (result) => [
-      `Reconcile ok: ${result.ok}`,
-      `Threads: ${result.totalThreads} Claims: ${result.totalClaims} Leases: ${result.totalLeases}`,
-      ...(result.issues.length > 0
-        ? result.issues.map((issue) => `${issue.kind}: ${issue.path} — ${issue.message}`)
-        : ['No reconcile issues found.']),
-    ]
-  )
-);
-
-addWorkspaceOption(
-  ledgerCmd
-    .command('seal')
-    .description('Rebuild ledger index + hash-chain state from ledger.jsonl')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const index = workgraph.ledger.rebuildIndex(workspacePath);
-      const chain = workgraph.ledger.rebuildHashChainState(workspacePath);
-      return {
-        indexClaims: Object.keys(index.claims).length,
-        chainCount: chain.count,
-        chainLastHash: chain.lastHash,
-      };
-    },
-    (result) => [
-      `Rebuilt ledger index claims: ${result.indexClaims}`,
-      `Rebuilt chain entries: ${result.chainCount}`,
-    ]
-  )
-);
-
-// ============================================================================
-// diagnostics / developer experience
-// ============================================================================
-
-addWorkspaceOption(
-  program
-    .command('doctor')
-    .description('Diagnose vault health, warnings, and repairable issues')
-    .option('--fix', 'Auto-repair safe issues (orphan links, stale claims/runs)')
-    .option('--stale-after-minutes <n>', 'Threshold for stale claims/runs in minutes', '60')
-    .option('-a, --actor <name>', 'Actor used for --fix mutations', DEFAULT_ACTOR)
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const staleAfterMinutes = Number.parseInt(String(opts.staleAfterMinutes), 10);
-      const safeStaleAfterMinutes = Number.isNaN(staleAfterMinutes) ? 60 : Math.max(1, staleAfterMinutes);
-      return workgraph.diagnostics.diagnoseVaultHealth(workspacePath, {
-        fix: !!opts.fix,
-        actor: opts.actor,
-        staleAfterMs: safeStaleAfterMinutes * 60 * 1000,
-      });
-    },
-    (result) => workgraph.diagnostics.renderDoctorReport(result),
-  )
-);
-
-addWorkspaceOption(
-  program
-    .command('replay')
-    .description('Replay ledger events chronologically with typed filters')
-    .option('--type <type>', 'create | update | transition')
-    .option('--actor <name>', 'Filter by actor')
-    .option('--primitive <ref>', 'Filter by primitive path/type substring')
-    .option('--since <iso>', 'Filter events on/after ISO timestamp')
-    .option('--until <iso>', 'Filter events on/before ISO timestamp')
-    .option('--no-color', 'Disable colorized output')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.diagnostics.replayLedger(workspacePath, {
-        type: opts.type,
-        actor: opts.actor,
-        primitive: opts.primitive,
-        since: opts.since,
-        until: opts.until,
-      });
-    },
-    (result) => workgraph.diagnostics.renderReplayText(result, {
-      color: opts.color !== false && !wantsJson(opts),
-    }),
-  )
-);
-
-addWorkspaceOption(
-  program
-    .command('viz')
-    .description('Render an ASCII wiki-link graph of primitives in this vault')
-    .option('--focus <slugOrPath>', 'Center the graph on a specific node')
-    .option('--depth <n>', 'Traversal depth from each root', '2')
-    .option('--top <n>', 'When large, show top N most-connected roots', '10')
-    .option('--no-color', 'Disable colorized output')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const parsedDepth = Number.parseInt(String(opts.depth), 10);
-      const parsedTop = Number.parseInt(String(opts.top), 10);
-      return workgraph.diagnostics.visualizeVaultGraph(workspacePath, {
-        focus: opts.focus,
-        depth: Number.isNaN(parsedDepth) ? 2 : Math.max(1, parsedDepth),
-        top: Number.isNaN(parsedTop) ? 10 : Math.max(1, parsedTop),
-        color: opts.color !== false && !wantsJson(opts),
-      });
-    },
-    (result) => [
-      ...result.rendered.split('\n'),
-      '',
-      `Nodes: ${result.nodeCount}`,
-      `Edges: ${result.edgeCount}`,
-      ...(result.focus ? [`Focus: ${result.focus}`] : []),
-    ],
-  )
-);
-
-addWorkspaceOption(
-  program
-    .command('stats')
-    .description('Show detailed vault statistics and graph/ledger health metrics')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.diagnostics.computeVaultStats(workspacePath);
-    },
-    (result) => workgraph.diagnostics.renderStatsReport(result),
-  )
-);
-
-addWorkspaceOption(
-  program
-    .command('changelog')
-    .description('Generate a human-readable changelog from ledger events')
-    .requiredOption('--since <date>', 'Include entries on/after this date (ISO-8601)')
-    .option('--until <date>', 'Include entries on/before this date (ISO-8601)')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.diagnostics.generateLedgerChangelog(workspacePath, {
-        since: opts.since,
-        until: opts.until,
-      });
-    },
-    (result) => workgraph.diagnostics.renderChangelogText(result),
-  )
-);
-
-addWorkspaceOption(
-  program
-    .command('command-center')
-    .description('Generate a markdown command center from workgraph state')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('-o, --output <path>', 'Output markdown path', 'Command Center.md')
-    .option('-n, --recent <count>', 'Recent ledger entries to include', '15')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const parsedRecent = Number.parseInt(String(opts.recent), 10);
-      const safeRecent = Number.isNaN(parsedRecent) ? 15 : parsedRecent;
-      return workgraph.commandCenter.generateCommandCenter(workspacePath, {
-        actor: opts.actor,
-        outputPath: opts.output,
-        recentCount: safeRecent,
-      });
-    },
-    (result) => [
-      `Generated command center: ${result.outputPath}`,
-      `Threads: total=${result.stats.totalThreads} open=${result.stats.openThreads} active=${result.stats.activeThreads} blocked=${result.stats.blockedThreads}`,
-      `Claims: ${result.stats.activeClaims} Recent events: ${result.stats.recentEvents}`,
-    ]
-  )
-);
-
-// ============================================================================
-// orientation
-// ============================================================================
 
 addWorkspaceOption(
   program
     .command('status')
-    .description('Show workspace situational status snapshot')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<ReturnType<typeof workgraph.orientation.statusSnapshot>>('workgraph_status', {})),
-      (result) => [
-        `Threads: total=${result.threads.total} open=${result.threads.open} active=${result.threads.active} blocked=${result.threads.blocked} done=${result.threads.done}`,
-        `Ready threads: ${result.threads.ready} Active claims: ${result.claims.active}`,
-        `Primitive types: ${Object.keys(result.primitives.byType).length}`,
-      ],
-    );
-  }
-  return runCommand(
+    .description('Show workspace status')
+    .option('--json', 'Emit structured JSON output'),
+).action((opts) =>
+  runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.orientation.statusSnapshot(workspacePath);
-    },
+    () => workgraph.orientation.statusSnapshot(resolveWorkspacePath(opts)),
     (result) => [
       `Threads: total=${result.threads.total} open=${result.threads.open} active=${result.threads.active} blocked=${result.threads.blocked} done=${result.threads.done}`,
-      `Ready threads: ${result.threads.ready} Active claims: ${result.claims.active}`,
-      `Primitive types: ${Object.keys(result.primitives.byType).length}`,
+      `Claims: ${result.claims.active}`,
+      `Primitives: ${result.primitives.total}`,
     ],
-  );
-});
+  ),
+);
 
 addWorkspaceOption(
   program
     .command('brief')
-    .description('Show actor-centric operational brief')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--recent <count>', 'Recent activity count', '12')
-    .option('--next <count>', 'Next ready threads to include', '5')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<ReturnType<typeof workgraph.orientation.brief>>('workgraph_brief', {
-          actor: opts.actor,
-          recentCount: Number.parseInt(String(opts.recent), 10),
-          nextCount: Number.parseInt(String(opts.next), 10),
-        })),
-      (result) => [
-        `Brief for ${result.actor}`,
-        `My claims: ${result.myClaims.length}`,
-        `Blocked threads: ${result.blockedThreads.length}`,
-        `Next ready: ${result.nextReadyThreads.map((item) => item.path).join(', ') || 'none'}`,
-      ],
-    );
-  }
-  return runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.orientation.brief(workspacePath, opts.actor, {
-        recentCount: Number.parseInt(String(opts.recent), 10),
-        nextCount: Number.parseInt(String(opts.next), 10),
-      });
-    },
-    (result) => [
-      `Brief for ${result.actor}`,
-      `My claims: ${result.myClaims.length}`,
-      `Blocked threads: ${result.blockedThreads.length}`,
-      `Next ready: ${result.nextReadyThreads.map((item) => item.path).join(', ') || 'none'}`,
-    ],
-  );
-});
-
-addWorkspaceOption(
-  program
-    .command('checkpoint <summary>')
-    .description('Create a checkpoint primitive for hand-off continuity')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--next <items>', 'Comma-separated next actions')
-    .option('--blocked <items>', 'Comma-separated blockers')
-    .option('--tags <items>', 'Comma-separated tags')
-    .option('--json', 'Emit structured JSON output')
-).action((summary, opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{ checkpoint: PrimitiveRecord }>('workgraph_checkpoint_create', {
-          actor: opts.actor,
-          summary,
-          next: csv(opts.next),
-          blocked: csv(opts.blocked),
-          tags: csv(opts.tags),
-        })),
-      (result) => [`Created checkpoint: ${result.checkpoint.path}`],
-    );
-  }
-  return runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        checkpoint: workgraph.orientation.checkpoint(workspacePath, opts.actor, summary, {
-          next: csv(opts.next),
-          blocked: csv(opts.blocked),
-          tags: csv(opts.tags),
-        }),
-      };
-    },
-    (result) => [`Created checkpoint: ${result.checkpoint.path}`],
-  );
-});
-
-addWorkspaceOption(
-  program
-    .command('intake <observation>')
-    .description('Capture intake observation as lightweight checkpoint note')
-    .option('-a, --actor <name>', 'Agent name', DEFAULT_ACTOR)
-    .option('--tags <items>', 'Comma-separated tags')
-    .option('--json', 'Emit structured JSON output')
-).action((observation, opts) =>
+    .description('Show actor-centric collaboration brief')
+    .option('-a, --actor <actor>', 'Actor', DEFAULT_ACTOR)
+    .option('--recent-count <n>', 'Recent activity count')
+    .option('--next-count <n>', 'Next thread count')
+    .option('--json', 'Emit structured JSON output'),
+).action((opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        intake: workgraph.orientation.intake(workspacePath, opts.actor, observation, {
-          tags: csv(opts.tags),
-        }),
-      };
-    },
-    (result) => [`Captured intake: ${result.intake.path}`],
-  )
-);
-
-// ============================================================================
-// lenses
-// ============================================================================
-
-const lensCmd = program
-  .command('lens')
-  .description('Generate deterministic context lenses for situational awareness');
-
-addWorkspaceOption(
-  lensCmd
-    .command('list')
-    .description('List built-in context lenses')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{ lenses: Array<{ id: string; description: string }> }>('workgraph_lens_list', {})),
-      (result) => result.lenses.map((lens) => `lens://${lens.id} - ${lens.description}`),
-    );
-  }
-  return runCommand(
-    opts,
-    () => ({
-      lenses: workgraph.lens.listContextLenses(),
+    () => workgraph.orientation.brief(resolveWorkspacePath(opts), opts.actor, {
+      recentCount: opts.recentCount ? parsePositiveIntOption(opts.recentCount, 'recent-count') : undefined,
+      nextCount: opts.nextCount ? parsePositiveIntOption(opts.nextCount, 'next-count') : undefined,
     }),
-    (result) => result.lenses.map((lens) => `lens://${lens.id} - ${lens.description}`),
-  );
-});
-
-addWorkspaceOption(
-  lensCmd
-    .command('show <lensId>')
-    .description('Generate one context lens snapshot')
-    .option('-a, --actor <name>', 'Actor identity for actor-scoped lenses', DEFAULT_ACTOR)
-    .option('--lookback-hours <hours>', 'Lookback window in hours', '24')
-    .option('--stale-hours <hours>', 'Stale threshold in hours', '24')
-    .option('--limit <n>', 'Maximum items per section', '10')
-    .option('-o, --output <path>', 'Write lens markdown to workspace-relative output path')
-    .option('--json', 'Emit structured JSON output')
-).action((lensId, opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) => client.callTool<
-      workgraph.WorkgraphLensResult | workgraph.WorkgraphMaterializedLensResult
-      >('workgraph_lens_show', {
-        lensId,
-        actor: opts.actor,
-        lookbackHours: parsePositiveNumberOption(opts.lookbackHours, 'lookback-hours'),
-        staleHours: parsePositiveNumberOption(opts.staleHours, 'stale-hours'),
-        limit: parsePositiveIntegerOption(opts.limit, 'limit'),
-        outputPath: opts.output,
-      })),
-      (result) => {
-        const metricSummary = Object.entries(result.metrics)
-          .map(([metric, value]) => `${metric}=${value}`)
-          .join(' ');
-        const sectionSummary = result.sections
-          .map((section) => `${section.id}:${section.items.length}`)
-          .join(' ');
-        const lines = [
-          `Lens: ${result.lens}`,
-          `Generated: ${result.generatedAt}`,
-          ...(result.actor ? [`Actor: ${result.actor}`] : []),
-          `Metrics: ${metricSummary || 'none'}`,
-          `Sections: ${sectionSummary || 'none'}`,
-        ];
-        if (isMaterializedLensResult(result)) {
-          lines.push(`Saved markdown: ${result.outputPath}`);
-          return lines;
-        }
-        return [...lines, '', ...result.markdown.split('\n')];
-      },
-    );
-  }
-  return runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const lensOptions = {
-        actor: opts.actor,
-        lookbackHours: parsePositiveNumberOption(opts.lookbackHours, 'lookback-hours'),
-        staleHours: parsePositiveNumberOption(opts.staleHours, 'stale-hours'),
-        limit: parsePositiveIntegerOption(opts.limit, 'limit'),
-      };
-      if (opts.output) {
-        return workgraph.lens.materializeContextLens(workspacePath, lensId, {
-          ...lensOptions,
-          outputPath: opts.output,
-        });
-      }
-      return workgraph.lens.generateContextLens(workspacePath, lensId, lensOptions);
-    },
-    (result) => {
-      const metricSummary = Object.entries(result.metrics)
-        .map(([metric, value]) => `${metric}=${value}`)
-        .join(' ');
-      const sectionSummary = result.sections
-        .map((section) => `${section.id}:${section.items.length}`)
-        .join(' ');
-      const lines = [
-        `Lens: ${result.lens}`,
-        `Generated: ${result.generatedAt}`,
-        ...(result.actor ? [`Actor: ${result.actor}`] : []),
-        `Metrics: ${metricSummary || 'none'}`,
-        `Sections: ${sectionSummary || 'none'}`,
-      ];
-      if (isMaterializedLensResult(result)) {
-        lines.push(`Saved markdown: ${result.outputPath}`);
-        return lines;
-      }
-      return [...lines, '', ...result.markdown.split('\n')];
-    },
-  );
-});
-
-// ============================================================================
-// query/search
-// ============================================================================
+    (result) => [
+      `Actor: ${result.actor}`,
+      `Claims: ${result.myClaims.length}`,
+      `Blocked: ${result.blockedThreads.length}`,
+      `Next ready: ${result.nextReadyThreads.length}`,
+    ],
+  ),
+);
 
 addWorkspaceOption(
   program
     .command('query')
-    .description('Query primitive instances with multi-field filters')
+    .description('Query primitives')
     .option('--type <type>', 'Primitive type')
-    .option('--status <status>', 'Status value')
-    .option('--owner <owner>', 'Owner/actor value')
+    .option('--status <status>', 'Status filter')
+    .option('--owner <owner>', 'Owner filter')
     .option('--tag <tag>', 'Tag filter')
-    .option('--text <text>', 'Full-text contains filter')
+    .option('--text <text>', 'Text filter')
     .option('--path-includes <text>', 'Path substring filter')
-    .option('--updated-after <iso>', 'Updated at or after')
-    .option('--updated-before <iso>', 'Updated at or before')
-    .option('--created-after <iso>', 'Created at or after')
-    .option('--created-before <iso>', 'Created at or before')
-    .option('--limit <n>', 'Result limit')
-    .option('--offset <n>', 'Result offset')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{ results: PrimitiveRecord[]; count: number }>('workgraph_query', {
-          type: opts.type,
-          status: opts.status,
-          owner: opts.owner,
-          tag: opts.tag,
-          text: opts.text,
-          pathIncludes: opts.pathIncludes,
-          updatedAfter: opts.updatedAfter,
-          updatedBefore: opts.updatedBefore,
-          createdAfter: opts.createdAfter,
-          createdBefore: opts.createdBefore,
-          limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
-          offset: opts.offset ? Number.parseInt(String(opts.offset), 10) : undefined,
-        })),
-      (result) => result.results.map((item) => `${item.type} ${item.path}`),
-    );
-  }
-  return runCommand(
+    .option('--updated-after <iso>', 'Updated after')
+    .option('--updated-before <iso>', 'Updated before')
+    .option('--created-after <iso>', 'Created after')
+    .option('--created-before <iso>', 'Created before')
+    .option('--limit <n>', 'Limit')
+    .option('--offset <n>', 'Offset')
+    .option('--json', 'Emit structured JSON output'),
+).action((opts) =>
+  runCommand(
     opts,
     () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const results = workgraph.query.queryPrimitives(workspacePath, {
+      const results = workgraph.query.queryPrimitives(resolveWorkspacePath(opts), {
         type: opts.type,
         status: opts.status,
         owner: opts.owner,
@@ -2183,814 +782,423 @@ addWorkspaceOption(
         updatedBefore: opts.updatedBefore,
         createdAfter: opts.createdAfter,
         createdBefore: opts.createdBefore,
-        limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
-        offset: opts.offset ? Number.parseInt(String(opts.offset), 10) : undefined,
+        limit: opts.limit ? parsePositiveIntOption(opts.limit, 'limit') : undefined,
+        offset: opts.offset ? parseNonNegativeIntOption(opts.offset, 'offset') : undefined,
       });
       return { results, count: results.length };
     },
-    (result) => result.results.map((item) => `${item.type} ${item.path}`),
-  );
-});
+    (result) => result.results.length > 0
+      ? [
+          ...result.results.map((entry) => `${entry.type} ${entry.path}`),
+          `${result.count} primitive(s)`,
+        ]
+      : ['No primitives matched the query.'],
+  ),
+);
 
 addWorkspaceOption(
   program
     .command('search <text>')
-    .description('Keyword search across markdown body/frontmatter with optional QMD-compatible mode')
-    .option('--type <type>', 'Limit to primitive type')
-    .option('--mode <mode>', 'auto | core | qmd', 'auto')
-    .option('--limit <n>', 'Result limit')
-    .option('--json', 'Emit structured JSON output')
-).action((text, opts) => {
-  if (isRemoteMode(opts)) {
-    return runCommand(
-      opts,
-      () => withRemoteClient(opts, (client) =>
-        client.callTool<{
-          mode: string;
-          fallbackReason?: string;
-          results: PrimitiveRecord[];
-          count: number;
-        }>('workgraph_search', {
-          text,
-          mode: opts.mode,
-          type: opts.type,
-          limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
-        })),
-      (result) => [
-        `Mode: ${result.mode}`,
-        ...(result.fallbackReason ? [`Note: ${result.fallbackReason}`] : []),
-        ...result.results.map((item) => `${item.type} ${item.path}`),
-      ],
-    );
-  }
-  return runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const result = workgraph.searchQmdAdapter.search(workspacePath, text, {
-        mode: opts.mode,
-        type: opts.type,
-        limit: opts.limit ? Number.parseInt(String(opts.limit), 10) : undefined,
-      });
-      return {
-        ...result,
-        count: result.results.length,
-      };
-    },
-    (result) => [
-      `Mode: ${result.mode}`,
-      ...(result.fallbackReason ? [`Note: ${result.fallbackReason}`] : []),
-      ...result.results.map((item) => `${item.type} ${item.path}`),
-    ],
-  );
-});
-
-// ============================================================================
-// board/graph
-// ============================================================================
-
-const boardCmd = program
-  .command('board')
-  .description('Generate and sync Obsidian Kanban board views');
-
-addWorkspaceOption(
-  boardCmd
-    .command('generate')
-    .description('Generate Obsidian Kanban board markdown from thread states')
-    .option('-o, --output <path>', 'Output board path', 'ops/Workgraph Board.md')
-    .option('--include-cancelled', 'Include cancelled lane')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
+    .description('Keyword search primitive content')
+    .option('--type <type>', 'Primitive type')
+    .option('--limit <n>', 'Limit')
+    .option('--json', 'Emit structured JSON output'),
+).action((text, opts) =>
   runCommand(
     opts,
     () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.board.generateKanbanBoard(workspacePath, {
-        outputPath: opts.output,
-        includeCancelled: !!opts.includeCancelled,
+      const results = workgraph.query.keywordSearch(resolveWorkspacePath(opts), text, {
+        type: opts.type,
+        limit: opts.limit ? parsePositiveIntOption(opts.limit, 'limit') : undefined,
       });
+      return { query: text, results, count: results.length };
     },
-    (result) => [
-      `Generated board: ${result.outputPath}`,
-      `Backlog=${result.counts.backlog} InProgress=${result.counts.inProgress} Blocked=${result.counts.blocked} Done=${result.counts.done}`,
-    ],
-  )
+    (result) => result.results.length > 0
+      ? [
+          ...result.results.map((entry) => `${entry.type} ${entry.path}`),
+          `${result.count} result(s)`,
+        ]
+      : ['No search results found.'],
+  ),
+);
+
+const lensCmd = program
+  .command('lens')
+  .description('Generate context lenses');
+
+addWorkspaceOption(
+  lensCmd
+    .command('list')
+    .description('List built-in lenses')
+    .option('--json', 'Emit structured JSON output'),
+).action((opts) =>
+  runCommand(
+    opts,
+    () => ({ lenses: workgraph.lens.listContextLenses() }),
+    (result) => result.lenses.map((entry) => `${entry.id}: ${entry.description}`),
+  ),
 );
 
 addWorkspaceOption(
-  boardCmd
-    .command('sync')
-    .description('Sync existing board markdown from current thread states')
-    .option('-o, --output <path>', 'Output board path', 'ops/Workgraph Board.md')
-    .option('--include-cancelled', 'Include cancelled lane')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
+  lensCmd
+    .command('show <lensId>')
+    .description('Generate or materialize one lens')
+    .option('-a, --actor <actor>', 'Actor', DEFAULT_ACTOR)
+    .option('--lookback-hours <n>', 'Lookback hours')
+    .option('--stale-hours <n>', 'Stale hours')
+    .option('--limit <n>', 'Item limit')
+    .option('--output <path>', 'Write markdown to a file')
+    .option('--json', 'Emit structured JSON output'),
+).action((lensId, opts) =>
   runCommand(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.board.syncKanbanBoard(workspacePath, {
-        outputPath: opts.output,
-        includeCancelled: !!opts.includeCancelled,
-      });
+      const sharedOptions = {
+        actor: opts.actor,
+        lookbackHours: opts.lookbackHours ? parsePositiveIntOption(opts.lookbackHours, 'lookback-hours') : undefined,
+        staleHours: opts.staleHours ? parsePositiveIntOption(opts.staleHours, 'stale-hours') : undefined,
+        limit: opts.limit ? parsePositiveIntOption(opts.limit, 'limit') : undefined,
+      };
+      if (opts.output) {
+        return workgraph.lens.materializeContextLens(workspacePath, lensId, {
+          ...sharedOptions,
+          outputPath: opts.output,
+        });
+      }
+      return workgraph.lens.generateContextLens(workspacePath, lensId, sharedOptions);
     },
     (result) => [
-      `Synced board: ${result.outputPath}`,
-      `Backlog=${result.counts.backlog} InProgress=${result.counts.inProgress} Blocked=${result.counts.blocked} Done=${result.counts.done}`,
+      `Lens: ${result.lens}`,
+      `Sections: ${result.sections.length}`,
+      ...('outputPath' in result ? [`Output: ${result.outputPath}`] : []),
     ],
-  )
+  ),
 );
 
 const graphCmd = program
   .command('graph')
-  .description('Wiki-link graph indexing and hygiene');
+  .description('Inspect context graph structure');
 
 addWorkspaceOption(
   graphCmd
     .command('index')
-    .description('Build wiki-link graph index')
-    .option('--json', 'Emit structured JSON output')
+    .description('Refresh wiki-link graph index')
+    .option('--json', 'Emit structured JSON output'),
 ).action((opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.graph.refreshWikiLinkGraphIndex(workspacePath);
-    },
-    (result) => [
-      `Nodes: ${result.nodes.length}`,
-      `Edges: ${result.edges.length}`,
-      `Broken links: ${result.brokenLinks.length}`,
-    ],
-  )
+    () => workgraph.graph.refreshWikiLinkGraphIndex(resolveWorkspacePath(opts)),
+    (result) => [`Indexed ${result.nodes.length} nodes and ${result.edges.length} edges.`],
+  ),
 );
 
 addWorkspaceOption(
   graphCmd
     .command('hygiene')
-    .description('Generate graph hygiene report (orphans, broken links, hubs)')
-    .option('--json', 'Emit structured JSON output')
+    .description('Report graph hygiene metrics')
+    .option('--json', 'Emit structured JSON output'),
 ).action((opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.graph.graphHygieneReport(workspacePath);
-    },
+    () => workgraph.graph.graphHygieneReport(resolveWorkspacePath(opts)),
     (result) => [
-      `Nodes=${result.nodeCount} Edges=${result.edgeCount}`,
-      `Orphans=${result.orphanCount} BrokenLinks=${result.brokenLinkCount}`,
-      `Top hub: ${result.hubs[0]?.node ?? 'none'}`,
+      `Nodes: ${result.nodeCount}`,
+      `Edges: ${result.edgeCount}`,
+      `Broken links: ${result.brokenLinkCount}`,
+      `Orphans: ${result.orphanCount}`,
     ],
-  )
+  ),
 );
 
 addWorkspaceOption(
   graphCmd
-    .command('neighborhood <slug>')
-    .description('Find connected primitives within N wiki-link hops')
-    .option('--depth <n>', 'Traversal depth (default: 2)', '2')
-    .option('--refresh', 'Refresh graph index before querying')
-    .option('--json', 'Emit structured JSON output')
-).action((slug, opts) =>
+    .command('neighborhood <nodeRef>')
+    .description('Show graph neighborhood for one primitive')
+    .option('--depth <n>', 'Neighborhood depth', '2')
+    .option('--refresh', 'Rebuild index before query')
+    .option('--json', 'Emit structured JSON output'),
+).action((nodeRef, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.graph.graphNeighborhoodQuery(workspacePath, slug, {
-        depth: parseNonNegativeIntOption(opts.depth, 'depth'),
-        refresh: !!opts.refresh,
-      });
-    },
+    () => workgraph.graph.graphNeighborhoodQuery(resolveWorkspacePath(opts), nodeRef, {
+      depth: parseNonNegativeIntOption(opts.depth, 'depth'),
+      refresh: !!opts.refresh,
+    }),
     (result) => [
-      `Center: ${result.center.path} (${result.center.exists ? 'exists' : 'missing'})`,
-      `Depth: ${result.depth}`,
+      `Center: ${result.center.path}`,
       `Connected nodes: ${result.connectedNodes.length}`,
-      `Edges in neighborhood: ${result.edges.length}`,
+      `Edges: ${result.edges.length}`,
     ],
-  )
+  ),
 );
 
 addWorkspaceOption(
   graphCmd
-    .command('impact <slug>')
-    .description('Analyze reverse-link impact for a primitive')
-    .option('--refresh', 'Refresh graph index before querying')
-    .option('--json', 'Emit structured JSON output')
-).action((slug, opts) =>
+    .command('impact <nodeRef>')
+    .description('Show inbound references to one primitive')
+    .option('--refresh', 'Rebuild index before query')
+    .option('--json', 'Emit structured JSON output'),
+).action((nodeRef, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.graph.graphImpactAnalysis(workspacePath, slug, {
-        refresh: !!opts.refresh,
-      });
-    },
+    () => workgraph.graph.graphImpactAnalysis(resolveWorkspacePath(opts), nodeRef, {
+      refresh: !!opts.refresh,
+    }),
     (result) => [
-      `Target: ${result.target.path} (${result.target.exists ? 'exists' : 'missing'})`,
-      `Total references: ${result.totalReferences}`,
-      ...result.groups.map((group) => `${group.type}: ${group.referenceCount}`),
+      `Target: ${result.target.path}`,
+      `References: ${result.totalReferences}`,
+      `Groups: ${result.groups.length}`,
     ],
-  )
+  ),
 );
 
 addWorkspaceOption(
   graphCmd
-    .command('context <slug>')
-    .description('Assemble token-budgeted markdown context from graph neighborhood')
-    .option('--budget <tokens>', 'Approx token budget (chars/4)', '2000')
-    .option('--refresh', 'Refresh graph index before querying')
-    .option('--json', 'Emit structured JSON output')
-).action((slug, opts) =>
+    .command('context <nodeRef>')
+    .description('Assemble a context bundle around one primitive')
+    .option('--budget <tokens>', 'Token budget', '2000')
+    .option('--refresh', 'Rebuild index before query')
+    .option('--json', 'Emit structured JSON output'),
+).action((nodeRef, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.graph.graphContextAssembly(workspacePath, slug, {
-        budgetTokens: parsePositiveIntOption(opts.budget, 'budget'),
-        refresh: !!opts.refresh,
-      });
-    },
+    () => workgraph.graph.graphContextAssembly(resolveWorkspacePath(opts), nodeRef, {
+      budgetTokens: parsePositiveIntegerOption(opts.budget, 'budget'),
+      refresh: !!opts.refresh,
+    }),
     (result) => [
       `Center: ${result.center.path}`,
-      `Budget: ${result.budgetTokens} tokens`,
-      `Used: ${result.usedTokens} tokens`,
+      `Used tokens: ${result.usedTokens}/${result.budgetTokens}`,
       `Sections: ${result.sections.length}`,
-      '',
-      result.markdown,
     ],
-  )
+  ),
 );
 
 addWorkspaceOption(
   graphCmd
-    .command('edges <slug>')
-    .description('Show typed incoming/outgoing edges for one primitive')
-    .option('--refresh', 'Refresh graph index before querying')
-    .option('--json', 'Emit structured JSON output')
-).action((slug, opts) =>
+    .command('edges <nodeRef>')
+    .description('Inspect typed edges for one primitive')
+    .option('--refresh', 'Rebuild index before query')
+    .option('--json', 'Emit structured JSON output'),
+).action((nodeRef, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.graph.graphTypedEdges(workspacePath, slug, {
-        refresh: !!opts.refresh,
-      });
-    },
+    () => workgraph.graph.graphTypedEdges(resolveWorkspacePath(opts), nodeRef, {
+      refresh: !!opts.refresh,
+    }),
     (result) => [
-      `Node: ${result.node.path} (${result.node.exists ? 'exists' : 'missing'})`,
-      `Outgoing edges: ${result.outgoing.length}`,
-      `Incoming edges: ${result.incoming.length}`,
-      ...result.outgoing.map((edge) => `OUT ${edge.type} ${edge.from} -> ${edge.to}`),
-      ...result.incoming.map((edge) => `IN  ${edge.type} ${edge.from} -> ${edge.to}`),
-    ],
-  )
-);
-
-addWorkspaceOption(
-  graphCmd
-    .command('export <slug>')
-    .description('Export a markdown subgraph directory around a center primitive')
-    .option('--depth <n>', 'Traversal depth (default: 2)', '2')
-    .option('--format <format>', 'Export format (default: md)', 'md')
-    .option('--output-dir <path>', 'Output directory (default under .workgraph/graph-exports)')
-    .option('--refresh', 'Refresh graph index before querying')
-    .option('--json', 'Emit structured JSON output')
-).action((slug, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const format = String(opts.format ?? 'md').trim().toLowerCase();
-      if (format !== 'md') {
-        throw new Error(`Invalid --format "${opts.format}". Supported formats: md.`);
-      }
-      return workgraph.graph.graphExportSubgraph(workspacePath, slug, {
-        depth: parseNonNegativeIntOption(opts.depth, 'depth'),
-        format,
-        outputDir: opts.outputDir,
-        refresh: !!opts.refresh,
-      });
-    },
-    (result) => [
-      `Exported subgraph: ${result.outputDirectory}`,
-      `Center: ${result.center.path}`,
-      `Depth: ${result.depth}`,
-      `Nodes: ${result.exportedNodes.length}`,
-      `Edges: ${result.exportedEdgeCount}`,
-      `Manifest: ${result.manifestPath}`,
-    ],
-  )
-);
-
-addWorkspaceOption(
-  graphCmd
-    .command('neighbors <nodePath>')
-    .description('Query incoming/outgoing wiki-link neighbors for one node')
-    .option('--refresh', 'Refresh graph index before querying')
-    .option('--json', 'Emit structured JSON output')
-).action((nodePath, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.graph.graphNeighborhood(workspacePath, nodePath, {
-        refresh: !!opts.refresh,
-      });
-    },
-    (result) => [
-      `Node: ${result.node} (${result.exists ? 'exists' : 'missing'})`,
+      `Node: ${result.node.path}`,
       `Outgoing: ${result.outgoing.length}`,
       `Incoming: ${result.incoming.length}`,
     ],
-  )
-);
-
-// ============================================================================
-// policy
-// ============================================================================
-
-const policyCmd = program
-  .command('policy')
-  .description('Manage policy parties and capabilities');
-
-const policyPartyCmd = policyCmd
-  .command('party')
-  .description('Manage registered policy parties');
-
-addWorkspaceOption(
-  policyPartyCmd
-    .command('upsert <id>')
-    .description('Create or update a policy party')
-    .option('--roles <roles>', 'Comma-separated roles')
-    .option('--capabilities <caps>', 'Comma-separated capabilities')
-    .option('--json', 'Emit structured JSON output')
-).action((id, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        party: workgraph.policy.upsertParty(workspacePath, id, {
-          roles: csv(opts.roles),
-          capabilities: csv(opts.capabilities),
-        }),
-      };
-    },
-    (result) => [`Upserted policy party: ${result.party.id}`],
-  )
+  ),
 );
 
 addWorkspaceOption(
-  policyPartyCmd
-    .command('get <id>')
-    .description('Get one policy party')
-    .option('--json', 'Emit structured JSON output')
-).action((id, opts) =>
+  graphCmd
+    .command('export <nodeRef>')
+    .description('Export a subgraph to markdown files')
+    .option('--depth <n>', 'Neighborhood depth', '2')
+    .option('--output-dir <path>', 'Output directory')
+    .option('--refresh', 'Rebuild index before query')
+    .option('--json', 'Emit structured JSON output'),
+).action((nodeRef, opts) =>
   runCommand(
     opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const party = workgraph.policy.getParty(workspacePath, id);
-      if (!party) throw new Error(`Policy party not found: ${id}`);
-      return { party };
-    },
-    (result) => [`${result.party.id} roles=${result.party.roles.join(',')}`],
-  )
+    () => workgraph.graph.graphExportSubgraph(resolveWorkspacePath(opts), nodeRef, {
+      depth: parseNonNegativeIntOption(opts.depth, 'depth'),
+      outputDir: opts.outputDir,
+      refresh: !!opts.refresh,
+    }),
+    (result) => [
+      `Exported nodes: ${result.exportedNodes.length}`,
+      `Output directory: ${result.outputDirectory}`,
+      `Manifest: ${result.manifestPath}`,
+    ],
+  ),
 );
-
-addWorkspaceOption(
-  policyPartyCmd
-    .command('list')
-    .description('List policy parties')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const registry = workgraph.policy.loadPolicyRegistry(workspacePath);
-      return {
-        parties: Object.values(registry.parties),
-      };
-    },
-    (result) => result.parties.map((party) => `${party.id} [${party.roles.join(', ')}]`),
-  )
-);
-
-// ============================================================================
-// gate
-// ============================================================================
-
-const gateCmd = program
-  .command('gate')
-  .description('Evaluate thread quality gates before claim');
-
-addWorkspaceOption(
-  gateCmd
-    .command('check <threadRef>')
-    .description('Check policy-gate status for one thread')
-    .option('--json', 'Emit structured JSON output')
-).action((threadRef, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.gate.checkThreadGates(workspacePath, threadRef);
-    },
-    (result) => {
-      const header = [`Gate check for ${result.threadPath}: ${result.allowed ? 'PASSED' : 'FAILED'}`];
-      if (result.gates.length === 0) {
-        return [...header, 'No gates configured.'];
-      }
-      const details = result.gates.map((gate) => {
-        const failingRules = gate.rules.filter((rule) => !rule.ok);
-        const gateLabel = gate.gatePath ?? gate.gateRef;
-        if (failingRules.length === 0) {
-          return `[pass] ${gateLabel}`;
-        }
-        return `[fail] ${gateLabel} :: ${failingRules.map((rule) => rule.message).join('; ')}`;
-      });
-      return [...header, ...details];
-    },
-  )
-);
-
-// ============================================================================
-// dispatch
-// ============================================================================
-
-registerAdapterCommands(program, DEFAULT_ACTOR);
-registerDispatchCommands(program, DEFAULT_ACTOR);
-registerCursorCommands(program, DEFAULT_ACTOR);
-
-// ============================================================================
-// trigger
-// ============================================================================
-
-registerTriggerCommands(program, DEFAULT_ACTOR);
-registerWebhookCommands(program, DEFAULT_ACTOR);
-
-// ============================================================================
-// conversation + plan-step
-// ============================================================================
 
 registerConversationCommands(program, DEFAULT_ACTOR);
-
-// ============================================================================
-// safety
-// ============================================================================
-
-registerSafetyCommands(program, DEFAULT_ACTOR);
-registerPortabilityCommands(program);
-registerFederationCommands(program, threadCmd, DEFAULT_ACTOR);
-registerCapabilityCommands(program, DEFAULT_ACTOR);
-registerMissionCommands(program, DEFAULT_ACTOR);
-
-// ============================================================================
-// onboarding
-// ============================================================================
-
-addWorkspaceOption(
-  program
-    .command('onboard')
-    .description('Guided agent-first workspace setup and starter artifacts')
-    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
-    .option('--spaces <list>', 'Comma-separated space names')
-    .option('--no-demo-threads', 'Skip starter onboarding threads')
-    .option('--json', 'Emit structured JSON output')
-).action((opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return workgraph.onboard.onboardWorkspace(workspacePath, {
-        actor: opts.actor,
-        spaces: csv(opts.spaces),
-        createDemoThreads: opts.demoThreads,
-      });
-    },
-    (result) => [
-      `Onboarded actor: ${result.actor}`,
-      `Spaces created: ${result.spacesCreated.length}`,
-      `Threads created: ${result.threadsCreated.length}`,
-      `Board: ${result.boardPath}`,
-      `Command center: ${result.commandCenterPath}`,
-      `Onboarding primitive: ${result.onboardingPath}`,
-    ],
-  )
-);
-
-const onboardingCmd = program
-  .command('onboarding')
-  .description('Manage onboarding primitive lifecycle');
-
-addWorkspaceOption(
-  onboardingCmd
-    .command('show <onboardingPath>')
-    .description('Show one onboarding primitive')
-    .option('--json', 'Emit structured JSON output')
-).action((onboardingPath, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const onboarding = workgraph.store.read(workspacePath, onboardingPath);
-      if (!onboarding) throw new Error(`Onboarding primitive not found: ${onboardingPath}`);
-      if (onboarding.type !== 'onboarding') throw new Error(`Target is not onboarding primitive: ${onboardingPath}`);
-      return { onboarding };
-    },
-    (result) => [
-      `Onboarding: ${result.onboarding.path}`,
-      `Status: ${String(result.onboarding.fields.status)}`,
-      `Actor: ${String(result.onboarding.fields.actor)}`,
-    ],
-  )
-);
-
-addWorkspaceOption(
-  onboardingCmd
-    .command('update <onboardingPath>')
-    .description('Update onboarding lifecycle status')
-    .requiredOption('--status <status>', 'active|paused|completed')
-    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
-    .option('--json', 'Emit structured JSON output')
-).action((onboardingPath, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      return {
-        onboarding: workgraph.onboard.updateOnboardingStatus(
-          workspacePath,
-          onboardingPath,
-          normalizeOnboardingStatus(opts.status),
-          opts.actor,
-        ),
-      };
-    },
-    (result) => [`Updated onboarding: ${result.onboarding.path} [${String(result.onboarding.fields.status)}]`],
-  )
-);
-
-// ============================================================================
-// autonomy
-// ============================================================================
-
-registerAutonomyCommands(program, DEFAULT_ACTOR);
-
-// ============================================================================
-// remote/api diagnostics
-// ============================================================================
-
-program
-  .command('remote')
-  .description('Remote/API mode diagnostics')
-  .command('test')
-  .description('Ping MCP HTTP endpoint and list available tools')
-  .option('--api-url <url>', 'Workgraph MCP HTTP endpoint URL (or WORKGRAPH_API_URL env)')
-  .option('--api-key <token>', 'Agent credential API key (or WORKGRAPH_API_KEY env)')
-  .option('--json', 'Emit structured JSON output')
-  .action((opts) =>
-    runCommand(
-      opts,
-      () => withRemoteClient(opts, async (client) => {
-        const tools = await client.listTools();
-        const status = await client.callTool<ReturnType<typeof workgraph.orientation.statusSnapshot>>(
-          'workgraph_status',
-          {},
-        );
-        return {
-          apiUrl: resolveApiUrl(opts),
-          ok: true,
-          toolCount: tools.length,
-          tools: tools.map((tool) => tool.name).sort((left, right) => left.localeCompare(right)),
-          status,
-        };
-      }),
-      (result) => [
-        `Connected to: ${result.apiUrl}`,
-        `MCP tools available: ${result.toolCount}`,
-        `Threads: total=${result.status.threads.total} ready=${result.status.threads.ready} active=${result.status.threads.active}`,
-        `Claims: active=${result.status.claims.active}`,
-      ],
-    ),
-  );
-
-// ============================================================================
-// serve (http server)
-// ============================================================================
+registerMcpCommands(program, DEFAULT_ACTOR);
 
 addWorkspaceOption(
   program
     .command('serve')
-    .description('Serve Workgraph HTTP MCP server + REST API')
-    .option('--port <port>', 'HTTP port (defaults to server config or 8787)')
-    .option('--host <host>', 'Bind host (defaults to server config or 0.0.0.0)')
-    .option('--token <token>', 'Optional bearer token for MCP + REST auth')
-    .option('-a, --actor <name>', 'Default actor for thread mutations'),
+    .description('Serve the MCP HTTP endpoint for this workspace')
+    .option('-a, --actor <name>', 'Default actor for MCP writes', DEFAULT_ACTOR)
+    .option('--read-only', 'Disable MCP write tools')
+    .option('--port <port>', 'HTTP port')
+    .option('--host <host>', 'Bind host')
+    .option('--endpoint-path <path>', 'MCP endpoint path')
+    .option('--token <token>', 'Bearer token for HTTP access')
+    .option('--json', 'Emit structured JSON output'),
 ).action(async (opts) => {
   const workspacePath = resolveWorkspacePath(opts);
   const serverConfig = workgraph.serverConfig.loadServerConfig(workspacePath);
-  const port = opts.port !== undefined
-    ? parsePortOption(opts.port)
-    : (serverConfig?.port ?? 8787);
-  const host = opts.host
-    ? String(opts.host)
-    : (serverConfig?.host ?? '0.0.0.0');
-  const defaultActor = opts.actor
-    ? String(opts.actor)
-    : (serverConfig?.defaultActor ?? DEFAULT_ACTOR);
-  const endpointPath = serverConfig?.endpointPath;
-  const bearerToken = opts.token
-    ? String(opts.token)
-    : serverConfig?.bearerToken;
-  const handle = await startWorkgraphServer({
+  const handle = await startWorkgraphMcpHttpServer({
     workspacePath,
-    host,
-    port,
-    endpointPath,
-    bearerToken,
-    defaultActor,
+    defaultActor: opts.actor,
+    readOnly: !!opts.readOnly,
+    host: opts.host ?? serverConfig?.host ?? '127.0.0.1',
+    port: opts.port ? parsePortOption(opts.port) : serverConfig?.port,
+    endpointPath: opts.endpointPath ?? serverConfig?.endpointPath,
+    bearerToken: readNonEmptyString(opts.token) ?? serverConfig?.bearerToken,
   });
-  console.log(`Server URL: ${handle.baseUrl}`);
-  console.log(`MCP endpoint: ${handle.url}`);
-  console.log(`Health: ${handle.healthUrl}`);
-  console.log(`Status API: ${handle.baseUrl}/api/status`);
-  console.log(`Webhook endpoint template: ${handle.webhookGatewayUrlTemplate}`);
-  await waitForShutdown(handle, {
-    onSignal: (signal) => {
-      console.error(`Received ${signal}; shutting down...`);
-    },
-    onClosed: () => {
-      console.error('Server stopped.');
-    },
-  });
+
+  if (wantsJson(opts)) {
+    console.log(JSON.stringify({
+      ok: true,
+      data: {
+        host: handle.host,
+        port: handle.port,
+        endpointPath: handle.endpointPath,
+        healthUrl: handle.healthUrl,
+        url: handle.url,
+      },
+    }, null, 2));
+  } else {
+    console.log(`Serving MCP HTTP on ${handle.url}`);
+    console.log(`Health: ${handle.healthUrl}`);
+  }
+
+  await waitForShutdown(handle.close);
 });
 
-// ============================================================================
-// mcp
-// ============================================================================
+program.parseAsync(process.argv).catch((error) => {
+  console.error(error instanceof Error ? error.message : String(error));
+  process.exit(1);
+});
 
-registerMcpCommands(program, DEFAULT_ACTOR);
-
-// ============================================================================
-// swarm
-// ============================================================================
-
-const swarmCmd = program
-  .command('swarm')
-  .description('Decompose goals into tasks and orchestrate agent swarms');
-
-addWorkspaceOption(
-  swarmCmd
-    .command('deploy <planFile>')
-    .description('Deploy a swarm plan (JSON) into the workspace as threads')
-    .option('-a, --actor <name>', 'Actor name', DEFAULT_ACTOR)
-    .option('--json', 'Emit structured JSON output')
-).action((planFile, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const workspacePath = resolveWorkspacePath(opts);
-      const planPath = path.resolve(planFile);
-      const planData = JSON.parse(fs.readFileSync(planPath, 'utf-8'));
-      return workgraph.swarm.deployPlan(workspacePath, planData, opts.actor);
-    },
-    (result) => [
-      `Swarm deployed: ${result.spaceSlug}`,
-      `Threads: ${result.threadPaths.length}`,
-      `Status: ${result.status}`,
-    ],
-  )
-);
-
-addWorkspaceOption(
-  swarmCmd
-    .command('status <spaceSlug>')
-    .description('Show swarm progress')
-    .option('--json', 'Emit structured JSON output')
-).action((spaceSlug, opts) =>
-  runCommand(
-    opts,
-    () => workgraph.swarm.getSwarmStatus(resolveWorkspacePath(opts), spaceSlug),
-    (result) => [
-      `Swarm: ${result.deployment.spaceSlug} [${result.deployment.status}]`,
-      `Progress: ${result.done}/${result.total} (${result.percentComplete}%)`,
-      `Claimed: ${result.claimed} | Open: ${result.open} | Blocked: ${result.blocked}`,
-      `Ready to claim: ${result.readyToClaim}`,
-    ],
-  )
-);
-
-addWorkspaceOption(
-  swarmCmd
-    .command('claim <spaceSlug>')
-    .description('Claim the next available task in a swarm')
-    .option('-a, --actor <name>', 'Worker agent name', DEFAULT_ACTOR)
-    .option('--json', 'Emit structured JSON output')
-).action((spaceSlug, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const result = workgraph.swarm.workerClaim(resolveWorkspacePath(opts), spaceSlug, opts.actor);
-      if (!result) return { claimed: false, message: 'No tasks available' };
-      return { claimed: true, path: result.path, title: result.fields.title };
-    },
-    (result) => result.claimed
-      ? [`Claimed: ${result.path} — ${result.title}`]
-      : ['No tasks available to claim'],
-  )
-);
-
-addWorkspaceOption(
-  swarmCmd
-    .command('complete <threadPath>')
-    .description('Mark a swarm task as done with result')
-    .option('-a, --actor <name>', 'Worker agent name', DEFAULT_ACTOR)
-    .requiredOption('--result <text>', 'Result text (or @file to read from file)')
-    .option('--json', 'Emit structured JSON output')
-).action((threadPath, opts) =>
-  runCommand(
-    opts,
-    () => {
-      let resultText = opts.result;
-      if (resultText.startsWith('@')) {
-        resultText = fs.readFileSync(resultText.slice(1), 'utf-8');
-      }
-      return workgraph.swarm.workerComplete(resolveWorkspacePath(opts), threadPath, opts.actor, resultText);
-    },
-    (result) => [`Completed: ${result.path}`],
-  )
-);
-
-addWorkspaceOption(
-  swarmCmd
-    .command('synthesize <spaceSlug>')
-    .description('Merge all completed task results into a single document')
-    .option('-o, --output <file>', 'Output file path')
-    .option('--json', 'Emit structured JSON output')
-).action((spaceSlug, opts) =>
-  runCommand(
-    opts,
-    () => {
-      const result = workgraph.swarm.synthesize(resolveWorkspacePath(opts), spaceSlug);
-      if (opts.output) {
-        fs.writeFileSync(path.resolve(opts.output), result.markdown);
-      }
-      return result;
-    },
-    (result) => [
-      `Synthesized: ${result.completedCount}/${result.totalCount} tasks`,
-      opts.output ? `Written to: ${opts.output}` : result.markdown,
-    ],
-  )
-);
-
-await program.parseAsync();
-
-function isRemoteMode(opts: JsonCapableOptions): boolean {
-  return !!resolveApiUrl(opts);
-}
-
-async function withRemoteClient<T>(
-  opts: JsonCapableOptions,
-  action: (client: WorkgraphRemoteClient) => Promise<T>,
-): Promise<T> {
-  const apiUrl = resolveApiUrl(opts);
-  if (!apiUrl) {
-    throw new Error('Remote API mode requires --api-url or WORKGRAPH_API_URL.');
+function normalizePriority(value: string): 'urgent' | 'high' | 'medium' | 'low' {
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'urgent' || normalized === 'high' || normalized === 'medium' || normalized === 'low') {
+    return normalized;
   }
-  const client = await WorkgraphRemoteClient.connect({
-    apiUrl,
-    apiKey: resolveApiKey(opts),
-    version: CLI_VERSION,
-  });
-  try {
-    return await action(client);
-  } finally {
-    await client.close();
-  }
+  throw new Error(`Invalid priority "${value}". Expected urgent|high|medium|low.`);
 }
 
-function isMaterializedLensResult(
-  value: workgraph.WorkgraphLensResult | workgraph.WorkgraphMaterializedLensResult,
-): value is workgraph.WorkgraphMaterializedLensResult {
-  return typeof (value as workgraph.WorkgraphMaterializedLensResult).outputPath === 'string';
-}
-
-function normalizeAgentPresenceStatus(status: string): 'online' | 'busy' | 'offline' {
-  const normalized = String(status).toLowerCase();
+function normalizePresenceStatus(value: string): 'online' | 'busy' | 'offline' {
+  const normalized = String(value).trim().toLowerCase();
   if (normalized === 'online' || normalized === 'busy' || normalized === 'offline') {
     return normalized;
   }
-  throw new Error(`Invalid agent status "${status}". Expected online|busy|offline.`);
+  throw new Error(`Invalid status "${value}". Expected online|busy|offline.`);
 }
 
-function normalizeOnboardingStatus(status: string): 'active' | 'paused' | 'completed' {
-  const normalized = String(status).toLowerCase();
-  if (normalized === 'active' || normalized === 'paused' || normalized === 'completed') {
+function normalizeParticipantRole(value: string): 'owner' | 'contributor' | 'reviewer' | 'observer' {
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'owner' || normalized === 'contributor' || normalized === 'reviewer' || normalized === 'observer') {
     return normalized;
   }
-  throw new Error(`Invalid onboarding status "${status}". Expected active|paused|completed.`);
+  throw new Error(`Invalid role "${value}". Expected owner|contributor|reviewer|observer.`);
+}
+
+function normalizeRegistrationDecision(value: string): 'approved' | 'rejected' {
+  const normalized = String(value).trim().toLowerCase();
+  if (normalized === 'approved' || normalized === 'rejected') {
+    return normalized;
+  }
+  throw new Error(`Invalid decision "${value}". Expected approved|rejected.`);
+}
+
+function normalizePath(value: string): string {
+  const trimmed = String(value).trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  return trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+}
+
+function collectSetPairs(value: string, existing: string[]): string[] {
+  existing.push(value);
+  return existing;
+}
+
+function mergeSetPairs(values: string[]): Record<string, unknown> {
+  return values.reduce<Record<string, unknown>>((acc, entry) => {
+    Object.assign(acc, parseSetPairs([entry]));
+    return acc;
+  }, {});
+}
+
+function collectFieldSpecs(value: string, existing: string[]): string[] {
+  existing.push(value);
+  return existing;
+}
+
+function parseFieldDefinitions(values: string[]): Record<string, workgraph.FieldDefinition> {
+  const fields: Record<string, workgraph.FieldDefinition> = {};
+  for (const value of values) {
+    const [namePart, typePart] = String(value).split(':');
+    const name = readNonEmptyString(namePart);
+    const type = readNonEmptyString(typePart);
+    if (!name || !type) {
+      throw new Error(`Invalid field definition "${value}". Expected name:type.`);
+    }
+    fields[name] = {
+      type: parseFieldType(type),
+    };
+  }
+  return fields;
+}
+
+function parseFieldType(value: string): workgraph.FieldDefinition['type'] {
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === 'string' ||
+    normalized === 'number' ||
+    normalized === 'boolean' ||
+    normalized === 'list' ||
+    normalized === 'date' ||
+    normalized === 'ref' ||
+    normalized === 'any'
+  ) {
+    return normalized;
+  }
+  throw new Error(`Invalid field type "${value}". Expected string|number|boolean|list|date|ref|any.`);
+}
+
+function collectSubthreadSpecs(
+  value: string,
+  existing: Array<{ title: string; goal: string; deps?: string[] }>,
+): Array<{ title: string; goal: string; deps?: string[] }> {
+  const [title, goal, deps] = String(value).split('::');
+  if (!readNonEmptyString(title) || !readNonEmptyString(goal)) {
+    throw new Error(`Invalid subthread spec "${value}". Expected title::goal[::dep1,dep2].`);
+  }
+  existing.push({
+    title: title.trim(),
+    goal: goal.trim(),
+    ...(readNonEmptyString(deps) ? { deps: deps.split(',').map((entry) => entry.trim()).filter(Boolean) } : {}),
+  });
+  return existing;
+}
+
+async function waitForShutdown(close: () => Promise<void>): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let closing = false;
+    const stop = async () => {
+      if (closing) return;
+      closing = true;
+      cleanup();
+      try {
+        await close();
+        resolve();
+      } catch (error) {
+        reject(error);
+      }
+    };
+    const onSigint = () => { void stop(); };
+    const onSigterm = () => { void stop(); };
+    const cleanup = () => {
+      process.off('SIGINT', onSigint);
+      process.off('SIGTERM', onSigterm);
+    };
+    process.on('SIGINT', onSigint);
+    process.on('SIGTERM', onSigterm);
+  });
+}
+
+function readNonEmptyString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
 }

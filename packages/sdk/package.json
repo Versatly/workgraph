@@ -9,14 +9,7 @@
   "main": "src/index.ts",
   "types": "src/index.ts",
   "dependencies": {
-    "@versatly/workgraph-adapter-claude-code": "workspace:*",
-    "@versatly/workgraph-adapter-cursor-cloud": "workspace:*",
-    "@versatly/workgraph-control-api": "workspace:*",
     "@versatly/workgraph-kernel": "workspace:*",
-    "@versatly/workgraph-mcp-server": "workspace:*",
-    "@versatly/workgraph-obsidian-integration": "workspace:*",
-    "@versatly/workgraph-runtime-adapter-core": "workspace:*",
-    "@versatly/workgraph-search-qmd-adapter": "workspace:*",
-    "@versatly/workgraph-skills": "workspace:*"
+    "@versatly/workgraph-mcp-server": "workspace:*"
   }
 }

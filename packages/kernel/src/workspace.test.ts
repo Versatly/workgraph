@@ -26,8 +26,6 @@ describe('workspace init', () => {
     expect(fs.existsSync(path.join(workspacePath, 'threads'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'spaces'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'agents'))).toBe(true);
-    expect(fs.existsSync(path.join(workspacePath, 'skills'))).toBe(true);
-    expect(fs.existsSync(path.join(workspacePath, 'onboarding'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'README.md'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'QUICKSTART.md'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, '.workgraph/server.json'))).toBe(true);

@@ -28,7 +28,7 @@ describe('bases generation', () => {
     const manifestPath = primitiveRegistryManifestPath(workspacePath);
     expect(fs.existsSync(manifestPath)).toBe(true);
     expect(manifest.primitives.some((primitive) => primitive.name === 'thread')).toBe(true);
-    expect(manifest.primitives.some((primitive) => primitive.name === 'skill')).toBe(true);
+    expect(manifest.primitives.some((primitive) => primitive.name === 'relationship')).toBe(true);
 
     const parsed = readPrimitiveRegistryManifest(workspacePath);
     const thread = parsed.primitives.find((primitive) => primitive.name === 'thread');
@@ -41,7 +41,7 @@ describe('bases generation', () => {
     const result = generateBasesFromPrimitiveRegistry(workspacePath);
 
     expect(result.generated.some((filePath) => filePath.endsWith('/thread.base'))).toBe(true);
-    expect(result.generated.some((filePath) => filePath.endsWith('/skill.base'))).toBe(true);
+    expect(result.generated.some((filePath) => filePath.endsWith('/relationship.base'))).toBe(true);
 
     const threadBase = path.join(workspacePath, '.workgraph/bases/thread.base');
     expect(fs.existsSync(threadBase)).toBe(true);

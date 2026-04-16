@@ -2,40 +2,30 @@ import { type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
 import {
   agent as agentModule,
-  federation as federationModule,
+  contextGraphContract as contextGraphContractModule,
   graph as graphModule,
   ledger as ledgerModule,
   lens as lensModule,
-  mission as missionModule,
   orientation as orientationModule,
-  projections as projectionsModule,
   query as queryModule,
   registry as registryModule,
-  searchQmdAdapter as searchQmdAdapterModule,
   store as storeModule,
-  transport as transportModule,
   thread as threadModule,
-  threadAudit as threadAuditModule,
 } from '@versatly/workgraph-kernel';
 import { resolveActor } from '../auth.js';
 import { errorResult, okResult, renderStatusSummary } from '../result.js';
 import { type WorkgraphMcpServerOptions } from '../types.js';
 
 const agent = agentModule;
-const federation = federationModule;
+const contextGraphContract = contextGraphContractModule;
 const graph = graphModule;
 const ledger = ledgerModule;
 const lens = lensModule;
-const mission = missionModule;
 const orientation = orientationModule;
-const projections = projectionsModule;
 const query = queryModule;
 const registry = registryModule;
-const searchQmdAdapter = searchQmdAdapterModule;
 const store = storeModule;
-const transport = transportModule;
 const thread = threadModule;
-const threadAudit = threadAuditModule;
 
 export function registerReadTools(server: McpServer, options: WorkgraphMcpServerOptions): void {
   server.registerTool(
@@ -62,7 +52,7 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
     'workgraph_brief',
     {
       title: 'Workgraph Brief',
-      description: 'Return actor-centric operational brief (claims, blockers, and next work).',
+      description: 'Return actor-centric operational brief for thread collaboration.',
       inputSchema: {
         actor: z.string().optional(),
         recentCount: z.number().int().min(1).max(100).optional(),
@@ -88,33 +78,10 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
   );
 
   server.registerTool(
-    'workgraph_agent_list',
-    {
-      title: 'Agent List',
-      description: 'List known agent presence entries.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const agents = agent.list(options.workspacePath);
-        return okResult(
-          { agents, count: agents.length },
-          `Agent list returned ${agents.length} entry(s).`,
-        );
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
     'workgraph_company_context',
     {
-      title: 'Workgraph Company Context',
-      description: 'Return company context graph view for an actor.',
+      title: 'Company Context',
+      description: 'Return the current company context snapshot for an actor.',
       inputSchema: {
         actor: z.string().optional(),
       },
@@ -129,8 +96,28 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
         const companyContext = orientation.companyContext(options.workspacePath, actor);
         return okResult(
           companyContext,
-          `Company context for ${actor}: teams=${companyContext.teams.length}, clients=${companyContext.clients.length}.`,
+          `Company context for ${actor}: teams=${companyContext.teams.length}, decisions=${companyContext.recentDecisions.length}.`,
         );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_agent_list',
+    {
+      title: 'Agent List',
+      description: 'List known agent presence entries.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const agents = agent.list(options.workspacePath);
+        return okResult({ agents, count: agents.length }, `Agent list returned ${agents.length} entry(s).`);
       } catch (error) {
         return errorResult(error);
       }
@@ -163,20 +150,7 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
     },
     async (args) => {
       try {
-        const results = query.queryPrimitives(options.workspacePath, {
-          type: args.type,
-          status: args.status,
-          owner: args.owner,
-          tag: args.tag,
-          text: args.text,
-          pathIncludes: args.pathIncludes,
-          updatedAfter: args.updatedAfter,
-          updatedBefore: args.updatedBefore,
-          createdAfter: args.createdAfter,
-          createdBefore: args.createdBefore,
-          limit: args.limit,
-          offset: args.offset,
-        });
+        const results = query.queryPrimitives(options.workspacePath, args);
         return okResult({ results, count: results.length }, `Query returned ${results.length} primitive(s).`);
       } catch (error) {
         return errorResult(error);
@@ -192,7 +166,6 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
       inputSchema: {
         text: z.string().min(1),
         type: z.string().optional(),
-        mode: z.enum(['auto', 'core', 'qmd']).optional(),
         limit: z.number().int().min(0).max(1000).optional(),
       },
       annotations: {
@@ -202,18 +175,11 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
     },
     async (args) => {
       try {
-        const result = searchQmdAdapter.search(options.workspacePath, args.text, {
-          mode: args.mode,
+        const results = query.keywordSearch(options.workspacePath, args.text, {
           type: args.type,
           limit: args.limit,
         });
-        return okResult(
-          {
-            ...result,
-            count: result.results.length,
-          },
-          `Search returned ${result.results.length} result(s) in ${result.mode} mode.`,
-        );
+        return okResult({ results, count: results.length }, `Search returned ${results.length} result(s).`);
       } catch (error) {
         return errorResult(error);
       }
@@ -233,10 +199,7 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
     async () => {
       try {
         const lenses = lens.listContextLenses();
-        return okResult(
-          { lenses, count: lenses.length },
-          `Lens list returned ${lenses.length} item(s).`,
-        );
+        return okResult({ lenses, count: lenses.length }, `Lens list returned ${lenses.length} item(s).`);
       } catch (error) {
         return errorResult(error);
       }
@@ -272,10 +235,7 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
             limit: args.limit,
             outputPath: args.outputPath,
           });
-          return okResult(
-            materialized,
-            `Materialized lens ${materialized.lens} to ${materialized.outputPath}.`,
-          );
+          return okResult(materialized, `Materialized lens ${materialized.lens} to ${materialized.outputPath}.`);
         }
         const generated = lens.generateContextLens(options.workspacePath, args.lensId, {
           actor,
@@ -337,63 +297,10 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
   );
 
   server.registerTool(
-    'workgraph_mission_status',
-    {
-      title: 'Mission Status',
-      description: 'Read one mission primitive and computed progress.',
-      inputSchema: {
-        missionRef: z.string().min(1),
-      },
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async (args) => {
-      try {
-        const missionInstance = mission.missionStatus(options.workspacePath, args.missionRef);
-        const progress = mission.missionProgress(options.workspacePath, missionInstance.path);
-        return okResult(
-          { mission: missionInstance, progress },
-          `Mission ${missionInstance.path} is ${String(missionInstance.fields.status)}.`,
-        );
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'workgraph_mission_progress',
-    {
-      title: 'Mission Progress',
-      description: 'Read aggregate mission progress across milestones and features.',
-      inputSchema: {
-        missionRef: z.string().min(1),
-      },
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async (args) => {
-      try {
-        const progress = mission.missionProgress(options.workspacePath, args.missionRef);
-        return okResult(
-          progress,
-          `Mission progress ${progress.mid}: ${progress.percentComplete}% (${progress.doneFeatures}/${progress.totalFeatures} features).`,
-        );
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
     'workgraph_thread_list',
     {
       title: 'Thread List',
-      description: 'List workspace threads, optionally filtered by status/space/readiness.',
+      description: 'List workspace threads, optionally filtered by status, readiness, or space.',
       inputSchema: {
         status: z.string().optional(),
         readyOnly: z.boolean().optional(),
@@ -487,314 +394,10 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
   );
 
   server.registerTool(
-    'wg_transport_outbox_list',
-    {
-      title: 'Transport Outbox List',
-      description: 'List persistent outbound transport records.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const records = transport.listTransportOutbox(options.workspacePath);
-        return okResult({ records, count: records.length }, `Transport outbox has ${records.length} record(s).`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_transport_inbox_list',
-    {
-      title: 'Transport Inbox List',
-      description: 'List persistent inbound transport records.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const records = transport.listTransportInbox(options.workspacePath);
-        return okResult({ records, count: records.length }, `Transport inbox has ${records.length} record(s).`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_transport_dead_letter_list',
-    {
-      title: 'Transport Dead Letter List',
-      description: 'List failed transport deliveries available for inspection and replay.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const records = transport.listTransportDeadLetters(options.workspacePath);
-        return okResult({ records, count: records.length }, `Transport dead-letter queue has ${records.length} record(s).`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_federation_status',
-    {
-      title: 'Federation Status',
-      description: 'Read workspace federation identity and remote handshake status.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const status = federation.federationStatus(options.workspacePath);
-        return okResult(status, `Federation status loaded for ${status.remotes.length} remote(s).`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_federation_resolve_ref',
-    {
-      title: 'Federation Resolve Ref',
-      description: 'Resolve one typed or legacy federated reference with authority and staleness metadata.',
-      inputSchema: {
-        ref: z.union([z.string().min(1), z.object({}).passthrough()]),
-      },
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async (args) => {
-      try {
-        const resolved = federation.resolveFederatedRef(options.workspacePath, args.ref as any);
-        return okResult(
-          resolved,
-          `Resolved federated ref to ${resolved.source}:${resolved.instance.path} (authority=${resolved.authority}).`,
-        );
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_federation_search',
-    {
-      title: 'Federation Search',
-      description: 'Search local and remote workspaces through read-only federation capability negotiation.',
-      inputSchema: {
-        query: z.string().min(1),
-        type: z.string().optional(),
-        limit: z.number().int().min(0).max(1000).optional(),
-        remoteIds: z.array(z.string()).optional(),
-        includeLocal: z.boolean().optional(),
-      },
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async (args) => {
-      try {
-        const result = federation.searchFederated(options.workspacePath, args.query, {
-          type: args.type,
-          limit: args.limit,
-          remoteIds: args.remoteIds,
-          includeLocal: args.includeLocal,
-        });
-        return okResult(
-          result,
-          `Federation search returned ${result.results.length} result(s) with ${result.errors.length} remote error(s).`,
-        );
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_run_health',
-    {
-      title: 'Run Health Projection',
-      description: 'Return the run health projection.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const projection = projections.buildRunHealthProjection(options.workspacePath);
-        return okResult(projection, `Run health: active=${projection.summary.activeRuns}, stale=${projection.summary.staleRuns}.`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_risk_dashboard',
-    {
-      title: 'Risk Dashboard Projection',
-      description: 'Return the risk dashboard projection.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const projection = projections.buildRiskDashboardProjection(options.workspacePath);
-        return okResult(projection, `Risk dashboard: blocked=${projection.summary.blockedThreads}, violations=${projection.summary.policyViolations}.`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_mission_progress_projection',
-    {
-      title: 'Mission Progress Projection',
-      description: 'Return the mission progress projection.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const projection = projections.buildMissionProgressProjection(options.workspacePath);
-        return okResult(projection, `Mission progress projection covers ${projection.summary.totalMissions} mission(s).`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_transport_health',
-    {
-      title: 'Transport Health Projection',
-      description: 'Return the transport health projection.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const projection = projections.buildTransportHealthProjection(options.workspacePath);
-        return okResult(projection, `Transport health: outbox=${projection.summary.outboxDepth}, dead-letter=${projection.summary.deadLetterCount}.`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_federation_status_projection',
-    {
-      title: 'Federation Status Projection',
-      description: 'Return the federation status projection.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const projection = projections.buildFederationStatusProjection(options.workspacePath);
-        return okResult(projection, `Federation projection covers ${projection.summary.remotes} remote(s).`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_trigger_health',
-    {
-      title: 'Trigger Health Projection',
-      description: 'Return the trigger health projection.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const projection = projections.buildTriggerHealthProjection(options.workspacePath);
-        return okResult(projection, `Trigger health: total=${projection.summary.totalTriggers}, errors=${projection.summary.errorTriggers}.`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'wg_autonomy_health',
-    {
-      title: 'Autonomy Health Projection',
-      description: 'Return the autonomy health projection.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const projection = projections.buildAutonomyHealthProjection(options.workspacePath);
-        return okResult(projection, `Autonomy health: running=${projection.summary.running}.`);
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
-    'workgraph_ledger_reconcile',
-    {
-      title: 'Ledger Reconcile',
-      description: 'Audit thread files against ledger claims, leases, and dependency wiring.',
-      annotations: {
-        readOnlyHint: true,
-        idempotentHint: true,
-      },
-    },
-    async () => {
-      try {
-        const report = threadAudit.reconcileThreadState(options.workspacePath);
-        return okResult(
-          report,
-          `Ledger reconcile ${report.ok ? 'ok' : 'issues'}: ${report.issues.length} issue(s) across ${report.totalThreads} thread(s).`,
-        );
-      } catch (error) {
-        return errorResult(error);
-      }
-    },
-  );
-
-  server.registerTool(
     'workgraph_graph_hygiene',
     {
       title: 'Graph Hygiene',
-      description: 'Generate wiki-link graph hygiene report.',
+      description: 'Generate a wiki-link graph hygiene report.',
       annotations: {
         readOnlyHint: true,
         idempotentHint: true,
@@ -807,6 +410,30 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
           report,
           `Graph hygiene: nodes=${report.nodeCount}, edges=${report.edgeCount}, orphans=${report.orphanCount}, broken=${report.brokenLinkCount}`,
         );
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_context_graph_contract',
+    {
+      title: 'Context Graph Contract',
+      description: 'Evaluate core context graph contract invariants for the current workspace.',
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async () => {
+      try {
+        const report = contextGraphContract.evaluateCoreContextGraphInvariants({
+          registry: registry.loadRegistry(options.workspacePath),
+          queryFilterKeys: ['type', 'status', 'owner', 'tag', 'text', 'pathIncludes', 'updatedAfter', 'updatedBefore', 'createdAfter', 'createdBefore', 'limit', 'offset'],
+          lenses: lens.listContextLenses(),
+        });
+        return okResult(report, `Context graph contract ${report.ok ? 'passes' : 'has violations'} (${report.violations.length}).`);
       } catch (error) {
         return errorResult(error);
       }

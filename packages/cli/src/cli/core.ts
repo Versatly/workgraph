@@ -4,12 +4,11 @@ import path from 'node:path';
 import { Command } from 'commander';
 import * as workgraph from '@versatly/workgraph-kernel';
 
-export type JsonCapableOptions = {
+type JsonCapableOptions = {
   json?: boolean;
   workspace?: string;
   vault?: string;
   sharedVault?: string;
-  apiUrl?: string;
   apiKey?: string;
   dryRun?: boolean;
   __dryRunWorkspace?: string;
@@ -22,7 +21,6 @@ export function addWorkspaceOption<T extends Command>(command: T): T {
     .option('-w, --workspace <path>', 'Workgraph workspace path')
     .option('--vault <path>', 'Alias for --workspace')
     .option('--shared-vault <path>', 'Shared vault path (e.g. mounted via Tailscale)')
-    .option('--api-url <url>', 'Workgraph MCP HTTP endpoint URL (or WORKGRAPH_API_URL env)')
     .option('--api-key <token>', 'Agent credential API key (or WORKGRAPH_API_KEY env)')
     .option('--dry-run', 'Execute against a temporary workspace copy and discard changes');
 }
@@ -49,7 +47,7 @@ export function resolveWorkspacePath(opts: JsonCapableOptions): string {
   return sandboxWorkspace;
 }
 
-export function resolveWorkspacePathBase(opts: JsonCapableOptions): string {
+function resolveWorkspacePathBase(opts: JsonCapableOptions): string {
   const explicit = opts.workspace || opts.vault || opts.sharedVault;
   if (explicit) return path.resolve(explicit);
   if (process.env.WORKGRAPH_SHARED_VAULT) return path.resolve(process.env.WORKGRAPH_SHARED_VAULT);
@@ -95,36 +93,6 @@ export function csv(value?: string): string[] | undefined {
   return String(value).split(',').map((s) => s.trim()).filter(Boolean);
 }
 
-type IntegrationInstallCliOptions = JsonCapableOptions & {
-  actor: string;
-  owner?: string;
-  title?: string;
-  sourceUrl?: string;
-  force?: boolean;
-};
-
-export function installNamedIntegration(
-  workspacePath: string,
-  integrationName: string,
-  opts: IntegrationInstallCliOptions,
-): Promise<workgraph.InstallSkillIntegrationResult> {
-  return workgraph.integration.installIntegration(workspacePath, integrationName, {
-    actor: opts.actor,
-    owner: opts.owner,
-    title: opts.title,
-    sourceUrl: opts.sourceUrl,
-    force: !!opts.force,
-  });
-}
-
-export function renderInstalledIntegrationResult(result: workgraph.InstallSkillIntegrationResult): string[] {
-  return [
-    `${result.replacedExisting ? 'Updated' : 'Installed'} ${result.provider} integration skill: ${result.skill.path}`,
-    `Source: ${result.sourceUrl}`,
-    `Status: ${String(result.skill.fields.status)}`,
-  ];
-}
-
 function parseScalar(value: string): unknown {
   if (value === 'true') return true;
   if (value === 'false') return false;
@@ -162,7 +130,7 @@ export function parsePortOption(value: unknown): number {
   return parsed;
 }
 
-export function parsePositiveNumberOption(value: unknown, optionName: string): number {
+function parsePositiveNumberOption(value: unknown, optionName: string): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`Invalid --${optionName}. Expected a positive number.`);
@@ -249,13 +217,7 @@ function cleanupDryRunSandbox(opts: JsonCapableOptions): void {
   delete opts.__dryRunOriginal;
 }
 
-export function resolveApiUrl(opts: JsonCapableOptions): string | undefined {
-  const fromOption = readNonEmptyString((opts as { apiUrl?: unknown }).apiUrl);
-  if (fromOption) return fromOption;
-  return readNonEmptyString(process.env.WORKGRAPH_API_URL);
-}
-
-export function resolveApiKey(opts: JsonCapableOptions): string | undefined {
+function resolveApiKey(opts: JsonCapableOptions): string | undefined {
   const fromOption = readNonEmptyString((opts as { apiKey?: unknown }).apiKey);
   if (fromOption) return fromOption;
   const fromEnv = readNonEmptyString(process.env.WORKGRAPH_AGENT_API_KEY)

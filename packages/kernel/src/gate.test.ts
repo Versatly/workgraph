@@ -5,7 +5,6 @@ import os from 'node:os';
 import * as registry from './registry.js';
 import * as store from './store.js';
 import * as thread from './thread.js';
-import * as dispatch from './dispatch.js';
 import * as gate from './gate.js';
 
 let workspacePath: string;
@@ -107,7 +106,7 @@ describe('quality gates', () => {
       'agent-dev',
     );
 
-    expect(() => dispatch.claimThread(workspacePath, createdThread.path, 'agent-worker'))
+    expect(() => thread.claim(workspacePath, createdThread.path, 'agent-worker'))
       .toThrow('Quality gates blocked claim');
 
     store.update(
@@ -119,9 +118,9 @@ describe('quality gates', () => {
       undefined,
       'agent-dev',
     );
-    const claimed = dispatch.claimThread(workspacePath, createdThread.path, 'agent-worker');
-    expect(claimed.thread.fields.status).toBe('active');
-    expect(claimed.thread.fields.owner).toBe('agent-worker');
-    expect(claimed.gateCheck.allowed).toBe(true);
+    const claimed = thread.claim(workspacePath, createdThread.path, 'agent-worker');
+    expect(claimed.fields.status).toBe('active');
+    expect(claimed.fields.owner).toBe('agent-worker');
+    expect(gate.checkThreadGates(workspacePath, createdThread.path).allowed).toBe(true);
   });
 });
