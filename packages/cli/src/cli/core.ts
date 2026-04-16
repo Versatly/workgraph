@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Command } from 'commander';
 import * as workgraph from '@versatly/workgraph-kernel';
 
-export type JsonCapableOptions = {
+type JsonCapableOptions = {
   json?: boolean;
   workspace?: string;
   vault?: string;
@@ -47,7 +47,7 @@ export function resolveWorkspacePath(opts: JsonCapableOptions): string {
   return sandboxWorkspace;
 }
 
-export function resolveWorkspacePathBase(opts: JsonCapableOptions): string {
+function resolveWorkspacePathBase(opts: JsonCapableOptions): string {
   const explicit = opts.workspace || opts.vault || opts.sharedVault;
   if (explicit) return path.resolve(explicit);
   if (process.env.WORKGRAPH_SHARED_VAULT) return path.resolve(process.env.WORKGRAPH_SHARED_VAULT);
@@ -130,7 +130,7 @@ export function parsePortOption(value: unknown): number {
   return parsed;
 }
 
-export function parsePositiveNumberOption(value: unknown, optionName: string): number {
+function parsePositiveNumberOption(value: unknown, optionName: string): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed) || parsed <= 0) {
     throw new Error(`Invalid --${optionName}. Expected a positive number.`);
@@ -217,7 +217,7 @@ function cleanupDryRunSandbox(opts: JsonCapableOptions): void {
   delete opts.__dryRunOriginal;
 }
 
-export function resolveApiKey(opts: JsonCapableOptions): string | undefined {
+function resolveApiKey(opts: JsonCapableOptions): string | undefined {
   const fromOption = readNonEmptyString((opts as { apiKey?: unknown }).apiKey);
   if (fromOption) return fromOption;
   const fromEnv = readNonEmptyString(process.env.WORKGRAPH_AGENT_API_KEY)
