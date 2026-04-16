@@ -159,28 +159,6 @@ describe('orientation core module', () => {
     );
     store.create(
       workspacePath,
-      'team',
-      {
-        title: 'Platform',
-        members: ['agent-focus', 'agent-other'],
-        responsibilities: ['runtime', 'mcp'],
-      },
-      'Team context',
-      'agent-seed',
-    );
-    store.create(
-      workspacePath,
-      'client',
-      {
-        name: 'Acme Corp',
-        status: 'active',
-        description: 'Strategic customer',
-      },
-      'Client context',
-      'agent-seed',
-    );
-    store.create(
-      workspacePath,
       'decision',
       {
         title: 'Adopt company context graph',
@@ -193,12 +171,14 @@ describe('orientation core module', () => {
     );
     store.create(
       workspacePath,
-      'pattern',
+      'fact',
       {
-        title: 'Weekly context sync',
-        description: 'Capture and refresh context every Friday',
+        title: 'Thread ownership fact',
+        subject: 'thread-collaboration',
+        predicate: 'supported-by',
+        object: 'context graph',
       },
-      'Pattern context',
+      'Fact context',
       'agent-seed',
     );
     store.create(
@@ -215,10 +195,10 @@ describe('orientation core module', () => {
 
     const brief = orientation.brief(workspacePath, 'agent-focus');
     expect(brief.companyContext.org?.title).toBe('Versatly');
-    expect(brief.companyContext.teams[0]?.title).toBe('Platform');
-    expect(brief.companyContext.clients[0]?.title).toBe('Acme Corp');
+    expect(brief.companyContext.teams).toEqual([]);
+    expect(brief.companyContext.clients).toEqual([]);
     expect(brief.companyContext.recentDecisions[0]?.decidedBy).toBe('agent-focus');
-    expect(brief.companyContext.patterns[0]?.title).toBe('Weekly context sync');
+    expect(brief.companyContext.patterns).toEqual([]);
     expect(brief.companyContext.agentProfile?.name).toBe('agent-focus');
     expect(brief.companyContext.agentProfile?.permissions).toEqual(['mcp:write']);
   });
