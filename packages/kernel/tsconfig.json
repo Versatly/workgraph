@@ -5,8 +5,7 @@
     "noEmit": true
   },
   "include": [
-    "src/**/*",
-    "../../tests/helpers/cli-build.ts"
+    "src/**/*"
   ],
   "exclude": [
     "src/adapter-*.ts",

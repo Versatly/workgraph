@@ -3,7 +3,7 @@
 exports[`core context graph contract > enforces invariants for registry plus query/lens contracts 1`] = `
 {
   "ok": true,
-  "version": "1.1.0",
+  "version": "2.0.0",
   "violations": [],
 }
 `;
@@ -17,6 +17,7 @@ exports[`core context graph contract > locks a versioned primitive and relations
         "thread",
         "conversation",
         "plan-step",
+        "checkpoint",
       ],
     },
     {
@@ -25,28 +26,27 @@ exports[`core context graph contract > locks a versioned primitive and relations
         "thread",
         "conversation",
         "plan-step",
-        "incident",
-        "run",
+        "checkpoint",
       ],
     },
     {
       "id": "customer-health",
       "primitives": [
+        "org",
         "thread",
         "conversation",
-        "plan-step",
-        "incident",
-        "client",
+        "fact",
+        "decision",
       ],
     },
     {
       "id": "exec-brief",
       "primitives": [
+        "org",
         "thread",
         "conversation",
-        "plan-step",
         "decision",
-        "run",
+        "checkpoint",
       ],
     },
   ],
@@ -65,15 +65,6 @@ exports[`core context graph contract > locks a versioned primitive and relations
         "title",
         "actor",
         "summary",
-        "created",
-        "updated",
-      ],
-    },
-    {
-      "directory": "clients",
-      "name": "client",
-      "requiredFields": [
-        "name",
         "created",
         "updated",
       ],
@@ -108,37 +99,10 @@ exports[`core context graph contract > locks a versioned primitive and relations
       ],
     },
     {
-      "directory": "incidents",
-      "name": "incident",
+      "directory": "orgs",
+      "name": "org",
       "requiredFields": [
         "title",
-        "created",
-        "updated",
-      ],
-    },
-    {
-      "directory": "lessons",
-      "name": "lesson",
-      "requiredFields": [
-        "title",
-        "date",
-      ],
-    },
-    {
-      "directory": "onboarding",
-      "name": "onboarding",
-      "requiredFields": [
-        "title",
-        "actor",
-        "created",
-        "updated",
-      ],
-    },
-    {
-      "directory": "people",
-      "name": "person",
-      "requiredFields": [
-        "name",
         "created",
         "updated",
       ],
@@ -164,38 +128,6 @@ exports[`core context graph contract > locks a versioned primitive and relations
       ],
     },
     {
-      "directory": "projects",
-      "name": "project",
-      "requiredFields": [
-        "title",
-        "created",
-        "updated",
-      ],
-    },
-    {
-      "directory": "runs",
-      "name": "run",
-      "requiredFields": [
-        "title",
-        "objective",
-        "runtime",
-        "status",
-        "run_id",
-        "created",
-        "updated",
-      ],
-    },
-    {
-      "directory": "skills",
-      "name": "skill",
-      "requiredFields": [
-        "title",
-        "status",
-        "created",
-        "updated",
-      ],
-    },
-    {
       "directory": "spaces",
       "name": "space",
       "requiredFields": [
@@ -211,16 +143,6 @@ exports[`core context graph contract > locks a versioned primitive and relations
         "title",
         "goal",
         "status",
-        "created",
-        "updated",
-      ],
-    },
-    {
-      "directory": "triggers",
-      "name": "trigger",
-      "requiredFields": [
-        "title",
-        "action",
         "created",
         "updated",
       ],
@@ -362,20 +284,13 @@ exports[`core context graph contract > locks a versioned primitive and relations
       "to": [
         "thread",
         "space",
-        "project",
-        "client",
         "conversation",
         "plan-step",
         "decision",
-        "lesson",
         "fact",
-        "incident",
         "policy",
-        "skill",
         "checkpoint",
-        "onboarding",
-        "run",
-        "trigger",
+        "org",
       ],
     },
     {
@@ -384,170 +299,33 @@ exports[`core context graph contract > locks a versioned primitive and relations
         "ref",
       ],
       "expectedRefTypes": [
-        "client",
+        "decision",
       ],
-      "field": "client",
-      "from": "project",
-      "id": "project.client",
-      "to": [
-        "client",
-      ],
-    },
-    {
-      "cardinality": "many",
-      "expectedFieldTypes": [
-        "list",
-      ],
-      "field": "member_refs",
-      "from": "project",
-      "id": "project.member_refs",
-      "to": [
-        "person",
-        "agent",
-      ],
-    },
-    {
-      "cardinality": "many",
-      "expectedFieldTypes": [
-        "list",
-      ],
-      "field": "thread_refs",
-      "from": "project",
-      "id": "project.thread_refs",
-      "to": [
-        "thread",
-      ],
-    },
-    {
-      "cardinality": "one",
-      "expectedFieldTypes": [
-        "ref",
-      ],
-      "expectedRefTypes": [
-        "client",
-      ],
-      "field": "client",
-      "from": "person",
-      "id": "person.client",
-      "to": [
-        "client",
-      ],
-    },
-    {
-      "cardinality": "one",
-      "expectedFieldTypes": [
-        "ref",
-      ],
-      "expectedRefTypes": [
-        "person",
-      ],
-      "field": "contact_ref",
-      "from": "client",
-      "id": "client.contact_ref",
-      "to": [
-        "person",
-      ],
-    },
-    {
-      "cardinality": "many",
-      "expectedFieldTypes": [
-        "list",
-      ],
-      "field": "project_refs",
-      "from": "client",
-      "id": "client.project_refs",
-      "to": [
-        "project",
-      ],
-    },
-    {
-      "cardinality": "many",
-      "expectedFieldTypes": [
-        "list",
-      ],
-      "field": "context_refs",
+      "field": "supersedes",
       "from": "decision",
-      "id": "decision.context_refs",
+      "id": "decision.supersedes",
       "to": [
-        "thread",
-        "project",
-        "client",
-        "conversation",
-        "plan-step",
-        "fact",
-        "lesson",
-        "incident",
-        "policy",
+        "decision",
       ],
     },
     {
-      "cardinality": "many",
+      "cardinality": "one",
       "expectedFieldTypes": [
-        "list",
+        "ref",
       ],
-      "field": "context_refs",
-      "from": "lesson",
-      "id": "lesson.context_refs",
+      "field": "source",
+      "from": "fact",
+      "id": "fact.source",
       "to": [
         "thread",
-        "project",
-        "client",
         "conversation",
         "plan-step",
         "decision",
-        "fact",
-        "incident",
-      ],
-    },
-    {
-      "cardinality": "one",
-      "expectedFieldTypes": [
-        "ref",
-      ],
-      "field": "proposal_thread",
-      "from": "skill",
-      "id": "skill.proposal_thread",
-      "to": [
-        "thread",
-      ],
-    },
-    {
-      "cardinality": "many",
-      "expectedFieldTypes": [
-        "list",
-      ],
-      "field": "depends_on",
-      "from": "skill",
-      "id": "skill.depends_on",
-      "to": [
-        "skill",
-      ],
-    },
-    {
-      "cardinality": "many",
-      "expectedFieldTypes": [
-        "list",
-      ],
-      "field": "thread_refs",
-      "from": "onboarding",
-      "id": "onboarding.thread_refs",
-      "to": [
-        "thread",
-      ],
-    },
-    {
-      "cardinality": "many",
-      "expectedFieldTypes": [
-        "list",
-      ],
-      "field": "spaces",
-      "from": "onboarding",
-      "id": "onboarding.spaces",
-      "to": [
-        "space",
+        "checkpoint",
+        "org",
       ],
     },
   ],
-  "version": "1.1.0",
+  "version": "2.0.0",
 }
 `;

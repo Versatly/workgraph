@@ -211,7 +211,7 @@ workgraph agent request agent-1 -w "${input.workspacePath}" --role roles/admin.m
 workgraph agent review agent-1 -w "${input.workspacePath}" --decision approved --actor admin-approver
 \`\`\`
 
-Bootstrap fallback (legacy/hybrid migration mode):
+Bootstrap trust-token flow:
 
 \`\`\`bash
 workgraph agent register agent-1 -w "${input.workspacePath}" --token ${input.bootstrapTrustToken}

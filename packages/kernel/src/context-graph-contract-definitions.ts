@@ -4,27 +4,19 @@ import type {
   WorkgraphLensId,
 } from './types.js';
 
-export const CORE_CONTEXT_GRAPH_CONTRACT_VERSION = '1.1.0';
+export const CORE_CONTEXT_GRAPH_CONTRACT_VERSION = '2.0.0';
 
 const CORE_CONTEXT_PRIMITIVE_ORDER = [
   'agent',
   'checkpoint',
-  'client',
   'conversation',
   'decision',
   'fact',
-  'incident',
-  'lesson',
-  'onboarding',
-  'person',
+  'org',
   'plan-step',
   'policy',
-  'project',
-  'run',
-  'skill',
   'space',
   'thread',
-  'trigger',
 ] as const;
 
 export type CoreContextPrimitiveName = (typeof CORE_CONTEXT_PRIMITIVE_ORDER)[number];
@@ -80,19 +72,19 @@ export const CORE_CONTEXT_QUERY_FILTER_KEYS = [
 export const CORE_CONTEXT_LENS_CONTRACT: ReadonlyArray<CoreContextLensContract> = [
   {
     id: 'my-work',
-    primitives: ['thread', 'conversation', 'plan-step'],
+    primitives: ['thread', 'conversation', 'plan-step', 'checkpoint'],
   },
   {
     id: 'team-risk',
-    primitives: ['thread', 'conversation', 'plan-step', 'incident', 'run'],
+    primitives: ['thread', 'conversation', 'plan-step', 'checkpoint'],
   },
   {
     id: 'customer-health',
-    primitives: ['thread', 'conversation', 'plan-step', 'incident', 'client'],
+    primitives: ['org', 'thread', 'conversation', 'fact', 'decision'],
   },
   {
     id: 'exec-brief',
-    primitives: ['thread', 'conversation', 'plan-step', 'decision', 'run'],
+    primitives: ['org', 'thread', 'conversation', 'decision', 'checkpoint'],
   },
 ];
 
@@ -104,10 +96,6 @@ const CORE_CONTEXT_PRIMITIVES: Readonly<Record<CoreContextPrimitiveName, Omit<Co
   checkpoint: {
     directory: 'checkpoints',
     requiredFields: ['title', 'actor', 'summary', 'created', 'updated'],
-  },
-  client: {
-    directory: 'clients',
-    requiredFields: ['name', 'created', 'updated'],
   },
   conversation: {
     directory: 'conversations',
@@ -121,21 +109,9 @@ const CORE_CONTEXT_PRIMITIVES: Readonly<Record<CoreContextPrimitiveName, Omit<Co
     directory: 'facts',
     requiredFields: ['subject', 'predicate', 'object', 'created', 'updated'],
   },
-  incident: {
-    directory: 'incidents',
+  org: {
+    directory: 'orgs',
     requiredFields: ['title', 'created', 'updated'],
-  },
-  lesson: {
-    directory: 'lessons',
-    requiredFields: ['title', 'date'],
-  },
-  onboarding: {
-    directory: 'onboarding',
-    requiredFields: ['title', 'actor', 'created', 'updated'],
-  },
-  person: {
-    directory: 'people',
-    requiredFields: ['name', 'created', 'updated'],
   },
   'plan-step': {
     directory: 'plan-steps',
@@ -145,18 +121,6 @@ const CORE_CONTEXT_PRIMITIVES: Readonly<Record<CoreContextPrimitiveName, Omit<Co
     directory: 'policies',
     requiredFields: ['title', 'created', 'updated'],
   },
-  project: {
-    directory: 'projects',
-    requiredFields: ['title', 'created', 'updated'],
-  },
-  run: {
-    directory: 'runs',
-    requiredFields: ['title', 'objective', 'runtime', 'status', 'run_id', 'created', 'updated'],
-  },
-  skill: {
-    directory: 'skills',
-    requiredFields: ['title', 'status', 'created', 'updated'],
-  },
   space: {
     directory: 'spaces',
     requiredFields: ['title', 'created', 'updated'],
@@ -164,10 +128,6 @@ const CORE_CONTEXT_PRIMITIVES: Readonly<Record<CoreContextPrimitiveName, Omit<Co
   thread: {
     directory: 'threads',
     requiredFields: ['title', 'goal', 'status', 'created', 'updated'],
-  },
-  trigger: {
-    directory: 'triggers',
-    requiredFields: ['title', 'action', 'created', 'updated'],
   },
 };
 
@@ -246,110 +206,28 @@ const CORE_CONTEXT_RELATIONSHIPS: ReadonlyArray<CoreContextRelationshipContract>
     field: 'context_refs',
     cardinality: 'many',
     expectedFieldTypes: ['list'],
-    to: ['thread', 'space', 'project', 'client', 'conversation', 'plan-step', 'decision', 'lesson', 'fact', 'incident', 'policy', 'skill', 'checkpoint', 'onboarding', 'run', 'trigger'],
+    to: ['thread', 'space', 'conversation', 'plan-step', 'decision', 'fact', 'policy', 'checkpoint', 'org'],
   },
   {
-    id: 'project.client',
-    from: 'project',
-    field: 'client',
-    cardinality: 'one',
-    expectedFieldTypes: ['ref'],
-    expectedRefTypes: ['client'],
-    to: ['client'],
-  },
-  {
-    id: 'project.member_refs',
-    from: 'project',
-    field: 'member_refs',
-    cardinality: 'many',
-    expectedFieldTypes: ['list'],
-    to: ['person', 'agent'],
-  },
-  {
-    id: 'project.thread_refs',
-    from: 'project',
-    field: 'thread_refs',
-    cardinality: 'many',
-    expectedFieldTypes: ['list'],
-    to: ['thread'],
-  },
-  {
-    id: 'person.client',
-    from: 'person',
-    field: 'client',
-    cardinality: 'one',
-    expectedFieldTypes: ['ref'],
-    expectedRefTypes: ['client'],
-    to: ['client'],
-  },
-  {
-    id: 'client.contact_ref',
-    from: 'client',
-    field: 'contact_ref',
-    cardinality: 'one',
-    expectedFieldTypes: ['ref'],
-    expectedRefTypes: ['person'],
-    to: ['person'],
-  },
-  {
-    id: 'client.project_refs',
-    from: 'client',
-    field: 'project_refs',
-    cardinality: 'many',
-    expectedFieldTypes: ['list'],
-    to: ['project'],
-  },
-  {
-    id: 'decision.context_refs',
+    id: 'decision.supersedes',
     from: 'decision',
-    field: 'context_refs',
-    cardinality: 'many',
-    expectedFieldTypes: ['list'],
-    to: ['thread', 'project', 'client', 'conversation', 'plan-step', 'fact', 'lesson', 'incident', 'policy'],
-  },
-  {
-    id: 'lesson.context_refs',
-    from: 'lesson',
-    field: 'context_refs',
-    cardinality: 'many',
-    expectedFieldTypes: ['list'],
-    to: ['thread', 'project', 'client', 'conversation', 'plan-step', 'decision', 'fact', 'incident'],
-  },
-  {
-    id: 'skill.proposal_thread',
-    from: 'skill',
-    field: 'proposal_thread',
+    field: 'supersedes',
     cardinality: 'one',
     expectedFieldTypes: ['ref'],
-    to: ['thread'],
+    expectedRefTypes: ['decision'],
+    to: ['decision'],
   },
   {
-    id: 'skill.depends_on',
-    from: 'skill',
-    field: 'depends_on',
-    cardinality: 'many',
-    expectedFieldTypes: ['list'],
-    to: ['skill'],
-  },
-  {
-    id: 'onboarding.thread_refs',
-    from: 'onboarding',
-    field: 'thread_refs',
-    cardinality: 'many',
-    expectedFieldTypes: ['list'],
-    to: ['thread'],
-  },
-  {
-    id: 'onboarding.spaces',
-    from: 'onboarding',
-    field: 'spaces',
-    cardinality: 'many',
-    expectedFieldTypes: ['list'],
-    to: ['space'],
+    id: 'fact.source',
+    from: 'fact',
+    field: 'source',
+    cardinality: 'one',
+    expectedFieldTypes: ['ref'],
+    to: ['thread', 'conversation', 'plan-step', 'decision', 'checkpoint', 'org'],
   },
 ];
 
-export const CORE_CONTEXT_GRAPH_CONTRACT: Readonly<CoreContextGraphContract> = {
+export const CORE_CONTEXT_GRAPH_CONTRACT: CoreContextGraphContract = {
   version: CORE_CONTEXT_GRAPH_CONTRACT_VERSION,
   primitives: CORE_CONTEXT_PRIMITIVE_ORDER.map((name) => ({
     name,

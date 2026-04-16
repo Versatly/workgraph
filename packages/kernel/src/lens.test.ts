@@ -99,18 +99,6 @@ describe('context lenses', () => {
 
     store.create(
       workspacePath,
-      'incident',
-      {
-        title: 'Customer login outage',
-        severity: 'sev1',
-        status: 'active',
-        tags: ['customer'],
-      },
-      'Major login outage in production.',
-      'system',
-    );
-    store.create(
-      workspacePath,
       'decision',
       {
         title: 'Adopt staged rollout policy',
@@ -128,7 +116,7 @@ describe('context lenses', () => {
       limit: 10,
     });
     expect(teamRisk.metrics.blockedHighPriority).toBe(1);
-    expect(teamRisk.metrics.activeHighSeverityIncidents).toBe(1);
+    expect(teamRisk.metrics.activeHighSeverityIncidents).toBe(0);
 
     const customerHealth = lens.generateContextLens(workspacePath, 'customer-health', {
       actor: 'agent-ops',
@@ -136,7 +124,7 @@ describe('context lenses', () => {
     });
     expect(customerHealth.metrics.activeCustomerThreads).toBeGreaterThanOrEqual(1);
     expect(customerHealth.metrics.blockedCustomerThreads).toBe(1);
-    expect(customerHealth.metrics.customerIncidents).toBe(1);
+    expect(customerHealth.metrics.customerIncidents).toBe(0);
 
     const execBrief = lens.generateContextLens(workspacePath, 'exec-brief', {
       actor: 'agent-ops',
