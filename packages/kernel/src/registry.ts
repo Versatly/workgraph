@@ -21,6 +21,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A unit of coordinated work. The core workgraph node.',
     directory: 'threads',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -59,6 +60,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A workspace boundary that groups related threads and sets context.',
     directory: 'spaces',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -76,6 +78,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A recorded decision with reasoning and context.',
     directory: 'decisions',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -99,6 +102,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A captured insight or pattern learned from experience.',
     directory: 'lessons',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -118,6 +122,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Top-level organizational context for mission, strategy, and structure.',
     directory: 'orgs',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -137,6 +142,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A team boundary with members, ownership, and responsibilities.',
     directory: 'teams',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -155,6 +161,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A reusable delivery or operating pattern with steps and caveats.',
     directory: 'patterns',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -174,6 +181,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'An explicit typed edge between primitives or entities in the context graph.',
     directory: 'relationships',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -193,6 +201,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Strategic note capturing decisions or focus across company/team/project/client scopes.',
     directory: 'strategic-notes',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -210,6 +219,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A structured piece of knowledge with optional temporal validity.',
     directory: 'facts',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -230,6 +240,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A registered participant in the workgraph.',
     directory: 'agents',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -251,6 +262,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Agent heartbeat presence status for runtime coordination.',
     directory: 'agents',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -274,16 +286,30 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A human stakeholder referenced by projects, clients, and incidents.',
     directory: 'people',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
       name: { type: 'string', required: true },
+      preferred_name: { type: 'string' },
       email: { type: 'string', template: 'email' },
       phone: { type: 'string' },
+      phone_secondary: { type: 'string' },
       role: { type: 'string' },
+      job_title: { type: 'string', description: 'Professional title used for contact or reporting context' },
       organization: { type: 'string' },
+      team: { type: 'ref', refTypes: ['team'] },
       relationship_context: { type: 'string' },
+      location: { type: 'string' },
+      timezone: { type: 'string' },
       communication_preference: { type: 'string', enum: ['email', 'phone', 'slack', 'whatsapp', 'telegram'] },
+      slack_handle: { type: 'string' },
+      whatsapp_handle: { type: 'string' },
+      telegram_handle: { type: 'string' },
+      website: { type: 'string', template: 'url' },
+      social_links: { type: 'list', default: [] },
+      address: { type: 'string' },
+      notes: { type: 'string' },
       client: { type: 'ref', refTypes: ['client'] },
       project_refs: { type: 'list', default: [] },
       external_links: { type: 'list', default: [] },
@@ -297,6 +323,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'An external customer/account coordinated in the workgraph.',
     directory: 'clients',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -321,6 +348,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A coordinated initiative spanning multiple threads and stakeholders.',
     directory: 'projects',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -345,6 +373,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'High-level orchestration primitive composed of milestones and feature threads.',
     directory: 'missions',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -383,6 +412,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'A reusable agent skill shared through the workgraph workspace.',
     directory: 'skills',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -406,6 +436,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Agent or team onboarding lifecycle primitive.',
     directory: 'onboarding',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -426,6 +457,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Thread coordination context with timeline events and execution state.',
     directory: 'conversations',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -454,6 +486,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Executable step primitive linked to conversations and threads.',
     directory: 'plan-steps',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -479,6 +512,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Governance policy primitive for approvals and guardrails.',
     directory: 'policies',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -500,6 +534,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Quality gate rules that must pass before thread claim.',
     directory: 'policy-gates',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -520,6 +555,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Incident coordination primitive with gated lifecycle.',
     directory: 'incidents',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -537,6 +573,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Programmable trigger primitive for cron/event/webhook/manual dispatch.',
     directory: 'triggers',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -569,6 +606,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Agent checkpoint/hand-off primitive for orientation continuity.',
     directory: 'checkpoints',
     builtIn: true,
+    retained: true,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -587,6 +625,7 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     description: 'Background agent run primitive with lifecycle state.',
     directory: 'runs',
     builtIn: true,
+    retained: false,
     createdAt: '2026-01-01T00:00:00.000Z',
     createdBy: 'system',
     fields: {
@@ -606,22 +645,6 @@ const BUILT_IN_TYPES: PrimitiveTypeDefinition[] = [
     },
   },
 ];
-
-const RETAINED_BUILT_IN_TYPE_NAMES = new Set([
-  'thread',
-  'space',
-  'decision',
-  'org',
-  'fact',
-  'relationship',
-  'agent',
-  'presence',
-  'conversation',
-  'plan-step',
-  'policy',
-  'policy-gate',
-  'checkpoint',
-]);
 
 // ---------------------------------------------------------------------------
 // Registry operations
@@ -687,6 +710,7 @@ export function defineType(
     },
     directory: directory ?? `${safeName}s`,
     builtIn: false,
+    retained: false,
     createdAt: now,
     createdBy: actor,
   };
@@ -744,7 +768,7 @@ export function extendType(
 function seedRegistry(): Registry {
   const types: Record<string, PrimitiveTypeDefinition> = {};
   for (const t of BUILT_IN_TYPES) {
-    if (!RETAINED_BUILT_IN_TYPE_NAMES.has(t.name)) continue;
+    if (!t.retained) continue;
     types[t.name] = t;
   }
   return { version: CURRENT_VERSION, types };
@@ -752,12 +776,12 @@ function seedRegistry(): Registry {
 
 function ensureBuiltIns(registry: Registry): Registry {
   for (const [typeName, typeDef] of Object.entries(registry.types)) {
-    if (typeDef.builtIn && !RETAINED_BUILT_IN_TYPE_NAMES.has(typeName)) {
+    if (typeDef.builtIn && typeDef.retained !== true) {
       delete registry.types[typeName];
     }
   }
   for (const t of BUILT_IN_TYPES) {
-    if (!RETAINED_BUILT_IN_TYPE_NAMES.has(t.name)) continue;
+    if (!t.retained) continue;
     if (!registry.types[t.name]) {
       registry.types[t.name] = t;
       continue;
@@ -768,6 +792,7 @@ function ensureBuiltIns(registry: Registry): Registry {
         ...existing,
         description: t.description,
         directory: t.directory,
+        retained: true,
         fields: {
           ...existing.fields,
           ...t.fields,

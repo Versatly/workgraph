@@ -42,6 +42,8 @@ export interface PrimitiveTypeDefinition {
   directory: string;
   /** Whether this type was defined by an agent at runtime vs built-in. */
   builtIn: boolean;
+  /** Whether this type is retained as a canonical primitive in live workspaces. */
+  retained: boolean;
   /** ISO timestamp of when this type was registered. */
   createdAt: string;
   /** Who registered it (agent name or "system"). */
