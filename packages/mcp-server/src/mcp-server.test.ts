@@ -65,6 +65,16 @@ describe('workgraph mcp server', () => {
         'workgraph_search',
         'workgraph_lens_list',
         'workgraph_lens_show',
+        'workgraph_primitive_types',
+        'workgraph_primitive_get',
+        'workgraph_primitive_create',
+        'workgraph_primitive_update',
+        'workgraph_primitive_delete',
+        'workgraph_person_list',
+        'workgraph_person_get',
+        'workgraph_person_create',
+        'workgraph_person_update',
+        'workgraph_person_archive',
         'workgraph_primitive_schema',
         'workgraph_thread_list',
         'workgraph_thread_show',
@@ -269,6 +279,186 @@ describe('workgraph mcp server', () => {
     }
   });
 
+  it('supports generic primitive CRUD for shared workspace entities', async () => {
+    policy.upsertParty(workspacePath, 'agent-mcp', {
+      roles: ['operator'],
+      capabilities: ['mcp:write'],
+    });
+
+    const server = createWorkgraphMcpServer({
+      workspacePath,
+      defaultActor: 'agent-mcp',
+    });
+    const client = new Client({
+      name: 'workgraph-mcp-primitive-client',
+      version: '1.0.0',
+    });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    await Promise.all([
+      server.connect(serverTransport),
+      client.connect(clientTransport),
+    ]);
+
+    try {
+      const types = await client.callTool({
+        name: 'workgraph_primitive_types',
+        arguments: {},
+      });
+      expect(isToolError(types)).toBe(false);
+      const typePayload = getStructured<{ types: Array<{ name: string; retained: boolean; canonical: boolean }> }>(types);
+      expect(typePayload.types.some((entry) => entry.name === 'person')).toBe(true);
+      expect(typePayload.types.some((entry) => entry.name === 'project')).toBe(true);
+      expect(typePayload.types.find((entry) => entry.name === 'person')?.retained).toBe(true);
+      expect(typePayload.types.find((entry) => entry.name === 'person')?.canonical).toBe(true);
+
+      const createdPerson = await client.callTool({
+        name: 'workgraph_primitive_create',
+        arguments: {
+          actor: 'agent-mcp',
+          type: 'person',
+          fields: {
+            name: 'Ada Lovelace',
+            email: 'ada@example.com',
+            role: 'Technical advisor',
+            tags: ['vip'],
+          },
+          body: 'Early stakeholder profile.',
+        },
+      });
+      expect(isToolError(createdPerson)).toBe(false);
+      const personPath = getStructured<{ primitive: { path: string; type: string } }>(createdPerson).primitive.path;
+      expect(personPath).toBe('people/ada-lovelace.md');
+
+      const fetchedPerson = await client.callTool({
+        name: 'workgraph_primitive_get',
+        arguments: {
+          path: personPath,
+        },
+      });
+      expect(isToolError(fetchedPerson)).toBe(false);
+      const fetchedPayload = getStructured<{ primitive: { fields: { email: string } } }>(fetchedPerson);
+      expect(fetchedPayload.primitive.fields.email).toBe('ada@example.com');
+
+      const schema = await client.callTool({
+        name: 'workgraph_primitive_schema',
+        arguments: {
+          typeName: 'person',
+        },
+      });
+      expect(isToolError(schema)).toBe(false);
+      const schemaPayload = getStructured<{ retained: boolean; canonical: boolean; fields: Array<{ name: string }> }>(schema);
+      expect(schemaPayload.retained).toBe(true);
+      expect(schemaPayload.canonical).toBe(true);
+      expect(schemaPayload.fields.some((field) => field.name === 'preferred_name')).toBe(true);
+      expect(schemaPayload.fields.some((field) => field.name === 'job_title')).toBe(true);
+
+      const createdProject = await client.callTool({
+        name: 'workgraph_primitive_create',
+        arguments: {
+          actor: 'agent-mcp',
+          type: 'project',
+          fields: {
+            title: 'Agent Parity Rollout',
+            owner: 'agent-mcp',
+            member_refs: [personPath],
+            status: 'active',
+          },
+          body: 'Enable full primitive parity for agents.',
+        },
+      });
+      expect(isToolError(createdProject)).toBe(false);
+      const projectPath = getStructured<{ primitive: { path: string; fields: { member_refs: string[] } } }>(createdProject);
+      expect(projectPath.primitive.path).toBe('projects/agent-parity-rollout.md');
+      expect(projectPath.primitive.fields.member_refs).toContain(personPath);
+
+      const updatedProject = await client.callTool({
+        name: 'workgraph_primitive_update',
+        arguments: {
+          actor: 'agent-mcp',
+          path: projectPath.primitive.path,
+          fieldUpdates: {
+            priority: 'high',
+          },
+          body: 'Enable full primitive parity for agents and MCP clients.',
+        },
+      });
+      expect(isToolError(updatedProject)).toBe(false);
+      const updatedPayload = getStructured<{ primitive: { fields: { priority: string }; body: string } }>(updatedProject);
+      expect(updatedPayload.primitive.fields.priority).toBe('high');
+      expect(updatedPayload.primitive.body).toContain('MCP clients');
+
+      const createdGrace = await client.callTool({
+        name: 'workgraph_person_create',
+        arguments: {
+          actor: 'agent-mcp',
+          name: 'Grace Hopper',
+          email: 'grace@example.com',
+          preferredName: 'Grace',
+          jobTitle: 'Rear Admiral',
+          organization: 'US Navy',
+          tags: ['legend'],
+          body: 'Pioneer in compiler design.',
+        },
+      });
+      expect(isToolError(createdGrace)).toBe(false);
+      const gracePayload = getStructured<{ person: { path: string; fields: { preferred_name: string; job_title: string } } }>(createdGrace);
+      expect(gracePayload.person.path).toBe('people/grace-hopper.md');
+      expect(gracePayload.person.fields.preferred_name).toBe('Grace');
+      expect(gracePayload.person.fields.job_title).toBe('Rear Admiral');
+
+      const listedPeople = await client.callTool({
+        name: 'workgraph_person_list',
+        arguments: {
+          tag: 'legend',
+        },
+      });
+      expect(isToolError(listedPeople)).toBe(false);
+      const listedPeoplePayload = getStructured<{ people: Array<{ path: string }>; count: number }>(listedPeople);
+      expect(listedPeoplePayload.count).toBe(1);
+      expect(listedPeoplePayload.people[0]?.path).toBe('people/grace-hopper.md');
+
+      const updatedGrace = await client.callTool({
+        name: 'workgraph_person_update',
+        arguments: {
+          actor: 'agent-mcp',
+          personPath: 'people/grace-hopper.md',
+          fieldUpdates: {
+            timezone: 'America/New_York',
+          },
+        },
+      });
+      expect(isToolError(updatedGrace)).toBe(false);
+      const updatedGracePayload = getStructured<{ person: { fields: { timezone: string } } }>(updatedGrace);
+      expect(updatedGracePayload.person.fields.timezone).toBe('America/New_York');
+
+      const archivedGrace = await client.callTool({
+        name: 'workgraph_person_archive',
+        arguments: {
+          actor: 'agent-mcp',
+          personPath: 'people/grace-hopper.md',
+        },
+      });
+      expect(isToolError(archivedGrace)).toBe(false);
+      expect(storePathExists(workspacePath, 'people/grace-hopper.md')).toBe(false);
+      expect(storePathExists(workspacePath, '.workgraph/archive/grace-hopper.md')).toBe(true);
+
+      const deletedPerson = await client.callTool({
+        name: 'workgraph_primitive_delete',
+        arguments: {
+          actor: 'agent-mcp',
+          path: personPath,
+        },
+      });
+      expect(isToolError(deletedPerson)).toBe(false);
+      expect(storePathExists(workspacePath, personPath)).toBe(false);
+      expect(storePathExists(workspacePath, '.workgraph/archive/ada-lovelace.md')).toBe(true);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
   it('supports actor registration request and review tools', async () => {
     policy.upsertParty(workspacePath, 'admin-reviewer', {
       roles: ['admin'],
@@ -355,4 +545,8 @@ function isToolError(result: unknown): boolean {
   if (!result || typeof result !== 'object') return false;
   if (!('isError' in result)) return false;
   return (result as { isError?: boolean }).isError === true;
+}
+
+function storePathExists(root: string, relPath: string): boolean {
+  return fs.existsSync(path.join(root, relPath));
 }

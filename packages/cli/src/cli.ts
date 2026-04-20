@@ -3,13 +3,16 @@ import * as workgraph from '@versatly/workgraph-kernel';
 import { startWorkgraphMcpHttpServer } from '@versatly/workgraph-mcp-server';
 import { registerConversationCommands } from './cli/commands/conversation.js';
 import { registerMcpCommands } from './cli/commands/mcp.js';
+import { registerPeopleCommands } from './cli/commands/people.js';
+import { registerPrimitiveInstanceCommands, registerPrimitiveTypeCommands } from './cli/commands/primitives.js';
 import {
   addWorkspaceOption,
   csv,
+  normalizePrimitivePath,
+  parseFieldDefinitions,
   parseNonNegativeIntOption,
   parsePositiveIntOption,
   parsePositiveIntegerOption,
-  parseSetPairs,
   parsePortOption,
   resolveWorkspacePath,
   resolveInitTargetPath,
@@ -614,100 +617,9 @@ addWorkspaceOption(
   ),
 );
 
-const primitiveCmd = program
-  .command('primitive')
-  .description('Manage primitive schemas and instances');
-
-addWorkspaceOption(
-  primitiveCmd
-    .command('define <name>')
-    .description('Define a new primitive type')
-    .requiredOption('--description <text>', 'Type description')
-    .option('-a, --actor <actor>', 'Actor', DEFAULT_ACTOR)
-    .option('--directory <dir>', 'Storage directory')
-    .option('--field <name:type>', 'Repeatable field definition', collectFieldSpecs, [])
-    .option('--json', 'Emit structured JSON output'),
-).action((name, opts) =>
-  runCommand(
-    opts,
-    () => workgraph.registry.defineType(
-      resolveWorkspacePath(opts),
-      name,
-      opts.description,
-      parseFieldDefinitions(opts.field),
-      opts.actor,
-      opts.directory,
-    ),
-    (result) => [
-      `Defined primitive type: ${result.name}`,
-      `Directory: ${result.directory}`,
-    ],
-  ),
-);
-
-addWorkspaceOption(
-  primitiveCmd
-    .command('list')
-    .description('List registered primitive types')
-    .option('--json', 'Emit structured JSON output'),
-).action((opts) =>
-  runCommand(
-    opts,
-    () => ({ types: workgraph.registry.listTypes(resolveWorkspacePath(opts)) }),
-    (result) => result.types.map((type) => `${type.name} -> ${type.directory}`),
-  ),
-);
-
-addWorkspaceOption(
-  primitiveCmd
-    .command('create <type> <title>')
-    .description('Create a primitive instance')
-    .option('-a, --actor <actor>', 'Actor', DEFAULT_ACTOR)
-    .option('--body <markdown>', 'Markdown body')
-    .option('--set <key=value>', 'Repeatable field assignment', collectSetPairs, [])
-    .option('--json', 'Emit structured JSON output'),
-).action((type, title, opts) =>
-  runCommand(
-    opts,
-    () => workgraph.store.create(
-      resolveWorkspacePath(opts),
-      type,
-      {
-        title,
-        ...mergeSetPairs(opts.set),
-      },
-      opts.body ?? '',
-      opts.actor,
-    ),
-    (result) => [`Created primitive: ${result.path}`],
-  ),
-);
-
-addWorkspaceOption(
-  primitiveCmd
-    .command('update <path>')
-    .description('Update a primitive instance')
-    .option('-a, --actor <actor>', 'Actor', DEFAULT_ACTOR)
-    .option('--body <markdown>', 'Replace markdown body')
-    .option('--set <key=value>', 'Repeatable field assignment', collectSetPairs, [])
-    .option('--etag <etag>', 'Expected etag for optimistic concurrency')
-    .option('--json', 'Emit structured JSON output'),
-).action((targetPath, opts) =>
-  runCommand(
-    opts,
-    () => workgraph.store.update(
-      resolveWorkspacePath(opts),
-      normalizePath(targetPath),
-      mergeSetPairs(opts.set),
-      opts.body,
-      opts.actor,
-      {
-        expectedEtag: opts.etag,
-      },
-    ),
-    (result) => [`Updated primitive: ${result.path}`],
-  ),
-);
+registerPrimitiveTypeCommands(program, DEFAULT_ACTOR);
+registerPrimitiveInstanceCommands(program, DEFAULT_ACTOR);
+registerPeopleCommands(program, DEFAULT_ACTOR);
 
 addWorkspaceOption(
   program
@@ -1103,41 +1015,7 @@ function normalizeRegistrationDecision(value: string): 'approved' | 'rejected' {
 }
 
 function normalizePath(value: string): string {
-  const trimmed = String(value).trim().replace(/\\/g, '/').replace(/^\.\//, '');
-  return trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
-}
-
-function collectSetPairs(value: string, existing: string[]): string[] {
-  existing.push(value);
-  return existing;
-}
-
-function mergeSetPairs(values: string[]): Record<string, unknown> {
-  return values.reduce<Record<string, unknown>>((acc, entry) => {
-    Object.assign(acc, parseSetPairs([entry]));
-    return acc;
-  }, {});
-}
-
-function collectFieldSpecs(value: string, existing: string[]): string[] {
-  existing.push(value);
-  return existing;
-}
-
-function parseFieldDefinitions(values: string[]): Record<string, workgraph.FieldDefinition> {
-  const fields: Record<string, workgraph.FieldDefinition> = {};
-  for (const value of values) {
-    const [namePart, typePart] = String(value).split(':');
-    const name = readNonEmptyString(namePart);
-    const type = readNonEmptyString(typePart);
-    if (!name || !type) {
-      throw new Error(`Invalid field definition "${value}". Expected name:type.`);
-    }
-    fields[name] = {
-      type: parseFieldType(type),
-    };
-  }
-  return fields;
+  return normalizePrimitivePath(value);
 }
 
 function parseFieldType(value: string): workgraph.FieldDefinition['type'] {

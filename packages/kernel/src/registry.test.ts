@@ -32,7 +32,12 @@ describe('registry', () => {
     expect(reg.types.policy).toBeDefined();
     expect(reg.types['policy-gate']).toBeDefined();
     expect(reg.types.checkpoint).toBeDefined();
+    expect(reg.types.person).toBeDefined();
+    expect(reg.types.client).toBeDefined();
+    expect(reg.types.project).toBeDefined();
     expect(reg.types.thread.builtIn).toBe(true);
+    expect(reg.types.thread.retained).toBe(true);
+    expect(reg.types.person.retained).toBe(true);
   });
 
   it('adds company-context fields to existing built-in types without removing legacy fields', () => {
@@ -43,6 +48,10 @@ describe('registry', () => {
     expect(reg.types.policy.fields.scope_type).toBeDefined();
     expect(reg.types.relationship.fields.strength).toBeDefined();
     expect(reg.types.checkpoint.fields.summary).toBeDefined();
+    expect(reg.types.person.fields.preferred_name).toBeDefined();
+    expect(reg.types.person.fields.communication_preference?.enum).toContain('slack');
+    expect(reg.types.client.fields.contact_ref?.refTypes).toContain('person');
+    expect(reg.types.project.fields.member_refs).toBeDefined();
   });
 
   it('persists registry to disk', () => {
@@ -65,6 +74,7 @@ describe('registry', () => {
     expect(wf).toBeDefined();
     expect(wf!.name).toBe('workflow');
     expect(wf!.builtIn).toBe(false);
+    expect(wf!.retained).toBe(false);
     expect(wf!.createdBy).toBe('agent-alpha');
     expect(wf!.fields.stages.type).toBe('list');
     expect(wf!.fields.title).toBeDefined();
@@ -117,9 +127,12 @@ describe('registry', () => {
   it('ensures built-ins survive registry reload', () => {
     const reg = loadRegistry(workspacePath);
     delete reg.types.thread;
+    delete reg.types.person;
     saveRegistry(workspacePath, reg);
 
     const reloaded = loadRegistry(workspacePath);
     expect(reloaded.types.thread).toBeDefined();
+    expect(reloaded.types.person).toBeDefined();
+    expect(reloaded.types.person.retained).toBe(true);
   });
 });

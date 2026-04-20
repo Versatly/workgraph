@@ -34,6 +34,10 @@ describe('bases generation', () => {
     const thread = parsed.primitives.find((primitive) => primitive.name === 'thread');
     expect(thread?.canonical).toBe(true);
     expect(thread?.fields.some((field) => field.name === 'space')).toBe(true);
+    const person = parsed.primitives.find((primitive) => primitive.name === 'person');
+    expect(person?.canonical).toBe(true);
+    expect(person?.fields.some((field) => field.name === 'email')).toBe(true);
+    expect(person?.fields.some((field) => field.name === 'slack_handle')).toBe(true);
   });
 
   it('generates .base files for canonical primitives by default', () => {
@@ -42,10 +46,14 @@ describe('bases generation', () => {
 
     expect(result.generated.some((filePath) => filePath.endsWith('/thread.base'))).toBe(true);
     expect(result.generated.some((filePath) => filePath.endsWith('/relationship.base'))).toBe(true);
+    expect(result.generated.some((filePath) => filePath.endsWith('/person.base'))).toBe(true);
 
     const threadBase = path.join(workspacePath, '.workgraph/bases/thread.base');
     expect(fs.existsSync(threadBase)).toBe(true);
     expect(fs.readFileSync(threadBase, 'utf-8')).toContain('source:');
+    const personBase = path.join(workspacePath, '.workgraph/bases/person.base');
+    expect(fs.existsSync(personBase)).toBe(true);
+    expect(fs.readFileSync(personBase, 'utf-8')).toContain('slack_handle');
   });
 
   it('can include non-canonical primitive types', () => {

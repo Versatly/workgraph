@@ -19,6 +19,7 @@ export interface PrimitiveRegistryManifestPrimitive {
   directory: string;
   canonical: boolean;
   builtIn: boolean;
+  retained: boolean;
   fields: PrimitiveRegistryManifestField[];
 }
 
@@ -63,8 +64,9 @@ export function syncPrimitiveRegistryManifest(workspacePath: string): PrimitiveR
       .map((primitive) => ({
         name: primitive.name,
         directory: primitive.directory,
-        canonical: primitive.builtIn,
+        canonical: primitive.retained,
         builtIn: primitive.builtIn,
+        retained: primitive.retained,
         fields: Object.entries(primitive.fields).map(([name, field]) => ({
           name,
           type: field.type,

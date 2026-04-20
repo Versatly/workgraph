@@ -26,6 +26,9 @@ describe('workspace init', () => {
     expect(fs.existsSync(path.join(workspacePath, 'threads'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'spaces'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'agents'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'people'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'clients'))).toBe(true);
+    expect(fs.existsSync(path.join(workspacePath, 'projects'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'README.md'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, 'QUICKSTART.md'))).toBe(true);
     expect(fs.existsSync(path.join(workspacePath, '.workgraph/server.json'))).toBe(true);
@@ -45,6 +48,9 @@ describe('workspace init', () => {
     expect(fs.existsSync(path.join(workspacePath, result.bootstrapTrustTokenPath))).toBe(true);
     expect(result.bootstrapTrustToken).toMatch(/^wg-bootstrap-[a-f0-9]{24}$/);
     expect(result.seededTypes).toContain('thread');
+    expect(result.seededTypes).toContain('person');
+    expect(result.seededTypes).toContain('client');
+    expect(result.seededTypes).toContain('project');
     expect(result.seededTypes).toContain('role');
     expect(result.seededTypes).toContain('trust-token');
     expect(result.generatedBases.length).toBeGreaterThan(0);

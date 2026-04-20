@@ -88,9 +88,35 @@ export function parseSetPairs(pairs: string[]): Record<string, unknown> {
   return fields;
 }
 
+export function collectSetPairs(value: string, existing: string[]): string[] {
+  existing.push(value);
+  return existing;
+}
+
+export function collectFieldSpecs(value: string, existing: string[]): string[] {
+  existing.push(value);
+  return existing;
+}
+
+export function mergeSetPairs(values: string[]): Record<string, unknown> {
+  return values.reduce<Record<string, unknown>>((acc, entry) => {
+    Object.assign(acc, parseSetPairs([entry]));
+    return acc;
+  }, {});
+}
+
 export function csv(value?: string): string[] | undefined {
   if (!value) return undefined;
   return String(value).split(',').map((s) => s.trim()).filter(Boolean);
+}
+
+export function normalizePrimitivePath(value: string): string {
+  const trimmed = String(value).trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  return trimmed.endsWith('.md') ? trimmed : `${trimmed}.md`;
+}
+
+export function normalizeWorkspacePath(value: string): string {
+  return normalizePrimitivePath(value);
 }
 
 function parseScalar(value: string): unknown {
@@ -120,6 +146,22 @@ export function parsePositiveIntOption(value: unknown, name: string): number {
     throw new Error(`Invalid --${name} value "${String(value)}". Expected a positive integer.`);
   }
   return parsed;
+}
+
+export function parseFieldDefinitions(values: string[]): Record<string, workgraph.FieldDefinition> {
+  const fields: Record<string, workgraph.FieldDefinition> = {};
+  for (const value of values) {
+    const [namePart, typePart] = String(value).split(':');
+    const name = readNonEmptyString(namePart);
+    const type = readNonEmptyString(typePart);
+    if (!name || !type) {
+      throw new Error(`Invalid field definition "${value}". Expected name:type.`);
+    }
+    fields[name] = {
+      type: parseFieldType(type),
+    };
+  }
+  return fields;
 }
 
 export function parsePortOption(value: unknown): number {
@@ -158,6 +200,20 @@ export function wantsJson(opts: JsonCapableOptions): boolean {
   if (opts.json) return true;
   if (process.env.WORKGRAPH_JSON === '1') return true;
   return false;
+}
+
+export function renderPrimitiveSummary(instance: workgraph.PrimitiveInstance): string[] {
+  const summaryLines = [
+    `Path: ${instance.path}`,
+  ];
+  const title = readNonEmptyString(String(instance.fields.title ?? ''));
+  const name = readNonEmptyString(String(instance.fields.name ?? ''));
+  if (title) summaryLines.push(`Title: ${title}`);
+  if (!title && name) summaryLines.push(`Name: ${name}`);
+  if (typeof instance.fields.status === 'string') {
+    summaryLines.push(`Status: ${instance.fields.status}`);
+  }
+  return summaryLines;
 }
 
 export async function runCommand<T>(
@@ -225,8 +281,24 @@ function resolveApiKey(opts: JsonCapableOptions): string | undefined {
   return fromEnv;
 }
 
-function readNonEmptyString(value: unknown): string | undefined {
+export function readNonEmptyString(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function parseFieldType(value: string): workgraph.FieldDefinition['type'] {
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === 'string' ||
+    normalized === 'number' ||
+    normalized === 'boolean' ||
+    normalized === 'list' ||
+    normalized === 'date' ||
+    normalized === 'ref' ||
+    normalized === 'any'
+  ) {
+    return normalized;
+  }
+  throw new Error(`Invalid field type "${value}". Expected string|number|boolean|list|date|ref|any.`);
 }
