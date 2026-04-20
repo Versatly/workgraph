@@ -209,16 +209,24 @@ export function registerPeopleCommands(program: Command, defaultActor: string): 
   ).action((personPath, opts) =>
     runCommand(
       opts,
-      () => workgraph.store.update(
-        resolveWorkspacePath(opts),
-        normalizePrimitivePath(personPath),
-        serializePersonInput('', opts),
-        opts.body,
-        opts.actor,
-        {
-          expectedEtag: opts.etag,
-        },
-      ),
+      () => {
+        const workspacePath = resolveWorkspacePath(opts);
+        const normalizedPath = normalizePrimitivePath(personPath);
+        const existing = workgraph.store.read(workspacePath, normalizedPath);
+        if (!existing || existing.type !== 'person') {
+          throw new Error(`Person not found: ${personPath}`);
+        }
+        return workgraph.store.update(
+          workspacePath,
+          normalizedPath,
+          serializePersonInput(String(existing.fields.name ?? ''), opts),
+          opts.body,
+          opts.actor,
+          {
+            expectedEtag: opts.etag,
+          },
+        );
+      },
       (result) => [`Updated person: ${result.path}`],
     ),
   );

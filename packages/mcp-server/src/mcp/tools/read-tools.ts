@@ -287,6 +287,7 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
             directory: typeDef.directory,
             builtIn: typeDef.builtIn,
             retained: typeDef.retained,
+            canonical: typeDef.retained,
             fields,
           },
           `Primitive schema for ${typeDef.name}.`,

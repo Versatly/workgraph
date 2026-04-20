@@ -347,7 +347,13 @@ describe('workgraph mcp server', () => {
         },
       });
       expect(isToolError(schema)).toBe(false);
-      const schemaPayload = getStructured<{ retained: boolean; canonical: boolean; fields: Array<{ name: string }> }>(schema);
+      const schemaPayload = getStructured<{
+        type: string;
+        retained: boolean;
+        canonical: boolean;
+        fields: Array<{ name: string }>;
+      }>(schema);
+      expect(schemaPayload.type).toBe('person');
       expect(schemaPayload.retained).toBe(true);
       expect(schemaPayload.canonical).toBe(true);
       expect(schemaPayload.fields.some((field) => field.name === 'preferred_name')).toBe(true);
@@ -422,7 +428,7 @@ describe('workgraph mcp server', () => {
         name: 'workgraph_person_update',
         arguments: {
           actor: 'agent-mcp',
-          personPath: 'people/grace-hopper.md',
+          path: 'people/grace-hopper.md',
           fieldUpdates: {
             timezone: 'America/New_York',
           },
@@ -436,7 +442,7 @@ describe('workgraph mcp server', () => {
         name: 'workgraph_person_archive',
         arguments: {
           actor: 'agent-mcp',
-          personPath: 'people/grace-hopper.md',
+          path: 'people/grace-hopper.md',
         },
       });
       expect(isToolError(archivedGrace)).toBe(false);

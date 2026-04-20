@@ -8,6 +8,29 @@ import { type WorkgraphMcpServerOptions } from '../types.js';
 
 const query = queryModule;
 const store = storeModule;
+const personFieldShape = {
+  preferredName: z.string().optional(),
+  email: z.string().optional(),
+  phone: z.string().optional(),
+  phoneSecondary: z.string().optional(),
+  role: z.string().optional(),
+  jobTitle: z.string().optional(),
+  organization: z.string().optional(),
+  relationshipContext: z.string().optional(),
+  location: z.string().optional(),
+  timezone: z.string().optional(),
+  communicationPreference: z.string().optional(),
+  slackHandle: z.string().optional(),
+  whatsappHandle: z.string().optional(),
+  telegramHandle: z.string().optional(),
+  website: z.string().optional(),
+  socialLinks: z.array(z.string()).optional(),
+  address: z.string().optional(),
+  notes: z.string().optional(),
+  client: z.string().optional(),
+  projectRefs: z.array(z.string()).optional(),
+  tags: z.array(z.string()).optional(),
+} as const;
 
 export function registerPersonTools(server: McpServer, options: WorkgraphMcpServerOptions): void {
   server.registerTool(
@@ -83,6 +106,7 @@ export function registerPersonTools(server: McpServer, options: WorkgraphMcpServ
         name: z.string().min(1),
         body: z.string().optional(),
         fields: z.record(z.string(), z.unknown()).optional(),
+        ...personFieldShape,
       },
       annotations: {
         destructiveHint: true,
@@ -102,6 +126,7 @@ export function registerPersonTools(server: McpServer, options: WorkgraphMcpServ
           'person',
           {
             name: args.name,
+            ...serializePersonFields(args),
             ...(args.fields ?? {}),
           },
           args.body ?? '',
@@ -125,6 +150,7 @@ export function registerPersonTools(server: McpServer, options: WorkgraphMcpServ
         fieldUpdates: z.record(z.string(), z.unknown()).optional(),
         body: z.string().optional(),
         expectedEtag: z.string().optional(),
+        ...personFieldShape,
       },
       annotations: {
         destructiveHint: true,
@@ -147,7 +173,11 @@ export function registerPersonTools(server: McpServer, options: WorkgraphMcpServ
         const updated = store.update(
           options.workspacePath,
           personPath,
-          args.fieldUpdates ?? {},
+          {
+            name: readNonEmptyString(existing.fields.name) ?? '',
+            ...serializePersonFields(args),
+            ...(args.fieldUpdates ?? {}),
+          },
           args.body,
           actor,
           {
@@ -162,9 +192,9 @@ export function registerPersonTools(server: McpServer, options: WorkgraphMcpServ
   );
 
   server.registerTool(
-    'workgraph_person_delete',
+    'workgraph_person_archive',
     {
-      title: 'Person Delete',
+      title: 'Person Archive',
       description: 'Archive a native person primitive instance.',
       inputSchema: {
         path: z.string().min(1),
@@ -215,6 +245,54 @@ function serializePerson(person: { path: string; type: string; fields: Record<st
     organization: readNonEmptyString(person.fields.organization) ?? null,
     fields: person.fields,
     body: person.body,
+  };
+}
+
+function serializePersonFields(args: {
+  preferredName?: string;
+  email?: string;
+  phone?: string;
+  phoneSecondary?: string;
+  role?: string;
+  jobTitle?: string;
+  organization?: string;
+  relationshipContext?: string;
+  location?: string;
+  timezone?: string;
+  communicationPreference?: string;
+  slackHandle?: string;
+  whatsappHandle?: string;
+  telegramHandle?: string;
+  website?: string;
+  socialLinks?: string[];
+  address?: string;
+  notes?: string;
+  client?: string;
+  projectRefs?: string[];
+  tags?: string[];
+}) {
+  return {
+    ...(args.preferredName ? { preferred_name: args.preferredName } : {}),
+    ...(args.email ? { email: args.email } : {}),
+    ...(args.phone ? { phone: args.phone } : {}),
+    ...(args.phoneSecondary ? { phone_secondary: args.phoneSecondary } : {}),
+    ...(args.role ? { role: args.role } : {}),
+    ...(args.jobTitle ? { job_title: args.jobTitle } : {}),
+    ...(args.organization ? { organization: args.organization } : {}),
+    ...(args.relationshipContext ? { relationship_context: args.relationshipContext } : {}),
+    ...(args.location ? { location: args.location } : {}),
+    ...(args.timezone ? { timezone: args.timezone } : {}),
+    ...(args.communicationPreference ? { communication_preference: args.communicationPreference } : {}),
+    ...(args.slackHandle ? { slack_handle: args.slackHandle } : {}),
+    ...(args.whatsappHandle ? { whatsapp_handle: args.whatsappHandle } : {}),
+    ...(args.telegramHandle ? { telegram_handle: args.telegramHandle } : {}),
+    ...(args.website ? { website: args.website } : {}),
+    ...(args.socialLinks ? { social_links: args.socialLinks } : {}),
+    ...(args.address ? { address: args.address } : {}),
+    ...(args.notes ? { notes: args.notes } : {}),
+    ...(args.client ? { client: args.client } : {}),
+    ...(args.projectRefs ? { project_refs: args.projectRefs } : {}),
+    ...(args.tags ? { tags: args.tags } : {}),
   };
 }
 
