@@ -7,6 +7,7 @@ import {
   ledger as ledgerModule,
   lens as lensModule,
   orientation as orientationModule,
+  project as projectModule,
   query as queryModule,
   registry as registryModule,
   store as storeModule,
@@ -22,6 +23,7 @@ const graph = graphModule;
 const ledger = ledgerModule;
 const lens = lensModule;
 const orientation = orientationModule;
+const project = projectModule;
 const query = queryModule;
 const registry = registryModule;
 const store = storeModule;
@@ -300,10 +302,11 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
     'workgraph_thread_list',
     {
       title: 'Thread List',
-      description: 'List workspace threads, optionally filtered by status, readiness, or space.',
+      description: 'List workspace threads, optionally filtered by status, readiness, project, or space.',
       inputSchema: {
         status: z.string().optional(),
         readyOnly: z.boolean().optional(),
+        project: z.string().optional(),
         space: z.string().optional(),
       },
       annotations: {
@@ -313,9 +316,11 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
     },
     async (args) => {
       try {
-        let threads = args.space
-          ? store.threadsInSpace(options.workspacePath, args.space)
-          : store.list(options.workspacePath, 'thread');
+        let threads = args.project
+          ? thread.listThreadsInProject(options.workspacePath, args.project)
+          : args.space
+            ? store.threadsInSpace(options.workspacePath, args.space)
+            : store.list(options.workspacePath, 'thread');
         const readySet = new Set(
           (args.space
             ? thread.listReadyThreadsInSpace(options.workspacePath, args.space)
@@ -333,6 +338,29 @@ export function registerReadTools(server: McpServer, options: WorkgraphMcpServer
           ready: readySet.has(entry.path),
         }));
         return okResult({ threads: enriched, count: enriched.length }, `Thread list returned ${enriched.length} item(s).`);
+      } catch (error) {
+        return errorResult(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'workgraph_project_list',
+    {
+      title: 'Project List',
+      description: 'List workspace projects and their thread_refs.',
+      inputSchema: {
+        status: z.string().optional(),
+      },
+      annotations: {
+        readOnlyHint: true,
+        idempotentHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const projects = project.listProjects(options.workspacePath, args.status);
+        return okResult({ projects, count: projects.length }, `Project list returned ${projects.length} item(s).`);
       } catch (error) {
         return errorResult(error);
       }

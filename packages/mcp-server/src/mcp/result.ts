@@ -28,6 +28,8 @@ export function errorResult(error: unknown) {
 export type CollaborationToolName =
   | 'wg_post_message'
   | 'wg_ask'
+  | 'wg_create_project'
+  | 'wg_list_projects'
   | 'wg_spawn_thread'
   | 'wg_create_thread'
   | 'wg_thread_context_add'

@@ -27,9 +27,9 @@ importers:
       '@types/node':
         specifier: ^20.11.0
         version: 20.19.35
-      '@versatly/workgraph-mcp-server':
+      '@versatly/workgraph-kernel':
         specifier: workspace:*
-        version: link:packages/mcp-server
+        version: link:packages/kernel
       ajv:
         specifier: ^8.18.0
         version: 8.18.0
@@ -46,49 +46,8 @@ importers:
         specifier: ^1.6.1
         version: 1.6.1(@types/node@20.19.35)
 
-  apps/web-control-plane: {}
-
-  packages/adapter-claude-code:
-    dependencies:
-      '@versatly/workgraph-adapter-shell-worker':
-        specifier: workspace:*
-        version: link:../adapter-shell-worker
-      '@versatly/workgraph-runtime-adapter-core':
-        specifier: workspace:*
-        version: link:../runtime-adapter-core
-
-  packages/adapter-cursor-cloud:
-    dependencies:
-      '@versatly/workgraph-kernel':
-        specifier: workspace:*
-        version: link:../kernel
-      '@versatly/workgraph-runtime-adapter-core':
-        specifier: workspace:*
-        version: link:../runtime-adapter-core
-
-  packages/adapter-http-webhook:
-    dependencies:
-      '@versatly/workgraph-runtime-adapter-core':
-        specifier: workspace:*
-        version: link:../runtime-adapter-core
-
-  packages/adapter-shell-worker:
-    dependencies:
-      '@versatly/workgraph-adapter-cursor-cloud':
-        specifier: workspace:*
-        version: link:../adapter-cursor-cloud
-      '@versatly/workgraph-runtime-adapter-core':
-        specifier: workspace:*
-        version: link:../runtime-adapter-core
-
   packages/cli:
     dependencies:
-      '@modelcontextprotocol/sdk':
-        specifier: ^1.27.1
-        version: 1.27.1(zod@4.3.6)
-      '@versatly/workgraph-control-api':
-        specifier: workspace:*
-        version: link:../control-api
       '@versatly/workgraph-kernel':
         specifier: workspace:*
         version: link:../kernel
@@ -99,15 +58,6 @@ importers:
         specifier: ^12.1.0
         version: 12.1.0
 
-  packages/control-api:
-    dependencies:
-      '@versatly/workgraph-kernel':
-        specifier: workspace:*
-        version: link:../kernel
-      '@versatly/workgraph-mcp-server':
-        specifier: workspace:*
-        version: link:../mcp-server
-
   packages/kernel:
     dependencies:
       gray-matter:
@@ -116,15 +66,11 @@ importers:
       yaml:
         specifier: ^2.8.1
         version: 2.8.2
-    devDependencies:
-      '@versatly/workgraph-mcp-server':
-        specifier: workspace:*
-        version: link:../mcp-server
 
   packages/mcp-server:
     dependencies:
       '@modelcontextprotocol/sdk':
-        specifier: ^1.17.4
+        specifier: ^1.27.1
         version: 1.27.1(zod@4.3.6)
       '@versatly/workgraph-kernel':
         specifier: workspace:*
@@ -133,76 +79,14 @@ importers:
         specifier: ^4.3.6
         version: 4.3.6
 
-  packages/obsidian-integration:
-    dependencies:
-      '@versatly/workgraph-kernel':
-        specifier: workspace:*
-        version: link:../kernel
-      yaml:
-        specifier: ^2.8.1
-        version: 2.8.2
-
-  packages/policy: {}
-
-  packages/runtime-adapter-core:
-    dependencies:
-      '@versatly/workgraph-adapter-claude-code':
-        specifier: workspace:*
-        version: link:../adapter-claude-code
-      '@versatly/workgraph-adapter-cursor-cloud':
-        specifier: workspace:*
-        version: link:../adapter-cursor-cloud
-      '@versatly/workgraph-adapter-http-webhook':
-        specifier: workspace:*
-        version: link:../adapter-http-webhook
-      '@versatly/workgraph-adapter-shell-worker':
-        specifier: workspace:*
-        version: link:../adapter-shell-worker
-      '@versatly/workgraph-kernel':
-        specifier: workspace:*
-        version: link:../kernel
-
   packages/sdk:
     dependencies:
-      '@versatly/workgraph-adapter-claude-code':
-        specifier: workspace:*
-        version: link:../adapter-claude-code
-      '@versatly/workgraph-adapter-cursor-cloud':
-        specifier: workspace:*
-        version: link:../adapter-cursor-cloud
-      '@versatly/workgraph-control-api':
-        specifier: workspace:*
-        version: link:../control-api
       '@versatly/workgraph-kernel':
         specifier: workspace:*
         version: link:../kernel
       '@versatly/workgraph-mcp-server':
         specifier: workspace:*
         version: link:../mcp-server
-      '@versatly/workgraph-obsidian-integration':
-        specifier: workspace:*
-        version: link:../obsidian-integration
-      '@versatly/workgraph-runtime-adapter-core':
-        specifier: workspace:*
-        version: link:../runtime-adapter-core
-      '@versatly/workgraph-search-qmd-adapter':
-        specifier: workspace:*
-        version: link:../search-qmd-adapter
-      '@versatly/workgraph-skills':
-        specifier: workspace:*
-        version: link:../skills
-
-  packages/search-qmd-adapter:
-    dependencies:
-      '@versatly/workgraph-kernel':
-        specifier: workspace:*
-        version: link:../kernel
-
-  packages/skills:
-    dependencies:
-      '@versatly/workgraph-kernel':
-        specifier: workspace:*
-        version: link:../kernel
 
   packages/testkit: {}
 

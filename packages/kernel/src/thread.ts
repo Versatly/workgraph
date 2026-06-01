@@ -10,6 +10,7 @@ import * as store from './store.js';
 import * as auth from './auth.js';
 import * as claimLease from './claim-lease.js';
 import * as gate from './gate.js';
+import * as project from './project.js';
 import { collectThreadEvidence, validateThreadEvidence } from './evidence.js';
 import type {
   PrimitiveInstance,
@@ -47,6 +48,7 @@ export function createThread(
     priority?: string;
     deps?: string[];
     parent?: string;
+    project?: string;
     space?: string;
     context_refs?: string[];
     tags?: string[];
@@ -58,16 +60,22 @@ export function createThread(
     'policy:manage',
   ]);
   const normalizedSpace = opts.space ? normalizeWorkspaceRef(opts.space) : undefined;
+  const normalizedProject = opts.project ? project.normalizeProjectRef(opts.project) : undefined;
+  if (normalizedProject && !store.read(workspacePath, normalizedProject)) {
+    throw new Error(`Project not found: ${normalizedProject}`);
+  }
   const contextRefs = opts.context_refs ?? [];
-  const mergedContextRefs = normalizedSpace && !contextRefs.includes(normalizedSpace)
-    ? [...contextRefs, normalizedSpace]
-    : contextRefs;
+  const mergedContextRefs = uniqueThreadRefs([
+    ...contextRefs,
+    ...(normalizedSpace ? [normalizedSpace] : []),
+    ...(normalizedProject ? [normalizedProject] : []),
+  ]);
   const inferredDeps = inferThreadDependenciesFromText(goal);
   const mergedDeps = uniqueThreadRefs([...(opts.deps ?? []), ...inferredDeps]);
   const tid = mintThreadId(title);
   const participants = [createThreadParticipantRecord(actor, 'owner')];
 
-  return store.create(workspacePath, 'thread', {
+  const created = store.create(workspacePath, 'thread', {
     tid,
     title,
     goal,
@@ -75,6 +83,7 @@ export function createThread(
     priority: opts.priority ?? 'medium',
     deps: mergedDeps,
     parent: opts.parent,
+    project: normalizedProject,
     space: normalizedSpace,
     context_refs: mergedContextRefs,
     participants,
@@ -84,6 +93,16 @@ export function createThread(
     action: 'thread.create.store',
     requiredCapabilities: ['thread:create', 'thread:manage', 'policy:manage'],
   });
+
+  if (normalizedProject) {
+    project.addThreadToProject(workspacePath, normalizedProject, created.path, actor);
+  }
+
+  return created;
+}
+
+export function listThreadsInProject(workspacePath: string, projectRef: string): PrimitiveInstance[] {
+  return project.threadsInProject(workspacePath, projectRef);
 }
 
 export function mintThreadId(title: string): string {

@@ -13,6 +13,7 @@ export * as ledger from './ledger.js';
 export * as lens from './lens.js';
 export * as orientation from './orientation.js';
 export * as policy from './policy.js';
+export * as project from './project.js';
 export * as query from './query.js';
 export * as registry from './registry.js';
 export * as serverConfig from './server-config.js';
