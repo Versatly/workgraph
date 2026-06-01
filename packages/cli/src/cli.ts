@@ -65,6 +65,7 @@ addWorkspaceOption(
     .option('--priority <level>', 'urgent|high|medium|low', 'medium')
     .option('--deps <refs>', 'Comma-separated dependency thread refs')
     .option('--parent <ref>', 'Parent thread ref')
+    .option('--project <ref>', 'Project ref')
     .option('--space <ref>', 'Space ref')
     .option('--context-refs <refs>', 'Comma-separated context refs')
     .option('--tags <tags>', 'Comma-separated tags')
@@ -76,6 +77,7 @@ addWorkspaceOption(
       priority: normalizePriority(opts.priority),
       deps: csv(opts.deps),
       parent: opts.parent,
+      project: opts.project,
       space: opts.space,
       context_refs: csv(opts.contextRefs),
       tags: csv(opts.tags),
@@ -93,6 +95,7 @@ addWorkspaceOption(
     .command('list')
     .description('List threads')
     .option('--status <status>', 'Filter by status')
+    .option('--project <ref>', 'Filter by project')
     .option('--space <ref>', 'Filter by space')
     .option('--ready', 'Only show ready threads')
     .option('--json', 'Emit structured JSON output'),
@@ -101,9 +104,11 @@ addWorkspaceOption(
     opts,
     () => {
       const workspacePath = resolveWorkspacePath(opts);
-      let threads = opts.space
-        ? workgraph.store.threadsInSpace(workspacePath, opts.space)
-        : workgraph.store.list(workspacePath, 'thread');
+      let threads = opts.project
+        ? workgraph.thread.listThreadsInProject(workspacePath, opts.project)
+        : opts.space
+          ? workgraph.store.threadsInSpace(workspacePath, opts.space)
+          : workgraph.store.list(workspacePath, 'thread');
       if (opts.status) {
         threads = threads.filter((entry) => String(entry.fields.status) === opts.status);
       }
@@ -123,6 +128,67 @@ addWorkspaceOption(
         ...result.threads.map((entry) =>
           `[${String(entry.fields.status)}] ${String(entry.fields.priority)} ${String(entry.fields.title)} -> ${entry.path}`),
         `${result.count} thread(s)`,
+      ];
+    },
+  ),
+);
+
+const projectCmd = program
+  .command('project')
+  .description('Group related threads under durable projects');
+
+addWorkspaceOption(
+  projectCmd
+    .command('create <title>')
+    .description('Create a project')
+    .option('--description <text>', 'Project description')
+    .option('-a, --actor <name>', 'Actor', DEFAULT_ACTOR)
+    .option('--status <status>', 'planned|active|blocked|done|cancelled', 'active')
+    .option('--priority <level>', 'urgent|high|medium|low', 'medium')
+    .option('--owner <actor>', 'Project owner')
+    .option('--client <ref>', 'Client ref')
+    .option('--members <refs>', 'Comma-separated member refs')
+    .option('--tags <tags>', 'Comma-separated tags')
+    .option('--json', 'Emit structured JSON output'),
+).action((title, opts) =>
+  runCommand(
+    opts,
+    () => workgraph.project.createProject(resolveWorkspacePath(opts), title, opts.actor, {
+      description: opts.description,
+      status: opts.status,
+      priority: normalizePriority(opts.priority),
+      owner: opts.owner,
+      client: opts.client,
+      member_refs: csv(opts.members),
+      tags: csv(opts.tags),
+    }),
+    (result) => [
+      `Created project: ${result.path}`,
+      `Status: ${String(result.fields.status)}`,
+      `Priority: ${String(result.fields.priority)}`,
+    ],
+  ),
+);
+
+addWorkspaceOption(
+  projectCmd
+    .command('list')
+    .description('List projects')
+    .option('--status <status>', 'Filter by status')
+    .option('--json', 'Emit structured JSON output'),
+).action((opts) =>
+  runCommand(
+    opts,
+    () => {
+      const projects = workgraph.project.listProjects(resolveWorkspacePath(opts), opts.status);
+      return { projects, count: projects.length };
+    },
+    (result) => {
+      if (result.projects.length === 0) return ['No projects found.'];
+      return [
+        ...result.projects.map((entry) =>
+          `[${String(entry.fields.status)}] ${String(entry.fields.priority)} ${String(entry.fields.title)} -> ${entry.path}`),
+        `${result.count} project(s)`,
       ];
     },
   ),

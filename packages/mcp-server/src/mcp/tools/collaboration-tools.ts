@@ -4,6 +4,7 @@ import { z } from 'zod';
 import {
   agent as agentModule,
   conversation as conversationModule,
+  project as projectModule,
   store as storeModule,
   threadContext as threadContextModule,
   thread as threadModule,
@@ -19,6 +20,7 @@ import { type WorkgraphMcpServerOptions } from '../types.js';
 
 const agent = agentModule;
 const conversation = conversationModule;
+const project = projectModule;
 const store = storeModule;
 const threadContext = threadContextModule;
 const thread = threadModule;
@@ -242,10 +244,81 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
   );
 
   server.registerTool(
+    'wg_create_project',
+    {
+      title: 'WorkGraph Create Project',
+      description: 'Create a project that can group related threads.',
+      inputSchema: {
+        actor: z.string().optional().describe('Actor identity for write attribution.'),
+        title: z.string().min(1).describe('Project title.'),
+        description: z.string().optional().describe('Project description.'),
+        status: z.string().optional().describe('Optional project status.'),
+        priority: z.string().optional().describe('Optional priority override.'),
+        owner: z.string().optional().describe('Optional project owner.'),
+        client: z.string().optional().describe('Optional client ref.'),
+        memberRefs: z.array(z.string()).optional().describe('Optional member refs.'),
+        tags: z.array(z.string()).optional().describe('Optional project tags.'),
+      },
+      annotations: {
+        destructiveHint: true,
+        idempotentHint: false,
+      },
+    },
+    async (args) => {
+      try {
+        const actor = resolveActor(options.workspacePath, args.actor, options.defaultActor);
+        assertWriteAllowed(options, actor, ['mcp:write', 'project:create'], {
+          action: 'mcp.collaboration.create-project',
+          target: 'projects',
+        });
+        const created = project.createProject(options.workspacePath, args.title, actor, {
+          description: args.description,
+          status: args.status,
+          priority: args.priority,
+          owner: args.owner,
+          client: args.client,
+          member_refs: args.memberRefs,
+          tags: args.tags,
+        });
+        return collaborationOkResult('wg_create_project', actor, {
+          project: serializePrimitive(created),
+        });
+      } catch (error) {
+        return collaborationErrorResult('wg_create_project', error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'wg_list_projects',
+    {
+      title: 'WorkGraph List Projects',
+      description: 'List projects and their thread refs.',
+      inputSchema: {
+        status: z.string().optional().describe('Optional status filter.'),
+      },
+      annotations: {
+        readOnlyHint: true,
+      },
+    },
+    async (args) => {
+      try {
+        const projects = project.listProjects(options.workspacePath, args.status);
+        return collaborationOkResult('wg_list_projects', String(options.defaultActor ?? 'system'), {
+          projects: projects.map(serializePrimitive),
+          count: projects.length,
+        });
+      } catch (error) {
+        return collaborationErrorResult('wg_list_projects', error);
+      }
+    },
+  );
+
+  server.registerTool(
     'wg_create_thread',
     {
       title: 'WorkGraph Create Thread',
-      description: 'Create a standalone top-level thread with optional idempotency key.',
+      description: 'Create a standalone top-level thread with optional project grouping and idempotency key.',
       inputSchema: {
         actor: z.string().optional().describe('Actor identity for write attribution.'),
         title: z.string().min(1).describe('New standalone thread title.'),
@@ -253,6 +326,7 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
         priority: z.string().optional().describe('Optional priority override.'),
         deps: z.array(z.string()).optional().describe('Optional dependency thread refs.'),
         tags: z.array(z.string()).optional().describe('Optional thread tags.'),
+        project: z.string().optional().describe('Optional project ref for grouping this thread.'),
         contextRefs: z.array(z.string()).optional().describe('Optional context refs to seed on the new thread.'),
         space: z.string().optional().describe('Optional space ref for the new thread.'),
         idempotencyKey: z.string().optional().describe('Stable idempotency key for retry-safe thread creation.'),
@@ -287,6 +361,7 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
         const created = thread.createThread(options.workspacePath, args.title, args.goal, actor, {
           priority: args.priority,
           deps: args.deps,
+          project: normalizeOptionalString(args.project),
           space: normalizeOptionalString(args.space),
           context_refs: args.contextRefs,
           tags: args.tags,
@@ -334,6 +409,7 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
         priority: z.string().optional().describe('Optional child priority override.'),
         deps: z.array(z.string()).optional().describe('Optional dependency thread refs.'),
         tags: z.array(z.string()).optional().describe('Optional child tags.'),
+        project: z.string().optional().describe('Optional project override; defaults to parent thread project.'),
         contextRefs: z.array(z.string()).optional().describe('Additional context refs inherited by child thread.'),
         space: z.string().optional().describe('Optional space override for the spawned child thread.'),
         conversationPath: z.string().optional().describe('Optional conversation to attach spawned child thread.'),
@@ -378,6 +454,7 @@ export function registerCollaborationTools(server: McpServer, options: Workgraph
           parent: parentThreadPath,
           priority: args.priority,
           deps: args.deps,
+          project: normalizeOptionalString(args.project) ?? normalizeOptionalString(parentThread.fields.project),
           space: normalizeOptionalString(args.space) ?? normalizeOptionalString(parentThread.fields.space),
           context_refs: inheritedContextRefs,
           tags: args.tags,
@@ -849,19 +926,23 @@ function assertCreateReplayCompatible(
     title: string;
     goal: string;
     priority?: string;
+    project?: string;
     space?: string;
   },
 ): void {
   const existingTitle = normalizeOptionalString(existing.fields.title);
   const existingGoal = normalizeOptionalString(existing.fields.goal);
   const existingPriority = normalizeOptionalString(existing.fields.priority) ?? 'medium';
+  const existingProject = normalizeOptionalString(existing.fields.project);
   const existingSpace = normalizeOptionalString(existing.fields.space);
   const requestedPriority = normalizeOptionalString(input.priority) ?? 'medium';
+  const requestedProject = normalizeOptionalString(input.project);
   const requestedSpace = normalizeOptionalString(input.space);
   if (
     existingTitle !== input.title ||
     existingGoal !== input.goal ||
     existingPriority !== requestedPriority ||
+    existingProject !== requestedProject ||
     existingSpace !== requestedSpace
   ) {
     throw new McpToolError(
@@ -872,6 +953,7 @@ function assertCreateReplayCompatible(
           previous_title: existingTitle ?? null,
           previous_goal: existingGoal ?? null,
           previous_priority: existingPriority,
+          previous_project: existingProject ?? null,
           previous_space: existingSpace ?? null,
         },
       },
@@ -981,9 +1063,24 @@ function serializeThread(entry: { path: string; fields: Record<string, unknown> 
     status: normalizeOptionalString(entry.fields.status) ?? 'unknown',
     owner: normalizeOptionalString(entry.fields.owner) ?? null,
     parent: normalizeOptionalString(entry.fields.parent) ?? null,
+    project: normalizeOptionalString(entry.fields.project) ?? null,
     space: normalizeOptionalString(entry.fields.space) ?? null,
     context_refs: asStringArray(entry.fields.context_refs),
     deps: asStringArray(entry.fields.deps),
+    tags: asStringArray(entry.fields.tags),
+    updated: normalizeOptionalString(entry.fields.updated) ?? null,
+  };
+}
+
+function serializePrimitive(entry: { path: string; type?: string; fields: Record<string, unknown> }) {
+  return {
+    path: entry.path,
+    type: entry.type ?? null,
+    title: normalizeOptionalString(entry.fields.title) ?? normalizeOptionalString(entry.fields.name) ?? entry.path,
+    status: normalizeOptionalString(entry.fields.status) ?? null,
+    priority: normalizeOptionalString(entry.fields.priority) ?? null,
+    owner: normalizeOptionalString(entry.fields.owner) ?? null,
+    thread_refs: asStringArray(entry.fields.thread_refs),
     tags: asStringArray(entry.fields.tags),
     updated: normalizeOptionalString(entry.fields.updated) ?? null,
   };
